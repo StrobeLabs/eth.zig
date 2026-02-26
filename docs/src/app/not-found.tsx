@@ -9,23 +9,15 @@ export default function NotFound() {
   useEffect(() => {
     const timer = setTimeout(() => {
       router.push('/introduction');
-    }, 100);
+    }, 2000);
 
     return () => clearTimeout(timer);
   }, [router]);
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '100vh',
-      padding: '20px',
-      textAlign: 'center'
-    }}>
-      <h1 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Page Not Found</h1>
-      <p style={{ marginBottom: '1rem' }}>Redirecting you to the docs...</p>
+    <div className="flex flex-col items-center justify-center min-h-screen p-5 text-center">
+      <h1 className="text-2xl mb-4">Page Not Found</h1>
+      <p className="mb-4">Redirecting you to the docs...</p>
     </div>
   );
 }

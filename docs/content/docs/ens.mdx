@@ -54,14 +54,18 @@ The namehash algorithm recursively hashes each label separated by `.`, as define
 
 ## Text Records
 
-ENS names can have associated text records (email, URL, avatar, etc.):
+ENS names can have associated text records (email, URL, avatar, etc.). Use `getText` to look up a record by key:
 
 ```zig
 const eth = @import("eth");
 
-// The resolver module also supports text record lookups
-// using the text(bytes32,string) function selector
+const avatar = try eth.ens_resolver.getText(allocator, &provider, "vitalik.eth", "avatar");
+defer if (avatar) |a| allocator.free(a);
+
+// avatar contains the text record value, or null if not set
 ```
+
+Common text record keys: `avatar`, `url`, `email`, `description`, `com.twitter`, `com.github`.
 
 ## Requirements
 

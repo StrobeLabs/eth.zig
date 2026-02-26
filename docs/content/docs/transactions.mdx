@@ -28,7 +28,7 @@ const tx_hash = try wallet.sendTransaction(.{
 
 ### SendTransactionOpts
 
-All fields except `to` and `value` are optional and will be fetched from the provider if not specified:
+All fields in `SendTransactionOpts` are optional with sensible defaults. Fields like `nonce`, `gas_limit`, and fee parameters are auto-filled from the provider when not specified:
 
 | Field | Type | Default |
 |-------|------|---------|

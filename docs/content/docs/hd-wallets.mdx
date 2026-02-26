@@ -35,6 +35,7 @@ Use the account index to derive multiple addresses from the same seed:
 ```zig
 const eth = @import("eth");
 
+// Using the same words from the previous example
 const seed = try eth.mnemonic.toSeed(&words, "");
 
 // m/44'/60'/0'/0/0
