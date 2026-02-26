@@ -843,15 +843,17 @@ test "legacy tx alloy.rs test vector" {
 
     const to_addr = try hex_mod.hexToBytesFixed(20, "F0109fC8DF283027b6285cc889F5aA624EaC1F55");
 
-    const tx = Transaction{ .legacy = .{
-        .nonce = 0,
-        .gas_price = 21_000_000_000, // 21 gwei
-        .gas_limit = 2_000_000,
-        .to = to_addr,
-        .value = 1_000_000_000, // 1 gwei
-        .data = &.{},
-        .chain_id = 1,
-    } };
+    const tx = Transaction{
+        .legacy = .{
+            .nonce = 0,
+            .gas_price = 21_000_000_000, // 21 gwei
+            .gas_limit = 2_000_000,
+            .to = to_addr,
+            .value = 1_000_000_000, // 1 gwei
+            .data = &.{},
+            .chain_id = 1,
+        },
+    };
 
     // Hash twice and verify determinism
     const hash1 = try hashForSigning(allocator, tx);
@@ -874,17 +876,19 @@ test "eip1559 with specific parameters" {
     var data_buf: [68]u8 = undefined;
     _ = try hex_mod.hexToBytes(&data_buf, data_hex);
 
-    const tx = Transaction{ .eip1559 = .{
-        .chain_id = 1,
-        .nonce = 0x42,
-        .max_priority_fee_per_gas = 1_000_000_000, // 1 gwei
-        .max_fee_per_gas = 20_000_000_000, // 20 gwei
-        .gas_limit = 44386,
-        .to = to_addr,
-        .value = 0,
-        .data = &data_buf,
-        .access_list = &.{},
-    } };
+    const tx = Transaction{
+        .eip1559 = .{
+            .chain_id = 1,
+            .nonce = 0x42,
+            .max_priority_fee_per_gas = 1_000_000_000, // 1 gwei
+            .max_fee_per_gas = 20_000_000_000, // 20 gwei
+            .gas_limit = 44386,
+            .to = to_addr,
+            .value = 0,
+            .data = &data_buf,
+            .access_list = &.{},
+        },
+    };
 
     const payload = try serializeForSigning(allocator, tx);
     defer allocator.free(payload);
@@ -961,17 +965,19 @@ test "access list with multiple entries" {
 test "eip1559 with large fees" {
     const allocator = std.testing.allocator;
 
-    const tx = Transaction{ .eip1559 = .{
-        .chain_id = 1,
-        .nonce = 0,
-        .max_priority_fee_per_gas = 100_000_000_000, // 100 gwei
-        .max_fee_per_gas = 500_000_000_000, // 500 gwei
-        .gas_limit = 21000,
-        .to = [_]u8{0xBB} ** 20,
-        .value = 1_000_000_000_000_000_000, // 1 ETH
-        .data = &.{},
-        .access_list = &.{},
-    } };
+    const tx = Transaction{
+        .eip1559 = .{
+            .chain_id = 1,
+            .nonce = 0,
+            .max_priority_fee_per_gas = 100_000_000_000, // 100 gwei
+            .max_fee_per_gas = 500_000_000_000, // 500 gwei
+            .gas_limit = 21000,
+            .to = [_]u8{0xBB} ** 20,
+            .value = 1_000_000_000_000_000_000, // 1 ETH
+            .data = &.{},
+            .access_list = &.{},
+        },
+    };
 
     const payload = try serializeForSigning(allocator, tx);
     defer allocator.free(payload);
@@ -1010,19 +1016,21 @@ test "eip4844 with three blob hashes" {
     const three_hashes = [_][32]u8{ hash1, hash2, hash3 };
     const one_hash = [_][32]u8{hash1};
 
-    const tx_three = Transaction{ .eip4844 = .{
-        .chain_id = 1,
-        .nonce = 10,
-        .max_priority_fee_per_gas = 1_000_000_000, // 1 gwei
-        .max_fee_per_gas = 50_000_000_000, // 50 gwei
-        .gas_limit = 100_000,
-        .to = [_]u8{0xDD} ** 20,
-        .value = 0,
-        .data = &.{},
-        .access_list = &.{},
-        .max_fee_per_blob_gas = 1_000_000_000, // 1 gwei
-        .blob_versioned_hashes = &three_hashes,
-    } };
+    const tx_three = Transaction{
+        .eip4844 = .{
+            .chain_id = 1,
+            .nonce = 10,
+            .max_priority_fee_per_gas = 1_000_000_000, // 1 gwei
+            .max_fee_per_gas = 50_000_000_000, // 50 gwei
+            .gas_limit = 100_000,
+            .to = [_]u8{0xDD} ** 20,
+            .value = 0,
+            .data = &.{},
+            .access_list = &.{},
+            .max_fee_per_blob_gas = 1_000_000_000, // 1 gwei
+            .blob_versioned_hashes = &three_hashes,
+        },
+    };
 
     const tx_one = Transaction{ .eip4844 = .{
         .chain_id = 1,
