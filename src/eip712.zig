@@ -1058,11 +1058,10 @@ test "ERC20 Permit typed data hash" {
     };
 
     const hash1 = try hashTypedData(allocator, domain, permit_msg, &type_defs);
-    const hash2 = try hashTypedData(allocator, domain, permit_msg, &type_defs);
 
-    // Verify deterministic 32-byte result
-    try testing.expectEqual(@as(usize, 32), hash1.len);
-    try testing.expectEqualSlices(u8, &hash1, &hash2);
+    // Verify against canonical expected EIP-712 digest
+    const expected_permit_hash = try hex.hexToBytesFixed(32, "a291091bcb960bb950bcde8c114f51268db75fc46b0bd1ed9d0b98e99b7c0b78");
+    try testing.expectEqualSlices(u8, &expected_permit_hash, &hash1);
 }
 
 test "hashDomain with all 5 fields" {
@@ -1198,9 +1197,8 @@ test "Permit2 PermitSingle nested struct" {
     };
 
     const hash1 = try hashTypedData(allocator, domain, permit_single, &type_defs);
-    const hash2 = try hashTypedData(allocator, domain, permit_single, &type_defs);
 
-    // Verify deterministic 32-byte result
-    try testing.expectEqual(@as(usize, 32), hash1.len);
-    try testing.expectEqualSlices(u8, &hash1, &hash2);
+    // Verify against canonical expected EIP-712 digest
+    const expected_permit2_hash = try hex.hexToBytesFixed(32, "deb9a47018f32b20c6e10646036eae3ad57736889291e780cd092389f05f19ad");
+    try testing.expectEqualSlices(u8, &expected_permit2_hash, &hash1);
 }
