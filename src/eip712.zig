@@ -1000,3 +1000,207 @@ test "hashTypedData - verify domain and struct hashes independently" {
     const expected_final = try hex.hexToBytesFixed(32, "be609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2");
     try testing.expectEqualSlices(u8, &expected_final, &manual_final);
 }
+
+test "ERC20 Permit typed data hash" {
+    const allocator = testing.allocator;
+
+    const domain = DomainSeparator{
+        .name = "MyToken",
+        .version = "1",
+        .chain_id = 1,
+        .verifying_contract = try hex.hexToBytesFixed(20, "0x0000000000000000000000000000000000000001"),
+    };
+
+    const permit_type = TypeDef{
+        .name = "Permit",
+        .fields = &.{
+            .{ .name = "owner", .type_str = "address" },
+            .{ .name = "spender", .type_str = "address" },
+            .{ .name = "value", .type_str = "uint256" },
+            .{ .name = "nonce", .type_str = "uint256" },
+            .{ .name = "deadline", .type_str = "uint256" },
+        },
+    };
+
+    const type_defs = [_]TypeDef{permit_type};
+
+    const max_uint256: u256 = std.math.maxInt(u256);
+
+    const permit_msg = StructValue{
+        .type_name = "Permit",
+        .fields = &.{
+            .{
+                .name = "owner",
+                .type_str = "address",
+                .value = .{ .address = try hex.hexToBytesFixed(20, "0x0000000000000000000000000000000000000001") },
+            },
+            .{
+                .name = "spender",
+                .type_str = "address",
+                .value = .{ .address = try hex.hexToBytesFixed(20, "0x0000000000000000000000000000000000000002") },
+            },
+            .{
+                .name = "value",
+                .type_str = "uint256",
+                .value = .{ .uint256 = 1000000000000000000 },
+            },
+            .{
+                .name = "nonce",
+                .type_str = "uint256",
+                .value = .{ .uint256 = 0 },
+            },
+            .{
+                .name = "deadline",
+                .type_str = "uint256",
+                .value = .{ .uint256 = max_uint256 },
+            },
+        },
+    };
+
+    const hash1 = try hashTypedData(allocator, domain, permit_msg, &type_defs);
+    const hash2 = try hashTypedData(allocator, domain, permit_msg, &type_defs);
+
+    // Verify deterministic 32-byte result
+    try testing.expectEqual(@as(usize, 32), hash1.len);
+    try testing.expectEqualSlices(u8, &hash1, &hash2);
+}
+
+test "hashDomain with all 5 fields" {
+    const allocator = testing.allocator;
+
+    // Verify the encodeType string for EIP712Domain with all 5 fields
+    const domain_fields = [_]FieldDef{
+        .{ .name = "name", .type_str = "string" },
+        .{ .name = "version", .type_str = "string" },
+        .{ .name = "chainId", .type_str = "uint256" },
+        .{ .name = "verifyingContract", .type_str = "address" },
+        .{ .name = "salt", .type_str = "bytes32" },
+    };
+
+    const type_str = try encodeType(allocator, "EIP712Domain", &domain_fields, &.{});
+    defer allocator.free(type_str);
+
+    try testing.expectEqualStrings(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)",
+        type_str,
+    );
+
+    // Now hash the domain with all 5 fields populated
+    const domain = DomainSeparator{
+        .name = "Test App",
+        .version = "2",
+        .chain_id = 137,
+        .verifying_contract = try hex.hexToBytesFixed(20, "0x1234567890123456789012345678901234567890"),
+        .salt = [_]u8{0xAB} ** 32,
+    };
+
+    const hash1 = try hashDomain(allocator, domain);
+    const hash2 = try hashDomain(allocator, domain);
+
+    // Verify deterministic 32-byte result
+    try testing.expectEqual(@as(usize, 32), hash1.len);
+    try testing.expectEqualSlices(u8, &hash1, &hash2);
+}
+
+test "hashDomain with only chainId" {
+    const allocator = testing.allocator;
+
+    // Verify the encodeType string for EIP712Domain with only chainId
+    const domain_fields = [_]FieldDef{
+        .{ .name = "chainId", .type_str = "uint256" },
+    };
+
+    const type_str = try encodeType(allocator, "EIP712Domain", &domain_fields, &.{});
+    defer allocator.free(type_str);
+
+    try testing.expectEqualStrings(
+        "EIP712Domain(uint256 chainId)",
+        type_str,
+    );
+
+    // Hash the domain with only chain_id set
+    const domain = DomainSeparator{
+        .chain_id = 1,
+    };
+
+    const hash1 = try hashDomain(allocator, domain);
+    const hash2 = try hashDomain(allocator, domain);
+
+    // Verify deterministic 32-byte result
+    try testing.expectEqual(@as(usize, 32), hash1.len);
+    try testing.expectEqualSlices(u8, &hash1, &hash2);
+}
+
+test "Permit2 PermitSingle nested struct" {
+    const allocator = testing.allocator;
+
+    const token_permissions_type = TypeDef{
+        .name = "TokenPermissions",
+        .fields = &.{
+            .{ .name = "token", .type_str = "address" },
+            .{ .name = "amount", .type_str = "uint256" },
+        },
+    };
+
+    const permit_single_type = TypeDef{
+        .name = "PermitSingle",
+        .fields = &.{
+            .{ .name = "details", .type_str = "TokenPermissions" },
+            .{ .name = "spender", .type_str = "address" },
+            .{ .name = "sigDeadline", .type_str = "uint256" },
+        },
+    };
+
+    const type_defs = [_]TypeDef{ permit_single_type, token_permissions_type };
+
+    const domain = DomainSeparator{
+        .name = "Permit2",
+        .chain_id = 1,
+    };
+
+    const max_uint256: u256 = std.math.maxInt(u256);
+
+    const details = StructValue{
+        .type_name = "TokenPermissions",
+        .fields = &.{
+            .{
+                .name = "token",
+                .type_str = "address",
+                .value = .{ .address = try hex.hexToBytesFixed(20, "0x0000000000000000000000000000000000000001") },
+            },
+            .{
+                .name = "amount",
+                .type_str = "uint256",
+                .value = .{ .uint256 = 1000 },
+            },
+        },
+    };
+
+    const permit_single = StructValue{
+        .type_name = "PermitSingle",
+        .fields = &.{
+            .{
+                .name = "details",
+                .type_str = "TokenPermissions",
+                .value = .{ .struct_val = details },
+            },
+            .{
+                .name = "spender",
+                .type_str = "address",
+                .value = .{ .address = try hex.hexToBytesFixed(20, "0x0000000000000000000000000000000000000002") },
+            },
+            .{
+                .name = "sigDeadline",
+                .type_str = "uint256",
+                .value = .{ .uint256 = max_uint256 },
+            },
+        },
+    };
+
+    const hash1 = try hashTypedData(allocator, domain, permit_single, &type_defs);
+    const hash2 = try hashTypedData(allocator, domain, permit_single, &type_defs);
+
+    // Verify deterministic 32-byte result
+    try testing.expectEqual(@as(usize, 32), hash1.len);
+    try testing.expectEqualSlices(u8, &hash1, &hash2);
+}

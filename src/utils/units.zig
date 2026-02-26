@@ -49,3 +49,27 @@ test "formatEther" {
 test "formatGwei" {
     try std.testing.expectApproxEqAbs(@as(f64, 20.0), formatGwei(20_000_000_000), 1e-10);
 }
+
+test "parseEther zero" {
+    try std.testing.expectEqual(@as(u256, 0), parseEther(0.0));
+}
+
+test "parseEther large value" {
+    try std.testing.expectEqual(@as(u256, 10_000_000_000_000_000_000_000), parseEther(10000.0));
+}
+
+test "formatEther zero" {
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), formatEther(0), 1e-10);
+}
+
+test "formatGwei zero" {
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), formatGwei(0), 1e-10);
+}
+
+test "parseEther formatEther roundtrip" {
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), formatEther(parseEther(1.5)), 1e-6);
+}
+
+test "parseGwei formatGwei roundtrip" {
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), formatGwei(parseGwei(30.0)), 1e-6);
+}

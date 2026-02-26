@@ -305,3 +305,54 @@ test "mnemonicToString" {
     defer allocator.free(result);
     try std.testing.expectEqualStrings("hello world", result);
 }
+
+test "BIP-39 TREZOR passphrase exact seed vector" {
+    const hex_mod = @import("hex.zig");
+    const words = [_][]const u8{
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "about",
+    };
+    const seed = try toSeed(&words, "TREZOR");
+    // First 32 bytes of the known BIP-39 test vector
+    const expected_first32 = try hex_mod.hexToBytesFixed(32, "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e7e24052f0b7c87c2");
+    try std.testing.expectEqualSlices(u8, &expected_first32, seed[0..32]);
+    // Last 32 bytes
+    const expected_last32 = try hex_mod.hexToBytesFixed(32, "3758f2f0de3f11ae174a810db40ab2d489cfb1412b145f51585fd05da5a1b6ae");
+    try std.testing.expectEqualSlices(u8, &expected_last32, seed[32..64]);
+}
+
+test "BIP-39 all-ones entropy produces zoo...wrong" {
+    const entropy = [_]u8{0xFF} ** 16;
+    const words = entropyToMnemonic(.@"128", &entropy);
+    for (0..11) |i| {
+        try std.testing.expectEqualStrings("zoo", words[i]);
+    }
+    try std.testing.expectEqualStrings("wrong", words[11]);
+}
+
+test "validate 24-word mnemonic from 256-bit entropy" {
+    // Use a known 32-byte entropy
+    var entropy: [32]u8 = undefined;
+    for (&entropy, 0..) |*b, i| b.* = @intCast(i);
+    const words = entropyToMnemonic(.@"256", &entropy);
+    // Should validate successfully
+    try validate(&words);
+    // Should have 24 words
+    try std.testing.expectEqual(@as(usize, 24), words.len);
+}
+
+test "toSeed different passphrases produce different seeds" {
+    const words = [_][]const u8{
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "about",
+    };
+    const seed_empty = try toSeed(&words, "");
+    const seed_trezor = try toSeed(&words, "TREZOR");
+    const seed_custom = try toSeed(&words, "my secret passphrase");
+    // All three should differ
+    try std.testing.expect(!std.mem.eql(u8, &seed_empty, &seed_trezor));
+    try std.testing.expect(!std.mem.eql(u8, &seed_empty, &seed_custom));
+    try std.testing.expect(!std.mem.eql(u8, &seed_trezor, &seed_custom));
+}

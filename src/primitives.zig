@@ -137,3 +137,45 @@ test "ZERO_HASH is 32 zero bytes" {
         try std.testing.expectEqual(@as(u8, 0), byte);
     }
 }
+
+test "EIP-55 all lowercase vector" {
+    const addr = try addressFromHex("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
+    const checksum = addressToChecksum(&addr);
+    try std.testing.expectEqualStrings("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", &checksum);
+}
+
+test "EIP-55 all uppercase vector" {
+    const addr = try addressFromHex("0xFB6916095CA1DF60BB79CE92CE3EA74C37C5D359");
+    const checksum = addressToChecksum(&addr);
+    try std.testing.expectEqualStrings("0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359", &checksum);
+}
+
+test "EIP-55 mixed case vectors" {
+    {
+        const addr = try addressFromHex("0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB");
+        const checksum = addressToChecksum(&addr);
+        try std.testing.expectEqualStrings("0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB", &checksum);
+    }
+    {
+        const addr = try addressFromHex("0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb");
+        const checksum = addressToChecksum(&addr);
+        try std.testing.expectEqualStrings("0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb", &checksum);
+    }
+}
+
+test "addressFromHex invalid hex error" {
+    try std.testing.expectError(error.InvalidHexCharacter, addressFromHex("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"));
+}
+
+test "addressFromHex wrong length error" {
+    try std.testing.expectError(error.InvalidHexLength, addressFromHex("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbe"));
+}
+
+test "addressToHex all-0xFF roundtrip" {
+    const addr: Address = [_]u8{0xFF} ** 20;
+    const hex = addressToHex(&addr);
+    try std.testing.expectEqualStrings("0xffffffffffffffffffffffffffffffffffffffff", &hex);
+
+    const parsed = try addressFromHex(&hex);
+    try std.testing.expect(addressEql(&addr, &parsed));
+}

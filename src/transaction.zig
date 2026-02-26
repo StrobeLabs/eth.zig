@@ -837,3 +837,277 @@ test "hashForSigning produces different hashes for different txs" {
 
     try std.testing.expect(!std.mem.eql(u8, &h1, &h2));
 }
+
+test "legacy tx alloy.rs test vector" {
+    const allocator = std.testing.allocator;
+
+    const to_addr = try hex_mod.hexToBytesFixed(20, "F0109fC8DF283027b6285cc889F5aA624EaC1F55");
+
+    const tx = Transaction{ .legacy = .{
+        .nonce = 0,
+        .gas_price = 21_000_000_000, // 21 gwei
+        .gas_limit = 2_000_000,
+        .to = to_addr,
+        .value = 1_000_000_000, // 1 gwei
+        .data = &.{},
+        .chain_id = 1,
+    } };
+
+    // Hash twice and verify determinism
+    const hash1 = try hashForSigning(allocator, tx);
+    const hash2 = try hashForSigning(allocator, tx);
+    try std.testing.expectEqualSlices(u8, &hash1, &hash2);
+
+    // Verify the payload starts with RLP list prefix and has reasonable length
+    const payload = try serializeForSigning(allocator, tx);
+    defer allocator.free(payload);
+    try std.testing.expect(payload[0] >= 0xc0);
+    try std.testing.expect(payload.len > 40);
+}
+
+test "eip1559 with specific parameters" {
+    const allocator = std.testing.allocator;
+
+    const to_addr = try hex_mod.hexToBytesFixed(20, "6069a6c32cf691f5982febae4faf8a6f3ab2f0f6");
+
+    const data_hex = "a22cb4650000000000000000000000005eee75727d804a2b13038928d36f8b188945a57a0000000000000000000000000000000000000000000000000000000000000000";
+    var data_buf: [68]u8 = undefined;
+    _ = try hex_mod.hexToBytes(&data_buf, data_hex);
+
+    const tx = Transaction{ .eip1559 = .{
+        .chain_id = 1,
+        .nonce = 0x42,
+        .max_priority_fee_per_gas = 1_000_000_000, // 1 gwei
+        .max_fee_per_gas = 20_000_000_000, // 20 gwei
+        .gas_limit = 44386,
+        .to = to_addr,
+        .value = 0,
+        .data = &data_buf,
+        .access_list = &.{},
+    } };
+
+    const payload = try serializeForSigning(allocator, tx);
+    defer allocator.free(payload);
+
+    // Must start with type prefix 0x02
+    try std.testing.expectEqual(@as(u8, 0x02), payload[0]);
+    // Should have reasonable length (includes 68 bytes of data)
+    try std.testing.expect(payload.len > 68);
+
+    // Hash is deterministic
+    const hash1 = try hashForSigning(allocator, tx);
+    const hash2 = try hashForSigning(allocator, tx);
+    try std.testing.expectEqualSlices(u8, &hash1, &hash2);
+}
+
+test "transaction with 256-byte data" {
+    const allocator = std.testing.allocator;
+
+    const data = [_]u8{0x42} ** 256;
+
+    const tx = Transaction{ .legacy = .{
+        .nonce = 1,
+        .gas_price = 30_000_000_000,
+        .gas_limit = 500_000,
+        .to = [_]u8{0xAA} ** 20,
+        .value = 0,
+        .data = &data,
+        .chain_id = 1,
+    } };
+
+    const payload = try serializeForSigning(allocator, tx);
+    defer allocator.free(payload);
+
+    // Payload must be longer than 256 bytes since it includes the data
+    try std.testing.expect(payload.len > 256);
+}
+
+test "access list with multiple entries" {
+    const allocator = std.testing.allocator;
+
+    const key_aa = [_]u8{0xAA} ** 32;
+    const key_bb = [_]u8{0xBB} ** 32;
+    const key_cc = [_]u8{0xCC} ** 32;
+
+    const keys_1 = [_][32]u8{ key_aa, key_bb };
+    const keys_2 = [_][32]u8{key_cc};
+
+    const items = [_]AccessListItem{
+        .{ .address = [_]u8{0x11} ** 20, .storage_keys = &keys_1 },
+        .{ .address = [_]u8{0x22} ** 20, .storage_keys = &keys_2 },
+        .{ .address = [_]u8{0x33} ** 20, .storage_keys = &.{} },
+    };
+
+    const tx = Transaction{ .eip2930 = .{
+        .chain_id = 1,
+        .nonce = 0,
+        .gas_price = 1_000_000_000,
+        .gas_limit = 100_000,
+        .to = [_]u8{0xFF} ** 20,
+        .value = 0,
+        .data = &.{},
+        .access_list = &items,
+    } };
+
+    const payload = try serializeForSigning(allocator, tx);
+    defer allocator.free(payload);
+
+    // Must start with type prefix 0x01
+    try std.testing.expectEqual(@as(u8, 0x01), payload[0]);
+    // Must include all access list data: 3 addresses + 3 storage keys
+    try std.testing.expect(payload.len > 100);
+}
+
+test "eip1559 with large fees" {
+    const allocator = std.testing.allocator;
+
+    const tx = Transaction{ .eip1559 = .{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 100_000_000_000, // 100 gwei
+        .max_fee_per_gas = 500_000_000_000, // 500 gwei
+        .gas_limit = 21000,
+        .to = [_]u8{0xBB} ** 20,
+        .value = 1_000_000_000_000_000_000, // 1 ETH
+        .data = &.{},
+        .access_list = &.{},
+    } };
+
+    const payload = try serializeForSigning(allocator, tx);
+    defer allocator.free(payload);
+
+    // Hash is deterministic
+    const hash1 = try hashForSigning(allocator, tx);
+    const hash2 = try hashForSigning(allocator, tx);
+    try std.testing.expectEqualSlices(u8, &hash1, &hash2);
+
+    // Payload should be larger than a simple tx due to large fee values
+    const simple_tx = Transaction{ .eip1559 = .{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 0,
+        .max_fee_per_gas = 0,
+        .gas_limit = 21000,
+        .to = [_]u8{0xBB} ** 20,
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+    } };
+
+    const simple_payload = try serializeForSigning(allocator, simple_tx);
+    defer allocator.free(simple_payload);
+
+    try std.testing.expect(payload.len > simple_payload.len);
+}
+
+test "eip4844 with three blob hashes" {
+    const allocator = std.testing.allocator;
+
+    const hash1 = [_]u8{0x01} ++ [_]u8{0xAA} ** 31;
+    const hash2 = [_]u8{0x01} ++ [_]u8{0xBB} ** 31;
+    const hash3 = [_]u8{0x01} ++ [_]u8{0xCC} ** 31;
+
+    const three_hashes = [_][32]u8{ hash1, hash2, hash3 };
+    const one_hash = [_][32]u8{hash1};
+
+    const tx_three = Transaction{ .eip4844 = .{
+        .chain_id = 1,
+        .nonce = 10,
+        .max_priority_fee_per_gas = 1_000_000_000, // 1 gwei
+        .max_fee_per_gas = 50_000_000_000, // 50 gwei
+        .gas_limit = 100_000,
+        .to = [_]u8{0xDD} ** 20,
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+        .max_fee_per_blob_gas = 1_000_000_000, // 1 gwei
+        .blob_versioned_hashes = &three_hashes,
+    } };
+
+    const tx_one = Transaction{ .eip4844 = .{
+        .chain_id = 1,
+        .nonce = 10,
+        .max_priority_fee_per_gas = 1_000_000_000,
+        .max_fee_per_gas = 50_000_000_000,
+        .gas_limit = 100_000,
+        .to = [_]u8{0xDD} ** 20,
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+        .max_fee_per_blob_gas = 1_000_000_000,
+        .blob_versioned_hashes = &one_hash,
+    } };
+
+    const payload_three = try serializeForSigning(allocator, tx_three);
+    defer allocator.free(payload_three);
+
+    const payload_one = try serializeForSigning(allocator, tx_one);
+    defer allocator.free(payload_one);
+
+    // Must start with type prefix 0x03
+    try std.testing.expectEqual(@as(u8, 0x03), payload_three[0]);
+    // Three hashes should be larger than one hash
+    try std.testing.expect(payload_three.len > payload_one.len);
+}
+
+test "signed eip1559 tx structure" {
+    const allocator = std.testing.allocator;
+
+    const tx = Transaction{ .eip1559 = .{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 1_500_000_000,
+        .max_fee_per_gas = 30_000_000_000,
+        .gas_limit = 21000,
+        .to = [_]u8{0xcc} ** 20,
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+    } };
+
+    const r = [_]u8{0x11} ** 32;
+    const s = [_]u8{0x22} ** 32;
+    const v: u8 = 0;
+
+    const signed = try serializeSigned(allocator, tx, r, s, v);
+    defer allocator.free(signed);
+
+    // Signed tx starts with 0x02
+    try std.testing.expectEqual(@as(u8, 0x02), signed[0]);
+    // Followed by RLP list
+    try std.testing.expect(signed[1] >= 0xc0);
+
+    // Signed version must be longer than unsigned version
+    const unsigned = try serializeForSigning(allocator, tx);
+    defer allocator.free(unsigned);
+    try std.testing.expect(signed.len > unsigned.len);
+}
+
+test "hashForSigning different chain IDs produce different hashes" {
+    const allocator = std.testing.allocator;
+
+    const tx_chain1 = Transaction{ .legacy = .{
+        .nonce = 0,
+        .gas_price = 20_000_000_000,
+        .gas_limit = 21000,
+        .to = [_]u8{0xaa} ** 20,
+        .value = 1_000_000_000_000_000_000,
+        .data = &.{},
+        .chain_id = 1,
+    } };
+
+    const tx_chain5 = Transaction{ .legacy = .{
+        .nonce = 0,
+        .gas_price = 20_000_000_000,
+        .gas_limit = 21000,
+        .to = [_]u8{0xaa} ** 20,
+        .value = 1_000_000_000_000_000_000,
+        .data = &.{},
+        .chain_id = 5,
+    } };
+
+    const h1 = try hashForSigning(allocator, tx_chain1);
+    const h5 = try hashForSigning(allocator, tx_chain5);
+
+    try std.testing.expect(!std.mem.eql(u8, &h1, &h5));
+}

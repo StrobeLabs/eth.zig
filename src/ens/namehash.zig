@@ -134,3 +134,29 @@ test "namehash consistency - foo.eth decomposed" {
     const result = namehash("foo.eth");
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
+
+test "namehash vitalik.eth official" {
+    const result = namehash("vitalik.eth");
+    const expected = try hex.hexToBytesFixed(32, "ee6c4522aab0003e8d14cd40a6af439055fd2577951148c14b6cea9a53475835");
+    try std.testing.expectEqualSlices(u8, &expected, &result);
+}
+
+test "namehash resolver.eth" {
+    // Manually compute: node starts as zeros, then hash "eth", then hash "resolver"
+    var node: [32]u8 = [_]u8{0} ** 32;
+    const eth_label = keccak.hash("eth");
+    node = keccak.hashConcat(&.{ &node, &eth_label });
+    const resolver_label = keccak.hash("resolver");
+    node = keccak.hashConcat(&.{ &node, &resolver_label });
+
+    const result = namehash("resolver.eth");
+    try std.testing.expectEqualSlices(u8, &node, &result);
+}
+
+test "namehash trailing dot handling" {
+    // A trailing dot produces an empty label at the end which gets skipped
+    // by the `if (label.len > 0)` check, so "foo.eth." should equal "foo.eth"
+    const with_dot = namehash("foo.eth.");
+    const without_dot = namehash("foo.eth");
+    try std.testing.expectEqualSlices(u8, &without_dot, &with_dot);
+}

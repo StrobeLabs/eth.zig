@@ -82,3 +82,53 @@ test "comptime hash equals runtime hash" {
     const runtime_result = hash("test");
     try std.testing.expectEqualSlices(u8, &comptime_result, &runtime_result);
 }
+
+test "keccak256 abc" {
+    const result = hash("abc");
+    const hex = @import("hex.zig");
+    const expected = try hex.hexToBytesFixed(32, "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45");
+    try std.testing.expectEqualSlices(u8, &expected, &result);
+}
+
+test "keccak256 testing" {
+    const result = hash("testing");
+    const hex = @import("hex.zig");
+    const expected = try hex.hexToBytesFixed(32, "5f16f4c7f149ac4f9510d9cf8cf384038ad348b3bcdc01915f95de12df9d1b02");
+    try std.testing.expectEqualSlices(u8, &expected, &result);
+}
+
+test "keccak256 256 zero bytes" {
+    const zero_bytes = [_]u8{0} ** 256;
+    const result1 = hash(&zero_bytes);
+    const result2 = hash(&zero_bytes);
+    // Verify 32-byte output
+    try std.testing.expectEqual(@as(usize, 32), result1.len);
+    // Verify determinism
+    try std.testing.expectEqualSlices(u8, &result1, &result2);
+}
+
+test "keccak256 4KB input" {
+    const big_input = [_]u8{0x42} ** 4096;
+    const result1 = hash(&big_input);
+    const result2 = hash(&big_input);
+    // Verify determinism
+    try std.testing.expectEqualSlices(u8, &result1, &result2);
+}
+
+test "keccak256 is not SHA3-256" {
+    const hex = @import("hex.zig");
+    const result = hash("");
+    // Keccak-256 of empty string
+    const keccak_expected = try hex.hexToBytesFixed(32, "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+    try std.testing.expectEqualSlices(u8, &keccak_expected, &result);
+    // SHA3-256 of empty string (must NOT match)
+    const sha3_expected = try hex.hexToBytesFixed(32, "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a");
+    try std.testing.expect(!std.mem.eql(u8, &sha3_expected, &result));
+}
+
+test "DeFi function selectors" {
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x09, 0x5e, 0xa7, 0xb3 }, &selector("approve(address,uint256)"));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x23, 0xb8, 0x72, 0xdd }, &selector("transferFrom(address,address,uint256)"));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x18, 0x16, 0x0d, 0xdd }, &selector("totalSupply()"));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x31, 0x3c, 0xe5, 0x67 }, &selector("decimals()"));
+}

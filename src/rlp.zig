@@ -651,3 +651,113 @@ test "encode-decode roundtrip u256 max" {
     const decoded = try decode(u256, encoded);
     try std.testing.expectEqual(max, decoded.value);
 }
+
+test "encode long string 56 bytes" {
+    const allocator = std.testing.allocator;
+    const data: [56]u8 = .{0xAA} ** 56;
+    const result = try encode(allocator, @as([]const u8, &data));
+    defer allocator.free(result);
+    // Long string: prefix = 0xb8 (0x80 + 55 + 1), length byte = 0x38 (56)
+    try std.testing.expectEqual(@as(usize, 58), result.len);
+    try std.testing.expectEqualSlices(u8, &.{ 0xb8, 0x38 }, result[0..2]);
+}
+
+test "encode long string 256 bytes" {
+    const allocator = std.testing.allocator;
+    const data: [256]u8 = .{0xBB} ** 256;
+    const result = try encode(allocator, @as([]const u8, &data));
+    defer allocator.free(result);
+    // Long string: prefix = 0xb9 (0x80 + 55 + 2), length = 256 = 0x01 0x00
+    try std.testing.expectEqual(@as(usize, 259), result.len);
+    try std.testing.expectEqualSlices(u8, &.{ 0xb9, 0x01, 0x00 }, result[0..3]);
+}
+
+test "encode u32 1000" {
+    const allocator = std.testing.allocator;
+    const result = try encode(allocator, @as(u32, 1000));
+    defer allocator.free(result);
+    // 1000 = 0x03E8, needs 2 bytes
+    try std.testing.expectEqualSlices(u8, &.{ 0x82, 0x03, 0xe8 }, result);
+}
+
+test "encode u32 100000" {
+    const allocator = std.testing.allocator;
+    const result = try encode(allocator, @as(u32, 100000));
+    defer allocator.free(result);
+    // 100000 = 0x0186A0, needs 3 bytes
+    try std.testing.expectEqualSlices(u8, &.{ 0x83, 0x01, 0x86, 0xa0 }, result);
+}
+
+test "encode byte array [1]u8{0x00}" {
+    const allocator = std.testing.allocator;
+    const data = [1]u8{0x00};
+    const result = try encode(allocator, data);
+    defer allocator.free(result);
+    // 0x00 < 0x80, so single byte encoding
+    try std.testing.expectEqualSlices(u8, &.{0x00}, result);
+}
+
+test "encode byte array [1]u8{0x7f}" {
+    const allocator = std.testing.allocator;
+    const data = [1]u8{0x7f};
+    const result = try encode(allocator, data);
+    defer allocator.free(result);
+    // 0x7f < 0x80, so single byte encoding
+    try std.testing.expectEqualSlices(u8, &.{0x7f}, result);
+}
+
+test "encode byte array [1]u8{0x80}" {
+    const allocator = std.testing.allocator;
+    const data = [1]u8{0x80};
+    const result = try encode(allocator, data);
+    defer allocator.free(result);
+    // 0x80 >= 0x80, so short string encoding: prefix + byte
+    try std.testing.expectEqualSlices(u8, &.{ 0x81, 0x80 }, result);
+}
+
+test "decode u8 zero" {
+    // RLP encoding of 0 is 0x80 (empty string)
+    const result = try decode(u8, &.{0x80});
+    try std.testing.expectEqual(@as(u8, 0), result.value);
+    try std.testing.expectEqual(@as(usize, 0), result.rest.len);
+}
+
+test "decode invalid non-canonical single byte" {
+    // 0x81 0x42 encodes byte 0x42 using 1-byte string form,
+    // but 0x42 < 0x80 should have been encoded as just {0x42}
+    const result = decode(u8, &.{ 0x81, 0x42 });
+    try std.testing.expectError(error.NonCanonical, result);
+}
+
+test "encode-decode roundtrip u64 max" {
+    const allocator = std.testing.allocator;
+    const max: u64 = std.math.maxInt(u64);
+    const encoded = try encode(allocator, max);
+    defer allocator.free(encoded);
+
+    const decoded = try decode(u64, encoded);
+    try std.testing.expectEqual(max, decoded.value);
+}
+
+test "encode u16 0x400" {
+    const allocator = std.testing.allocator;
+    const result = try encode(allocator, @as(u16, 0x400));
+    defer allocator.free(result);
+    // 0x400 = 1024, needs 2 bytes: 0x04, 0x00
+    try std.testing.expectEqualSlices(u8, &.{ 0x82, 0x04, 0x00 }, result);
+}
+
+test "encode-decode roundtrip [32]u8" {
+    const allocator = std.testing.allocator;
+    var data: [32]u8 = undefined;
+    for (0..32) |i| {
+        data[i] = @intCast(i);
+    }
+    const encoded = try encode(allocator, data);
+    defer allocator.free(encoded);
+
+    const decoded = try decode([32]u8, encoded);
+    for (0..32) |i| {
+        try std.testing.expectEqual(@as(u8, @intCast(i)), decoded.value[i]);
+    }
+}

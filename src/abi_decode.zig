@@ -632,3 +632,181 @@ test "decode two dynamic strings" {
     try testing.expectEqualSlices(u8, "abc", decoded[0].string);
     try testing.expectEqualSlices(u8, "def", decoded[1].string);
 }
+
+test "encode-decode roundtrip fixed_bytes1" {
+    const allocator = testing.allocator;
+    const encode_mod = @import("abi_encode.zig");
+
+    var fb = AbiValue.FixedBytes{ .len = 1 };
+    fb.data[0] = 0xAB;
+
+    const original = [_]AbiValue{
+        .{ .fixed_bytes = fb },
+    };
+
+    const encoded = try encode_mod.encodeValues(allocator, &original);
+    defer allocator.free(encoded);
+
+    const types = [_]AbiType{.bytes1};
+    const decoded = try decodeValues(encoded, &types, allocator);
+    defer freeValues(decoded, allocator);
+
+    try testing.expectEqual(@as(u8, 1), decoded[0].fixed_bytes.len);
+    try testing.expectEqual(@as(u8, 0xAB), decoded[0].fixed_bytes.data[0]);
+}
+
+test "encode-decode roundtrip fixed_bytes16" {
+    const allocator = testing.allocator;
+    const encode_mod = @import("abi_encode.zig");
+
+    var fb = AbiValue.FixedBytes{ .len = 16 };
+    for (0..16) |i| {
+        fb.data[i] = 0xCC;
+    }
+
+    const original = [_]AbiValue{
+        .{ .fixed_bytes = fb },
+    };
+
+    const encoded = try encode_mod.encodeValues(allocator, &original);
+    defer allocator.free(encoded);
+
+    const types = [_]AbiType{.bytes16};
+    const decoded = try decodeValues(encoded, &types, allocator);
+    defer freeValues(decoded, allocator);
+
+    try testing.expectEqual(@as(u8, 16), decoded[0].fixed_bytes.len);
+    for (0..16) |i| {
+        try testing.expectEqual(@as(u8, 0xCC), decoded[0].fixed_bytes.data[i]);
+    }
+}
+
+test "decode large dynamic bytes 100 bytes" {
+    const allocator = testing.allocator;
+
+    // Word 0: offset = 0x20 (32)
+    // Word 1: length = 100 (0x64)
+    // Words 2-5: 100 bytes of 0xAA + 28 bytes zero padding = 128 bytes
+    // Total: 32 + 32 + 128 = 192 bytes
+    var data: [192]u8 = [_]u8{0} ** 192;
+    data[31] = 0x20; // offset = 32
+    data[63] = 0x64; // length = 100
+    for (64..164) |i| {
+        data[i] = 0xAA;
+    }
+
+    const types = [_]AbiType{.bytes};
+    const values = try decodeValues(&data, &types, allocator);
+    defer freeValues(values, allocator);
+
+    try testing.expectEqual(@as(usize, 100), values[0].bytes.len);
+    for (values[0].bytes) |b| {
+        try testing.expectEqual(@as(u8, 0xAA), b);
+    }
+}
+
+test "decode large string 128 bytes" {
+    const allocator = testing.allocator;
+
+    // Word 0: offset = 0x20 (32)
+    // Word 1: length = 128 (0x80)
+    // Words 2-5: 128 bytes of 'B' (0x42), exactly 4 words, no padding needed
+    // Total: 32 + 32 + 128 = 192 bytes
+    var data: [192]u8 = [_]u8{0} ** 192;
+    data[31] = 0x20; // offset = 32
+    data[62] = 0x00;
+    data[63] = 0x80; // length = 128
+    for (64..192) |i| {
+        data[i] = 0x42; // 'B'
+    }
+
+    const types = [_]AbiType{.string};
+    const values = try decodeValues(&data, &types, allocator);
+    defer freeValues(values, allocator);
+
+    try testing.expectEqual(@as(usize, 128), values[0].string.len);
+    for (values[0].string) |b| {
+        try testing.expectEqual(@as(u8, 'B'), b);
+    }
+}
+
+test "decode offset out of bounds" {
+    const allocator = testing.allocator;
+
+    // 64-byte buffer where word 0 has offset pointing to position 200
+    var data: [64]u8 = [_]u8{0} ** 64;
+    data[31] = 200; // offset = 200 (way past end of 64-byte buffer)
+
+    const types = [_]AbiType{.bytes};
+    const result = decodeValues(&data, &types, allocator);
+    try testing.expectError(error.OffsetOutOfBounds, result);
+}
+
+test "decode length out of bounds" {
+    const allocator = testing.allocator;
+
+    // 96-byte buffer: word 0 = offset 0x20, word 1 = length 9999
+    var data: [96]u8 = [_]u8{0} ** 96;
+    data[31] = 0x20; // offset = 32
+    data[62] = 0x27; // 9999 = 0x270F
+    data[63] = 0x0F;
+
+    const types = [_]AbiType{.bytes};
+    const result = decodeValues(&data, &types, allocator);
+    try testing.expectError(error.LengthOutOfBounds, result);
+}
+
+test "decode bytes exact 32-byte alignment" {
+    const allocator = testing.allocator;
+
+    // 64 bytes of data = exactly 2 words, no padding needed
+    // Word 0: offset = 0x20, Word 1: length = 64, Words 2-3: 64 bytes of 0xBB
+    // Total: 32 + 32 + 64 = 128 bytes
+    var data: [128]u8 = [_]u8{0} ** 128;
+    data[31] = 0x20; // offset = 32
+    data[63] = 0x40; // length = 64
+    for (64..128) |i| {
+        data[i] = 0xBB;
+    }
+
+    const types = [_]AbiType{.bytes};
+    const values = try decodeValues(&data, &types, allocator);
+    defer freeValues(values, allocator);
+
+    try testing.expectEqual(@as(usize, 64), values[0].bytes.len);
+    for (values[0].bytes) |b| {
+        try testing.expectEqual(@as(u8, 0xBB), b);
+    }
+}
+
+test "encode-decode ERC20 transfer return bool true" {
+    const allocator = testing.allocator;
+    const encode_mod = @import("abi_encode.zig");
+
+    // Encode bool(true), decode, verify
+    const original_true = [_]AbiValue{
+        .{ .boolean = true },
+    };
+
+    const encoded_true = try encode_mod.encodeValues(allocator, &original_true);
+    defer allocator.free(encoded_true);
+
+    const types = [_]AbiType{.bool};
+    const decoded_true = try decodeValues(encoded_true, &types, allocator);
+    defer freeValues(decoded_true, allocator);
+
+    try testing.expect(decoded_true[0].boolean);
+
+    // Encode bool(false), decode, verify
+    const original_false = [_]AbiValue{
+        .{ .boolean = false },
+    };
+
+    const encoded_false = try encode_mod.encodeValues(allocator, &original_false);
+    defer allocator.free(encoded_false);
+
+    const decoded_false = try decodeValues(encoded_false, &types, allocator);
+    defer freeValues(decoded_false, allocator);
+
+    try testing.expect(!decoded_false[0].boolean);
+}

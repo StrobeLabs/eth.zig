@@ -900,3 +900,292 @@ test "encodeFunctionCall - balanceOf(address)" {
     try testing.expectEqual(@as(usize, 36), encoded.len);
     try testing.expectEqualSlices(u8, &.{ 0x70, 0xa0, 0x82, 0x31 }, encoded[0..4]);
 }
+
+test "encode fixed_bytes1" {
+    const allocator = testing.allocator;
+    var fb = AbiValue.FixedBytes{ .len = 1 };
+    fb.data[0] = 0xAB;
+
+    const values = [_]AbiValue{.{ .fixed_bytes = fb }};
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    try testing.expectEqual(@as(usize, 32), encoded.len);
+    try testing.expectEqual(@as(u8, 0xAB), encoded[0]);
+    for (encoded[1..32]) |b| {
+        try testing.expectEqual(@as(u8, 0), b);
+    }
+}
+
+test "encode fixed_bytes16" {
+    const allocator = testing.allocator;
+    var fb = AbiValue.FixedBytes{ .len = 16 };
+    @memset(fb.data[0..16], 0xCC);
+
+    const values = [_]AbiValue{.{ .fixed_bytes = fb }};
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    try testing.expectEqual(@as(usize, 32), encoded.len);
+    for (encoded[0..16]) |b| {
+        try testing.expectEqual(@as(u8, 0xCC), b);
+    }
+    for (encoded[16..32]) |b| {
+        try testing.expectEqual(@as(u8, 0), b);
+    }
+}
+
+test "encode fixed_bytes31" {
+    const allocator = testing.allocator;
+    var fb = AbiValue.FixedBytes{ .len = 31 };
+    @memset(fb.data[0..31], 0xDD);
+
+    const values = [_]AbiValue{.{ .fixed_bytes = fb }};
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    try testing.expectEqual(@as(usize, 32), encoded.len);
+    for (encoded[0..31]) |b| {
+        try testing.expectEqual(@as(u8, 0xDD), b);
+    }
+    // Byte 31 is right-padded with zero
+    try testing.expectEqual(@as(u8, 0x00), encoded[31]);
+}
+
+test "encode fixed_array static uint256[3]" {
+    const allocator = testing.allocator;
+    const items = [_]AbiValue{
+        .{ .uint256 = 10 },
+        .{ .uint256 = 20 },
+        .{ .uint256 = 30 },
+    };
+    const values = [_]AbiValue{.{ .fixed_array = &items }};
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    // All elements are static, so encoding is inline: 3 * 32 = 96 bytes
+    try testing.expectEqual(@as(usize, 96), encoded.len);
+    // Value 10 = 0x0a at byte 31
+    try testing.expectEqual(@as(u8, 0x0a), encoded[31]);
+    // Value 20 = 0x14 at byte 63
+    try testing.expectEqual(@as(u8, 0x14), encoded[63]);
+    // Value 30 = 0x1e at byte 95
+    try testing.expectEqual(@as(u8, 0x1e), encoded[95]);
+}
+
+test "encode Solidity spec baz(uint32,bool)" {
+    const allocator = testing.allocator;
+    const keccak_mod = @import("keccak.zig");
+    const sel = keccak_mod.selector("baz(uint32,bool)");
+
+    // Verify the selector matches the Solidity ABI spec
+    try testing.expectEqualSlices(u8, &.{ 0xcd, 0xcd, 0x77, 0xc0 }, &sel);
+
+    const values = [_]AbiValue{
+        .{ .uint256 = 69 },
+        .{ .boolean = true },
+    };
+    const encoded = try encodeFunctionCall(allocator, sel, &values);
+    defer allocator.free(encoded);
+
+    // 4 bytes selector + 2 * 32 bytes args = 68 bytes
+    try testing.expectEqual(@as(usize, 68), encoded.len);
+
+    // Selector
+    try testing.expectEqualSlices(u8, &.{ 0xcd, 0xcd, 0x77, 0xc0 }, encoded[0..4]);
+
+    // uint32(69) = 0x45 at byte 4+31 = 35
+    try testing.expectEqual(@as(u8, 0x45), encoded[35]);
+
+    // bool(true) = 0x01 at byte 4+63 = 67
+    try testing.expectEqual(@as(u8, 0x01), encoded[67]);
+}
+
+test "encode Solidity spec sam(bytes,bool,uint256[])" {
+    const allocator = testing.allocator;
+
+    // Encode the arguments of sam("dave", true, [1,2,3]) using encodeValues
+    const array_items = [_]AbiValue{
+        .{ .uint256 = 1 },
+        .{ .uint256 = 2 },
+        .{ .uint256 = 3 },
+    };
+    const values = [_]AbiValue{
+        .{ .bytes = "dave" },
+        .{ .boolean = true },
+        .{ .array = &array_items },
+    };
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    // Head: 3 words (96 bytes) - offset_bytes, bool, offset_array
+    // Tail for bytes("dave"): 32 (length=4) + 32 (data padded) = 64 bytes
+    // Tail for array([1,2,3]): 32 (length=3) + 3*32 (elements) = 128 bytes
+    // Total: 96 + 64 + 128 = 288 bytes
+    try testing.expectEqual(@as(usize, 288), encoded.len);
+
+    // Head word 0: offset to bytes tail = 96 = 0x60
+    try testing.expectEqual(@as(u8, 0x60), encoded[31]);
+
+    // Head word 1: bool(true) = 0x01
+    try testing.expectEqual(@as(u8, 0x01), encoded[63]);
+
+    // Head word 2: offset to array tail = 96 + 64 = 160 = 0xa0
+    try testing.expectEqual(@as(u8, 0xa0), encoded[95]);
+
+    // Tail for bytes: length = 4 at offset 96
+    try testing.expectEqual(@as(u8, 0x04), encoded[127]);
+
+    // Tail for bytes: "dave" at offset 128
+    try testing.expectEqualSlices(u8, "dave", encoded[128..132]);
+
+    // Tail for array: length = 3 at offset 160
+    try testing.expectEqual(@as(u8, 0x03), encoded[191]);
+
+    // Array elements: 1, 2, 3
+    try testing.expectEqual(@as(u8, 0x01), encoded[223]);
+    try testing.expectEqual(@as(u8, 0x02), encoded[255]);
+    try testing.expectEqual(@as(u8, 0x03), encoded[287]);
+}
+
+test "encode ERC20 approve exact bytes" {
+    const allocator = testing.allocator;
+    const keccak_mod = @import("keccak.zig");
+    const sel = keccak_mod.selector("approve(address,uint256)");
+
+    // approve selector should be 0x095ea7b3
+    try testing.expectEqualSlices(u8, &.{ 0x09, 0x5e, 0xa7, 0xb3 }, &sel);
+
+    // UniswapV3 router address
+    const spender = [20]u8{
+        0x68, 0xb3, 0x46, 0x58, 0x33, 0xfb, 0x72, 0xA7, 0x0e, 0xcD,
+        0xF4, 0x85, 0xE0, 0xe4, 0xC7, 0xbD, 0x86, 0x65, 0xFc, 0x45,
+    };
+
+    // MAX u256 (all 0xff)
+    const max_u256: u256 = std.math.maxInt(u256);
+
+    const values = [_]AbiValue{
+        .{ .address = spender },
+        .{ .uint256 = max_u256 },
+    };
+    const encoded = try encodeFunctionCall(allocator, sel, &values);
+    defer allocator.free(encoded);
+
+    // 4 bytes selector + 2 * 32 bytes = 68 bytes
+    try testing.expectEqual(@as(usize, 68), encoded.len);
+
+    // Verify selector
+    try testing.expectEqualSlices(u8, &.{ 0x09, 0x5e, 0xa7, 0xb3 }, encoded[0..4]);
+
+    // Amount word (bytes 36..68) should be all 0xff
+    for (encoded[36..68]) |b| {
+        try testing.expectEqual(@as(u8, 0xff), b);
+    }
+}
+
+test "encode large string 100 bytes" {
+    const allocator = testing.allocator;
+    const data = [_]u8{'A'} ** 100;
+    const values = [_]AbiValue{.{ .string = &data }};
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    // Head: 1 offset word (32 bytes) = 0x20
+    // Tail: length word (32 bytes) + data (100 bytes) + padding ((32 - 100%32)%32 = 28 bytes) = 160 bytes
+    // Total: 32 + 32 + 128 = 192 bytes
+    try testing.expectEqual(@as(usize, 192), encoded.len);
+
+    // Offset = 32 = 0x20
+    try testing.expectEqual(@as(u8, 0x20), encoded[31]);
+
+    // Length = 100 = 0x64
+    try testing.expectEqual(@as(u8, 0x64), encoded[63]);
+
+    // Data: 100 'A' bytes starting at offset 64
+    for (encoded[64..164]) |b| {
+        try testing.expectEqual(@as(u8, 'A'), b);
+    }
+
+    // Padding: 28 zero bytes
+    for (encoded[164..192]) |b| {
+        try testing.expectEqual(@as(u8, 0), b);
+    }
+}
+
+test "encode int256 negative -128" {
+    const allocator = testing.allocator;
+    const values = [_]AbiValue{.{ .int256 = -128 }};
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    try testing.expectEqual(@as(usize, 32), encoded.len);
+    // -128 in two's complement is 0xFF...FF80
+    for (encoded[0..31]) |b| {
+        try testing.expectEqual(@as(u8, 0xFF), b);
+    }
+    try testing.expectEqual(@as(u8, 0x80), encoded[31]);
+}
+
+test "encodeFunctionCall totalSupply no args" {
+    const allocator = testing.allocator;
+    const keccak_mod = @import("keccak.zig");
+    const sel = keccak_mod.selector("totalSupply()");
+
+    // totalSupply() selector should be 0x18160ddd
+    try testing.expectEqualSlices(u8, &.{ 0x18, 0x16, 0x0d, 0xdd }, &sel);
+
+    const values = [_]AbiValue{};
+    const encoded = try encodeFunctionCall(allocator, sel, &values);
+    defer allocator.free(encoded);
+
+    // No arguments, so result is just the 4-byte selector
+    try testing.expectEqual(@as(usize, 4), encoded.len);
+    try testing.expectEqualSlices(u8, &.{ 0x18, 0x16, 0x0d, 0xdd }, encoded[0..4]);
+}
+
+test "encode two dynamic arrays different lengths" {
+    const allocator = testing.allocator;
+    const items1 = [_]AbiValue{
+        .{ .uint256 = 1 },
+        .{ .uint256 = 2 },
+    };
+    const items2 = [_]AbiValue{
+        .{ .uint256 = 3 },
+        .{ .uint256 = 4 },
+        .{ .uint256 = 5 },
+    };
+    const values = [_]AbiValue{
+        .{ .array = &items1 },
+        .{ .array = &items2 },
+    };
+    const encoded = try encodeValues(allocator, &values);
+    defer allocator.free(encoded);
+
+    // Head: 2 offset words = 64 bytes
+    // Tail for array1: 32 (length=2) + 2*32 (elements) = 96 bytes
+    // Tail for array2: 32 (length=3) + 3*32 (elements) = 128 bytes
+    // Total: 64 + 96 + 128 = 288 bytes
+    try testing.expectEqual(@as(usize, 288), encoded.len);
+
+    // First offset = 64 = 0x40
+    try testing.expectEqual(@as(u8, 0x40), encoded[31]);
+
+    // Second offset = 64 + 96 = 160 = 0xa0
+    try testing.expectEqual(@as(u8, 0xa0), encoded[63]);
+
+    // First array length = 2
+    try testing.expectEqual(@as(u8, 0x02), encoded[95]);
+
+    // First array elements: 1, 2
+    try testing.expectEqual(@as(u8, 0x01), encoded[127]);
+    try testing.expectEqual(@as(u8, 0x02), encoded[159]);
+
+    // Second array length = 3
+    try testing.expectEqual(@as(u8, 0x03), encoded[191]);
+
+    // Second array elements: 3, 4, 5
+    try testing.expectEqual(@as(u8, 0x03), encoded[223]);
+    try testing.expectEqual(@as(u8, 0x04), encoded[255]);
+    try testing.expectEqual(@as(u8, 0x05), encoded[287]);
+}

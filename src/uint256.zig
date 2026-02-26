@@ -449,3 +449,83 @@ test "mulDiv result overflow" {
     // (MAX * MAX) / 1 overflows u256
     try std.testing.expectEqual(@as(?u256, null), mulDiv(MAX, MAX, 1));
 }
+
+test "fastDiv power-of-2 divisors" {
+    try std.testing.expectEqual(MAX / (@as(u256, 1) << 64), fastDiv(MAX, @as(u256, 1) << 64));
+    try std.testing.expectEqual(MAX / (@as(u256, 1) << 128), fastDiv(MAX, @as(u256, 1) << 128));
+    try std.testing.expectEqual(MAX / (@as(u256, 1) << 192), fastDiv(MAX, @as(u256, 1) << 192));
+}
+
+test "fastDiv 1-limb values" {
+    // Both fit in u64
+    try std.testing.expectEqual(@as(u256, 142857), fastDiv(1_000_000, 7));
+}
+
+test "fastDiv 2-limb numerator 1-limb divisor" {
+    const a: u256 = (@as(u256, 1) << 100) + 999;
+    const b: u256 = 1_000_000_007;
+    try std.testing.expectEqual(a / b, fastDiv(a, b));
+}
+
+test "fastDiv identity a / 1" {
+    try std.testing.expectEqual(@as(u256, 0), fastDiv(0, 1));
+    try std.testing.expectEqual(@as(u256, 1), fastDiv(1, 1));
+    try std.testing.expectEqual(MAX, fastDiv(MAX, 1));
+}
+
+test "fastDiv identity a / a" {
+    try std.testing.expectEqual(@as(u256, 1), fastDiv(1, 1));
+    try std.testing.expectEqual(@as(u256, 1), fastDiv(42, 42));
+    try std.testing.expectEqual(@as(u256, 1), fastDiv(MAX, MAX));
+}
+
+test "mulDiv edge cases" {
+    try std.testing.expectEqual(@as(?u256, 0), mulDiv(0, MAX, 1));
+    try std.testing.expectEqual(@as(?u256, 1), mulDiv(1, 1, 1));
+    try std.testing.expectEqual(@as(?u256, 1), mulDiv(MAX, 1, MAX));
+    try std.testing.expectEqual(@as(?u256, 0), mulDiv(0, 0, 1));
+}
+
+test "mulDiv Q96 arithmetic" {
+    // Identity: Q96 * Q96 / Q96 == Q96
+    try std.testing.expectEqual(@as(?u256, Q96), mulDiv(Q96, Q96, Q96));
+    // (Q96 * 2) * Q96 / (Q96 * 2) == Q96
+    try std.testing.expectEqual(@as(?u256, Q96), mulDiv(Q96 * 2, Q96, Q96 * 2));
+}
+
+test "mulDiv large non-overflow" {
+    // (1 << 200) * (1 << 55) = 1 << 255 fits in u256
+    // (1 << 255) / (1 << 100) = 1 << 155
+    const a: u256 = @as(u256, 1) << 200;
+    const b: u256 = @as(u256, 1) << 55;
+    const d: u256 = @as(u256, 1) << 100;
+    try std.testing.expectEqual(@as(?u256, @as(u256, 1) << 155), mulDiv(a, b, d));
+}
+
+test "fromHex toHex roundtrip comprehensive" {
+    const allocator = std.testing.allocator;
+    const values = [_]u256{ 0, 1, 0xFF, 0x100, 0x1234567890abcdef, MAX };
+    for (values) |v| {
+        const hex_str = try toHex(allocator, v);
+        defer allocator.free(hex_str);
+        const recovered = try fromHex(hex_str);
+        try std.testing.expectEqual(v, recovered);
+    }
+}
+
+test "fromBigEndianBytes zero" {
+    const zero_bytes = [_]u8{0} ** 32;
+    try std.testing.expectEqual(@as(u256, 0), fromBigEndianBytes(zero_bytes));
+}
+
+test "fromBigEndianBytes and toBigEndianBytes MAX" {
+    const bytes = toBigEndianBytes(MAX);
+    const recovered = fromBigEndianBytes(bytes);
+    try std.testing.expectEqual(MAX, recovered);
+}
+
+test "fastMul small values" {
+    try std.testing.expectEqual(@as(u256, 20000), fastMul(100, 200));
+    try std.testing.expectEqual(@as(u256, 0), fastMul(0, MAX));
+    try std.testing.expectEqual(MAX, fastMul(1, MAX));
+}

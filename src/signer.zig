@@ -205,3 +205,45 @@ test "Signer deterministic signatures" {
 
     try std.testing.expect(sig1.eql(sig2));
 }
+
+test "Signer with Hardhat account #2" {
+    const hex = @import("hex.zig");
+    const private_key = try hex.hexToBytesFixed(32, "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
+    const expected_address = try hex.hexToBytesFixed(20, "3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+
+    const signer = Signer.init(private_key);
+    const addr = try signer.address();
+    try std.testing.expectEqualSlices(u8, &expected_address, &addr);
+}
+
+test "Signer with Hardhat account #3" {
+    const hex = @import("hex.zig");
+    const private_key = try hex.hexToBytesFixed(32, "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6");
+    const expected_address = try hex.hexToBytesFixed(20, "90F79bf6EB2c4f870365E785982E1f101E93b906");
+
+    const signer = Signer.init(private_key);
+    const addr = try signer.address();
+    try std.testing.expectEqualSlices(u8, &expected_address, &addr);
+}
+
+test "Signer with Hardhat account #4" {
+    const hex = @import("hex.zig");
+    const private_key = try hex.hexToBytesFixed(32, "47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a");
+    const expected_address = try hex.hexToBytesFixed(20, "15d34AAf54267DB7D7c367839AAf71A00a2C6A65");
+
+    const signer = Signer.init(private_key);
+    const addr = try signer.address();
+    try std.testing.expectEqualSlices(u8, &expected_address, &addr);
+}
+
+test "hashPersonalMessage with 100-byte message" {
+    const message: [100]u8 = [_]u8{'A'} ** 100;
+    const hash = Signer.hashPersonalMessage(&message);
+
+    // The prefix for a 100-byte message includes "100" (3 chars)
+    const prefix = "\x19Ethereum Signed Message:\n";
+    const len_str = "100";
+    const slices: []const []const u8 = &.{ prefix, len_str, &message };
+    const expected = keccak.hashConcat(slices);
+    try std.testing.expectEqualSlices(u8, &expected, &hash);
+}

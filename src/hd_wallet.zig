@@ -226,3 +226,81 @@ test "known BIP-39 mnemonic to address" {
     const addr2 = key2.toAddress();
     try std.testing.expectEqualSlices(u8, &addr, &addr2);
 }
+
+test "BIP-32 master key from known seed" {
+    const hex_mod = @import("hex.zig");
+    // Known 64-byte seed (first 32 bytes from hex, rest zero)
+    var seed: [64]u8 = [_]u8{0} ** 64;
+    const first_half = try hex_mod.hexToBytesFixed(32, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    @memcpy(seed[0..32], &first_half);
+
+    const master = try masterKeyFromSeed(seed);
+    // Master key should be non-zero
+    var key_nonzero = false;
+    for (master.key) |b| if (b != 0) {
+        key_nonzero = true;
+        break;
+    };
+    try std.testing.expect(key_nonzero);
+
+    // Chain code should be non-zero
+    var cc_nonzero = false;
+    for (master.chain_code) |b| if (b != 0) {
+        cc_nonzero = true;
+        break;
+    };
+    try std.testing.expect(cc_nonzero);
+
+    // Deterministic
+    const master2 = try masterKeyFromSeed(seed);
+    try std.testing.expectEqualSlices(u8, &master.key, &master2.key);
+    try std.testing.expectEqualSlices(u8, &master.chain_code, &master2.chain_code);
+}
+
+test "known mnemonic abandon...about to exact address" {
+    const mnemonic_mod = @import("mnemonic.zig");
+    const hex_mod = @import("hex.zig");
+    const words = [_][]const u8{
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "about",
+    };
+    const seed = try mnemonic_mod.toSeed(&words, "");
+    const key = try deriveEthAccount(seed, 0);
+    const addr = key.toAddress();
+    const addr_hex = primitives.addressToChecksum(&addr);
+    // Well-known address for this mnemonic
+    const expected = try hex_mod.hexToBytesFixed(20, "0x9858EfFD232B4033E47d90003D41EC34EcaEda94");
+    try std.testing.expectEqualSlices(u8, &expected, &addr);
+    _ = addr_hex;
+}
+
+test "BIP-44 second account index produces different key and address" {
+    const mnemonic_mod = @import("mnemonic.zig");
+    const words = [_][]const u8{
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "abandon",
+        "abandon", "abandon", "abandon", "about",
+    };
+    const seed = try mnemonic_mod.toSeed(&words, "");
+    const key0 = try deriveEthAccount(seed, 0);
+    const key1 = try deriveEthAccount(seed, 1);
+    // Keys must differ
+    try std.testing.expect(!std.mem.eql(u8, &key0.key, &key1.key));
+    // Addresses must differ
+    const addr0 = key0.toAddress();
+    const addr1 = key1.toAddress();
+    try std.testing.expect(!std.mem.eql(u8, &addr0, &addr1));
+}
+
+test "deriveEthAccount key bytes deterministic" {
+    var seed: [64]u8 = undefined;
+    for (&seed, 0..) |*b, i| b.* = @intCast(i % 256);
+    const key1 = try deriveEthAccount(seed, 0);
+    const key2 = try deriveEthAccount(seed, 0);
+    try std.testing.expectEqualSlices(u8, &key1.key, &key2.key);
+    try std.testing.expectEqualSlices(u8, &key1.chain_code, &key2.chain_code);
+    const addr1 = key1.toAddress();
+    const addr2 = key2.toAddress();
+    try std.testing.expectEqualSlices(u8, &addr1, &addr2);
+}

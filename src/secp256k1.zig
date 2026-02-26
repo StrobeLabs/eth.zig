@@ -450,3 +450,87 @@ test "sign and recover with second test key" {
     const recovered_addr = try recoverAddress(sig, message_hash);
     try std.testing.expectEqualSlices(u8, &expected_address, &recovered_addr);
 }
+
+test "sign with small private key (key=1)" {
+    // Private key = 1 (31 zero bytes + 0x01)
+    var private_key: [32]u8 = [_]u8{0} ** 32;
+    private_key[31] = 0x01;
+
+    const message_hash = keccak.hash("test");
+    const sig = try sign(private_key, message_hash);
+
+    // Recover address from the signature
+    const recovered_addr = try recoverAddress(sig, message_hash);
+
+    // Derive address directly from the private key
+    const pubkey = try derivePublicKey(private_key);
+    const expected_addr = pubkeyToAddress(pubkey);
+
+    try std.testing.expectEqualSlices(u8, &expected_addr, &recovered_addr);
+}
+
+test "sign and recover produces correct address for multiple messages" {
+    const hex = @import("hex.zig");
+    // Hardhat account #0
+    const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    const expected_address = try hex.hexToBytesFixed(20, "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+    const messages = [_][]const u8{ "msg1", "msg2", "msg3", "msg4", "msg5" };
+
+    for (messages) |msg| {
+        const message_hash = keccak.hash(msg);
+        const sig = try sign(private_key, message_hash);
+        const recovered_addr = try recoverAddress(sig, message_hash);
+        try std.testing.expectEqualSlices(u8, &expected_address, &recovered_addr);
+    }
+}
+
+test "derivePublicKey then pubkeyToAddress matches Signer.address" {
+    const hex = @import("hex.zig");
+    // Hardhat account #0
+    const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    const expected_address = try hex.hexToBytesFixed(20, "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+    const pubkey = try derivePublicKey(private_key);
+    const addr = pubkeyToAddress(pubkey);
+    try std.testing.expectEqualSlices(u8, &expected_address, &addr);
+}
+
+test "sign produces low-s (EIP-2) canonical signature" {
+    const hex = @import("hex.zig");
+    // Hardhat account #0
+    const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    // n/2 = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0
+    const half_n: [32]u8 = .{
+        0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D,
+        0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0,
+    };
+
+    const messages = [_][]const u8{ "canonical1", "canonical2", "canonical3", "canonical4", "canonical5" };
+
+    for (messages) |msg| {
+        const message_hash = keccak.hash(msg);
+        const sig = try sign(private_key, message_hash);
+
+        // Extract s as big-endian bytes and verify s <= n/2
+        const s_bytes = sig.s;
+        var s_is_lte = false;
+        for (0..32) |i| {
+            if (s_bytes[i] < half_n[i]) {
+                s_is_lte = true;
+                break;
+            } else if (s_bytes[i] > half_n[i]) {
+                break;
+            }
+        }
+        // If we didn't break early, all bytes were equal (s == n/2), which is also valid
+        if (!s_is_lte) {
+            // Check if all bytes are equal (s == n/2)
+            s_is_lte = std.mem.eql(u8, &s_bytes, &half_n);
+        }
+        try std.testing.expect(s_is_lte);
+    }
+}

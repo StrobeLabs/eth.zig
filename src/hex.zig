@@ -160,3 +160,36 @@ test "isValidHex" {
     try std.testing.expect(!isValidHex("0xdea")); // odd
     try std.testing.expect(!isValidHex("0xgg")); // invalid chars
 }
+
+test "hexToBytes uppercase input" {
+    var buf: [4]u8 = undefined;
+    const result = try hexToBytes(&buf, "DEADBEEF");
+    try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad, 0xbe, 0xef }, result);
+}
+
+test "hexToBytes mixed case input" {
+    var buf: [4]u8 = undefined;
+    const result = try hexToBytes(&buf, "DeAdBeEf");
+    try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad, 0xbe, 0xef }, result);
+}
+
+test "bytesToHex hexToBytes 256-byte roundtrip" {
+    const allocator = std.testing.allocator;
+
+    var original: [256]u8 = undefined;
+    for (0..256) |i| {
+        original[i] = @intCast(i);
+    }
+
+    const hex_result = try bytesToHex(allocator, &original);
+    defer allocator.free(hex_result);
+
+    var decoded: [256]u8 = undefined;
+    const decoded_slice = try hexToBytes(&decoded, hex_result);
+    try std.testing.expectEqualSlices(u8, &original, decoded_slice);
+}
+
+test "hexToBytesFixed 0X uppercase prefix" {
+    const result = try hexToBytesFixed(4, "0XDEADBEEF");
+    try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad, 0xbe, 0xef }, &result);
+}
