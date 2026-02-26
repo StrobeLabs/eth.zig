@@ -4,32 +4,17 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.15.2-orange)](https://ziglang.org/)
 
-Pure Zig Ethereum client library. Zero dependencies. Comptime-first.
+**The Ethereum library for Zig.**
 
-eth.zig provides everything you need to interact with Ethereum from Zig: signing transactions, encoding ABI calls, managing HD wallets, talking to nodes over JSON-RPC, and more -- all built on Zig's standard library with no external dependencies.
+eth.zig provides everything you need to interact with Ethereum from Zig -- signing transactions, encoding ABI calls, managing HD wallets, reading ERC-20 tokens, talking to nodes over JSON-RPC, and more.
 
-## Installation
+## Why eth.zig?
 
-Add eth.zig as a dependency in your `build.zig.zon`:
+**Zero dependencies** -- Built entirely on Zig's standard library. No C bindings, no vendored C code, no system libraries. Just `zig build` and go.
 
-```zig
-.dependencies = .{
-    .eth = .{
-        .url = "https://github.com/strobelabs/eth.zig/archive/refs/tags/v0.1.0.tar.gz",
-        .hash = "...", // zig build will tell you the correct hash
-    },
-},
-```
+**Comptime-first** -- Function selectors and event topics are computed at compile time with zero runtime cost. The compiler does the hashing so your program doesn't have to.
 
-Then import it in your `build.zig`:
-
-```zig
-const eth_dep = b.dependency("eth", .{
-    .target = target,
-    .optimize = optimize,
-});
-exe.root_module.addImport("eth", eth_dep.module("eth"));
-```
+**Pure Zig crypto** -- secp256k1 ECDSA, Keccak-256, BIP-32/39/44 HD wallets -- all implemented in pure Zig. No OpenSSL, no libsecp256k1, no FFI.
 
 ## Quick Start
 
@@ -41,7 +26,7 @@ const eth = @import("eth");
 const private_key = try eth.hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 const signer = eth.signer.Signer.init(private_key);
 const addr = try signer.address();
-const checksum = eth.primitives.addressToChecksum(addr);
+const checksum = eth.primitives.addressToChecksum(&addr);
 // "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 ```
 
@@ -61,18 +46,19 @@ const tx_hash = try wallet.sendTransaction(.{
 });
 ```
 
-### Read a smart contract
+### Read an ERC-20 token
 
 ```zig
 const eth = @import("eth");
 
-const selector = eth.keccak.selector("balanceOf(address)");
-const args = [_]eth.abi_encode.AbiValue{.{ .address = holder }};
-const calldata = try eth.abi_encode.encodeFunctionCall(allocator, selector, &args);
-defer allocator.free(calldata);
+// Comptime selectors -- zero runtime cost
+const balance_sel = eth.erc20.selectors.balanceOf;
 
-const result = try provider.call(token_address, calldata);
-defer allocator.free(result);
+// Or use the typed wrapper
+var token = eth.erc20.ERC20.init(allocator, token_addr, &provider);
+const balance = try token.balanceOf(holder_addr);
+const name = try token.name();
+defer allocator.free(name);
 ```
 
 ### Comptime function selectors and event topics
@@ -93,12 +79,63 @@ const transfer_topic = eth.abi_comptime.comptimeTopic("Transfer(address,address,
 ```zig
 const eth = @import("eth");
 
-const words = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-const seed = try eth.mnemonic.mnemonicToSeed(allocator, words, "");
-defer allocator.free(seed);
+const words = [_][]const u8{
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "about",
+};
+const seed = try eth.mnemonic.toSeed(&words, "");
+const key = try eth.hd_wallet.deriveEthAccount(seed, 0);
+const addr = key.toAddress();
+```
 
-const master = try eth.hd_wallet.masterKeyFromSeed(seed);
-const child = try eth.hd_wallet.deriveEthereumKey(master, 0);
+## Installation
+
+**One-liner:**
+
+```bash
+zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.1.0
+```
+
+**Or add manually** to your `build.zig.zon`:
+
+```zig
+.dependencies = .{
+    .eth = .{
+        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.1.0",
+        .hash = "...", // run `zig build` and it will tell you the expected hash
+    },
+},
+```
+
+Then import in your `build.zig`:
+
+```zig
+const eth_dep = b.dependency("eth", .{
+    .target = target,
+    .optimize = optimize,
+});
+exe.root_module.addImport("eth", eth_dep.module("eth"));
+```
+
+## Examples
+
+The [`examples/`](examples/) directory contains self-contained programs demonstrating each major feature:
+
+| Example | Description | Requires RPC |
+|---------|-------------|:---:|
+| `01_derive_address` | Derive address from private key | No |
+| `02_check_balance` | Query ETH balance via JSON-RPC | Yes |
+| `03_sign_message` | EIP-191 personal message signing | No |
+| `04_send_transaction` | Send ETH with Wallet | Yes (Anvil) |
+| `05_read_erc20` | ERC-20 module API showcase | Yes |
+| `06_hd_wallet` | BIP-44 HD wallet derivation | No |
+| `07_comptime_selectors` | Comptime function selectors | No |
+
+Run any example:
+
+```bash
+cd examples && zig build && ./zig-out/bin/01_derive_address
 ```
 
 ## Modules
@@ -112,8 +149,8 @@ const child = try eth.hd_wallet.deriveEthereumKey(master, 0);
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |
 | **Transport** | `http_transport`, `ws_transport`, `json_rpc`, `provider`, `subscription` | HTTP and WebSocket JSON-RPC transports |
 | **ENS** | `ens_namehash`, `ens_resolver`, `ens_reverse` | ENS name resolution and reverse lookup |
-| **Client** | `wallet`, `contract`, `multicall`, `event` | Signing wallet, contract interaction, Multicall3 |
-| **Standards** | `eip712` | EIP-712 typed structured data signing |
+| **Client** | `wallet`, `contract`, `multicall`, `event`, `erc20`, `erc721` | Signing wallet, contract interaction, Multicall3, token wrappers |
+| **Standards** | `eip712`, `abi_json` | EIP-712 typed data signing, Solidity JSON ABI parsing |
 | **Chains** | `chains` | Ethereum, Arbitrum, Optimism, Base, Polygon definitions |
 
 ## Features
@@ -140,10 +177,29 @@ const child = try eth.hd_wallet.deriveEthereumKey(master, 0);
 | Event log decoding and filtering | Complete |
 | Chain definitions (5 networks) | Complete |
 | Unit conversions (Wei/Gwei/Ether) | Complete |
+| ERC-20 typed wrapper | Complete |
+| ERC-721 typed wrapper | Complete |
+| JSON ABI parsing | Complete |
 | EIP-7702 transactions | Planned |
 | IPC transport | Planned |
 | Provider middleware (retry, caching) | Planned |
 | Hardware wallet signers | Planned |
+
+## Feature Comparison vs Zabi
+
+| Feature | eth.zig | Zabi |
+|---------|---------|------|
+| Dependencies | 0 | 0 |
+| Comptime selectors | Yes | No |
+| Pure Zig crypto (secp256k1) | Yes | No (C binding) |
+| ABI encode/decode | Yes | Yes |
+| HD wallets (BIP-32/39/44) | Yes | Yes |
+| ERC-20/721 wrappers | Yes | No |
+| JSON ABI parsing | Yes | Yes |
+| WebSocket transport | Yes | Yes |
+| ENS resolution | Yes | Yes |
+| EIP-712 typed data | Yes | Yes |
+| Multicall3 | Yes | No |
 
 ## Requirements
 
@@ -156,8 +212,18 @@ zig build test                # Unit tests
 zig build integration-test    # Integration tests (requires Anvil)
 ```
 
+## Contributing
+
+Contributions are welcome. Please open an issue or pull request on [GitHub](https://github.com/StrobeLabs/eth.zig).
+
+Before submitting:
+
+1. Run `zig build test` and ensure all tests pass.
+2. Follow the existing code style -- no external dependencies, comptime where possible.
+3. Add tests for any new functionality.
+
 ## License
 
 MIT -- see [LICENSE](LICENSE) for details.
 
-Copyright 2025 Strobe Labs
+Copyright 2025-2026 Strobe Labs

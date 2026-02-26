@@ -134,7 +134,7 @@ pub const Wallet = struct {
             if (try self.provider.getTransactionReceipt(tx_hash)) |receipt| {
                 return receipt;
             }
-            std.time.sleep(1_000_000_000); // 1 second
+            std.Thread.sleep(1_000_000_000); // 1 second
         }
         return null;
     }

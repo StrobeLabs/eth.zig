@@ -33,7 +33,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_chainId, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
 
@@ -42,7 +43,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_blockNumber, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
 
@@ -58,7 +60,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getBalance, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexU256(result_str);
     }
 
@@ -70,7 +73,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getTransactionCount, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
 
@@ -83,7 +87,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getCode, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexBytes(self.allocator, result_str);
     }
 
@@ -106,7 +111,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getStorageAt, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return hex_mod.hexToBytesFixed(32, result_str) catch return error.InvalidResponse;
     }
 
@@ -119,7 +125,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_gasPrice, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexU256(result_str);
     }
 
@@ -128,7 +135,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_maxPriorityFeePerGas, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexU256(result_str);
     }
 
@@ -145,7 +153,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_call, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexBytes(self.allocator, result_str);
     }
 
@@ -157,7 +166,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_estimateGas, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
 
@@ -178,7 +188,8 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_sendRawTransaction, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(raw);
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
         return primitives.hashFromHex(result_str) catch return error.InvalidResponse;
     }
 
@@ -302,7 +313,8 @@ pub const Provider = struct {
 
 /// Extract the "result" string value from a JSON-RPC response.
 /// Handles both quoted string results and null.
-fn extractResultString(raw: []const u8) ![]const u8 {
+/// Caller owns the returned memory.
+fn extractResultString(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
     const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, raw, .{}) catch {
         return error.InvalidResponse;
     };
@@ -321,7 +333,7 @@ fn extractResultString(raw: []const u8) ![]const u8 {
     const result_val = root.object.get("result") orelse return error.InvalidResponse;
 
     return switch (result_val) {
-        .string => |s| s,
+        .string => |s| allocator.dupe(u8, s) catch return error.InvalidResponse,
         .null => error.NullResult,
         else => error.InvalidResponse,
     };
@@ -410,13 +422,15 @@ fn parseHash(hex_str: []const u8) ![32]u8 {
 fn parseOptionalHash(hex_str: ?[]const u8) !?[32]u8 {
     const s = hex_str orelse return null;
     if (s.len == 0) return null;
-    return parseHash(s);
+    const val = try parseHash(s);
+    return val;
 }
 
 /// Parse an optional hex u64 value.
 fn parseOptionalHexU64(hex_str: ?[]const u8) !?u64 {
     const s = hex_str orelse return null;
-    return parseHexU64(s);
+    const val = try parseHexU64(s);
+    return val;
 }
 
 /// Get a string value from a JSON object, returning null if not present or null.
@@ -749,25 +763,29 @@ fn appendJsonField(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), key: [
 // ============================================================================
 
 test "extractResultString - string result" {
+    const allocator = std.testing.allocator;
     const raw =
         \\{"jsonrpc":"2.0","id":1,"result":"0xff"}
     ;
-    const result = try extractResultString(raw);
+    const result = try extractResultString(allocator, raw);
+    defer allocator.free(result);
     try std.testing.expectEqualStrings("0xff", result);
 }
 
 test "extractResultString - null result" {
+    const allocator = std.testing.allocator;
     const raw =
         \\{"jsonrpc":"2.0","id":1,"result":null}
     ;
-    try std.testing.expectError(error.NullResult, extractResultString(raw));
+    try std.testing.expectError(error.NullResult, extractResultString(allocator, raw));
 }
 
 test "extractResultString - rpc error" {
+    const allocator = std.testing.allocator;
     const raw =
         \\{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}
     ;
-    try std.testing.expectError(error.RpcError, extractResultString(raw));
+    try std.testing.expectError(error.RpcError, extractResultString(allocator, raw));
 }
 
 test "parseHexU64 - basic values" {
