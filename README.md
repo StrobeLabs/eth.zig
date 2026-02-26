@@ -10,7 +10,7 @@ A complete Ethereum client library written in pure Zig -- ABI encoding, RLP seri
 
 ## Why eth.zig?
 
-**Faster than Rust** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **18 out of 24 benchmarks**. ABI encoding, hashing, hex operations, address parsing, transaction serialization -- eth.zig is faster across the board.
+**Faster than Rust** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **18 out of 24 benchmarks**. ABI encoding, hashing, hex operations, address parsing, transaction serialization -- eth.zig is faster on the majority of operations.
 
 **Zero dependencies** -- Built entirely on Zig's standard library. No C bindings, no vendored C code, no system libraries.
 
@@ -22,8 +22,8 @@ A complete Ethereum client library written in pure Zig -- ABI encoding, RLP seri
 
 eth.zig wins **18/24 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
 
-| Operation | eth.zig | alloy.rs | |
-|-----------|---------|----------|-|
+| Operation | eth.zig | alloy.rs | Winner |
+|-----------|---------|----------|--------|
 | Keccak-256 (32B) | 263 ns | 337 ns | **zig 1.28x** |
 | Keccak-256 (4KB) | 7,828 ns | 9,229 ns | **zig 1.18x** |
 | ABI encode (static) | 69 ns | 97 ns | **zig 1.41x** |
@@ -254,9 +254,9 @@ zig build integration-test    # Integration tests (requires Anvil)
 ## Benchmarks
 
 ```bash
-zig build bench                                       # Run eth.zig benchmarks
-cd bench/alloy-bench && cargo bench --bench eth_comparison  # Run alloy.rs benchmarks
-bash bench/compare.sh                                 # Side-by-side comparison
+zig build bench                                                        # Run eth.zig benchmarks
+(cd bench/alloy-bench && cargo bench --bench eth_comparison)           # Run alloy.rs benchmarks
+bash bench/compare.sh                                                  # Side-by-side comparison
 ```
 
 ## Contributing
