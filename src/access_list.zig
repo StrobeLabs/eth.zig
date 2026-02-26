@@ -10,40 +10,64 @@ pub const AccessListItem = struct {
 /// EIP-2930 access list: a list of address/storage-key pairs that the transaction accesses.
 pub const AccessList = []const AccessListItem;
 
+/// Calculate the encoded length of an access list item.
+fn accessListItemLength(item: AccessListItem) usize {
+    // address: 1 byte prefix (0x94) + 20 bytes = 21 bytes
+    const addr_len = rlp.encodedLength(item.address);
+
+    // keys list: each key is 1 byte prefix (0xa0) + 32 bytes = 33 bytes
+    var keys_payload_len: usize = 0;
+    for (item.storage_keys) |key| {
+        keys_payload_len += rlp.encodedLength(key);
+    }
+    const keys_list_len = rlp.lengthPrefixSize(keys_payload_len) + keys_payload_len;
+
+    // item is a list of [address, keys_list]
+    const item_payload_len = addr_len + keys_list_len;
+    return rlp.lengthPrefixSize(item_payload_len) + item_payload_len;
+}
+
+/// Calculate the total encoded length of an access list.
+pub fn accessListEncodedLength(access_list: AccessList) usize {
+    var outer_payload_len: usize = 0;
+    for (access_list) |item| {
+        outer_payload_len += accessListItemLength(item);
+    }
+    return rlp.lengthPrefixSize(outer_payload_len) + outer_payload_len;
+}
+
 /// RLP-encode an access list into the given ArrayList.
 /// Each item is encoded as: [address, [key0, key1, ...]].
 pub fn encodeAccessList(allocator: std.mem.Allocator, list: *std.ArrayList(u8), access_list: AccessList) (std.mem.Allocator.Error || rlp.RlpError)!void {
-    // Encode the outer list contents into a temp buffer, then wrap with list header.
-    var outer: std.ArrayList(u8) = .empty;
-    defer outer.deinit(allocator);
-
+    // Pre-calculate outer payload length to avoid temp buffers
+    var outer_payload_len: usize = 0;
     for (access_list) |item| {
-        // Each item is an RLP list: [address, [storageKey0, storageKey1, ...]]
-        var item_buf: std.ArrayList(u8) = .empty;
-        defer item_buf.deinit(allocator);
-
-        // Encode address (20-byte string)
-        try rlp.encodeInto(allocator, &item_buf, item.address);
-
-        // Encode storage keys as a list
-        var keys_buf: std.ArrayList(u8) = .empty;
-        defer keys_buf.deinit(allocator);
-        for (item.storage_keys) |key| {
-            try rlp.encodeInto(allocator, &keys_buf, key);
-        }
-
-        // Write list header + keys content
-        try encodeLength(allocator, &item_buf, keys_buf.items.len, 0xc0);
-        try item_buf.appendSlice(allocator, keys_buf.items);
-
-        // Write item list header + item content
-        try encodeLength(allocator, &outer, item_buf.items.len, 0xc0);
-        try outer.appendSlice(allocator, item_buf.items);
+        outer_payload_len += accessListItemLength(item);
     }
 
-    // Write outer list header + outer content
-    try encodeLength(allocator, list, outer.items.len, 0xc0);
-    try list.appendSlice(allocator, outer.items);
+    try encodeLength(allocator, list, outer_payload_len, 0xc0);
+
+    for (access_list) |item| {
+        // Pre-calculate item payload length
+        const addr_len = rlp.encodedLength(item.address);
+        var keys_payload_len: usize = 0;
+        for (item.storage_keys) |key| {
+            keys_payload_len += rlp.encodedLength(key);
+        }
+        const keys_list_len = rlp.lengthPrefixSize(keys_payload_len) + keys_payload_len;
+        const item_payload_len = addr_len + keys_list_len;
+
+        // Write item list header
+        try encodeLength(allocator, list, item_payload_len, 0xc0);
+        // Write address
+        try rlp.encodeInto(allocator, list, item.address);
+        // Write keys list header
+        try encodeLength(allocator, list, keys_payload_len, 0xc0);
+        // Write each key
+        for (item.storage_keys) |key| {
+            try rlp.encodeInto(allocator, list, key);
+        }
+    }
 }
 
 /// Encode a length prefix (same logic as rlp.zig's internal encodeLength, re-implemented

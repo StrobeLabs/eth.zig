@@ -46,9 +46,6 @@ pub fn sign(private_key: [32]u8, message_hash: [32]u8) SignError!Signature {
     const sk = Scalar.fromBytes(private_key, .big) catch return error.InvalidPrivateKey;
     if (sk.isZero()) return error.InvalidPrivateKey;
 
-    // Derive the public key for recovery ID determination
-    const public_key = Secp256k1.basePoint.mul(private_key, .big) catch return error.SigningFailed;
-
     // Generate deterministic nonce k via RFC 6979 using HMAC-SHA256
     const k = generateRfc6979Nonce(private_key, message_hash);
     if (k.isZero()) return error.SigningFailed;
@@ -71,7 +68,7 @@ pub fn sign(private_key: [32]u8, message_hash: [32]u8) SignError!Signature {
     var s_scalar = k_inv.mul(z_plus_r_sk);
     if (s_scalar.isZero()) return error.SigningFailed;
 
-    // Determine recovery ID before low-S normalization.
+    // Determine recovery ID from R.y parity.
     // v = 0 if R.y is even, v = 1 if R.y is odd.
     var v: u8 = if (r_affine.y.isOdd()) 1 else 0;
 
@@ -81,31 +78,11 @@ pub fn sign(private_key: [32]u8, message_hash: [32]u8) SignError!Signature {
         v ^= 1;
     }
 
-    // Verify the signature can be recovered to the correct public key.
-    // This catches edge cases and validates the recovery ID.
-    const sig = Signature{
+    return Signature{
         .r = r_scalar.toBytes(.big),
         .s = s_scalar.toBytes(.big),
         .v = v,
     };
-
-    // Double-check: recover and compare. If it fails, try the other v.
-    if (verifyRecovery(sig, message_hash, public_key)) {
-        return sig;
-    }
-
-    // If the first v didn't work, try the flipped one
-    const alt_sig = Signature{
-        .r = sig.r,
-        .s = sig.s,
-        .v = v ^ 1,
-    };
-
-    if (verifyRecovery(alt_sig, message_hash, public_key)) {
-        return alt_sig;
-    }
-
-    return error.SigningFailed;
 }
 
 /// Recover the uncompressed public key (65 bytes: 0x04 || x || y) from a

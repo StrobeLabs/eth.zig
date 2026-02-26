@@ -58,7 +58,7 @@ fn benchAlloc(name: []const u8, warmup: u32, iterations: u32, allocator: std.mem
 }
 
 fn printResults(results: []const BenchResult) void {
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
     var writer_impl = std.fs.File.stdout().writer(&buf);
     const w = &writer_impl.interface;
 
@@ -78,7 +78,17 @@ fn printResults(results: []const BenchResult) void {
         w.print("{s: <34} {s: >12} {d: >12}\n", .{ r.name, ops_str, ns }) catch {};
     }
 
-    w.print("{s}\n\n", .{"=" ** 62}) catch {};
+    w.print("{s}\n", .{"=" ** 62}) catch {};
+
+    // Machine-readable JSON output for comparison script
+    w.print("\n", .{}) catch {};
+    for (results) |r| {
+        w.print("BENCH_JSON|{{\"name\":\"{s}\",\"ns_per_op\":{d},\"ops_per_sec\":{d}}}\n", .{
+            r.name, r.nsPerOp(), r.opsPerSec(),
+        }) catch {};
+    }
+
+    w.print("\n", .{}) catch {};
     w.flush() catch {};
 }
 
@@ -158,12 +168,29 @@ const TEST_SEED: [64]u8 = .{
 // Precomputed selector for transfer(address,uint256)
 const TRANSFER_SELECTOR: [4]u8 = .{ 0xa9, 0x05, 0x9c, 0xbb };
 
+// Pre-encoded data for decode benchmarks (initialized in main)
+var precomputed_abi_dynamic: []const u8 = &.{};
+var precomputed_rlp_u256: []const u8 = &.{};
+var precomputed_pubkey: [65]u8 = undefined;
+
 // ============================================================================
-// Benchmark functions
+// Benchmark functions -- Keccak256
 // ============================================================================
+
+fn benchKeccakEmpty() void {
+    const data: [0]u8 = .{};
+    const result = eth.keccak.hash(&data);
+    std.mem.doNotOptimizeAway(&result);
+}
 
 fn benchKeccak32() void {
     const data: [32]u8 = TEST_MSG_HASH;
+    const result = eth.keccak.hash(&data);
+    std.mem.doNotOptimizeAway(&result);
+}
+
+fn benchKeccak256b() void {
+    const data: [256]u8 = .{0xAB} ** 256;
     const result = eth.keccak.hash(&data);
     std.mem.doNotOptimizeAway(&result);
 }
@@ -173,6 +200,16 @@ fn benchKeccak1k() void {
     const result = eth.keccak.hash(&data);
     std.mem.doNotOptimizeAway(&result);
 }
+
+fn benchKeccak4k() void {
+    const data: [4096]u8 = .{0xAB} ** 4096;
+    const result = eth.keccak.hash(&data);
+    std.mem.doNotOptimizeAway(&result);
+}
+
+// ============================================================================
+// Benchmark functions -- secp256k1
+// ============================================================================
 
 fn benchSecp256k1Sign() void {
     const sig = eth.secp256k1.sign(TEST_PRIVKEY, TEST_MSG_HASH) catch unreachable;
@@ -185,24 +222,75 @@ fn benchSecp256k1Recover() void {
     std.mem.doNotOptimizeAway(&pubkey);
 }
 
+// ============================================================================
+// Benchmark functions -- Address
+// ============================================================================
+
 fn benchAddressDerivation() void {
-    const s = eth.signer.Signer.init(TEST_PRIVKEY);
-    const addr = s.address() catch unreachable;
+    const addr = eth.secp256k1.pubkeyToAddress(precomputed_pubkey);
     std.mem.doNotOptimizeAway(&addr);
 }
+
+fn benchAddressFromHex() void {
+    var hex_str: []const u8 = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    std.mem.doNotOptimizeAway(&hex_str);
+    const addr = eth.primitives.addressFromHex(hex_str) catch unreachable;
+    std.mem.doNotOptimizeAway(&addr);
+}
+
+fn benchChecksumAddress() void {
+    const addr = TEST_ADDR;
+    const checksum = eth.primitives.addressToChecksum(&addr);
+    std.mem.doNotOptimizeAway(&checksum);
+}
+
+// ============================================================================
+// Benchmark functions -- ABI encoding
+// ============================================================================
 
 fn benchAbiEncodeTransfer(allocator: std.mem.Allocator) void {
     const args = [_]eth.abi_encode.AbiValue{
         .{ .address = TEST_ADDR },
-        .{ .uint256 = 1_000_000_000_000_000_000 }, // 1 ETH in wei
+        .{ .uint256 = 1_000_000_000_000_000_000 },
     };
     const result = eth.abi_encode.encodeFunctionCall(allocator, TRANSFER_SELECTOR, &args) catch unreachable;
     defer allocator.free(result);
     std.mem.doNotOptimizeAway(result.ptr);
 }
 
+fn benchAbiEncodeStatic(allocator: std.mem.Allocator) void {
+    const args = [_]eth.abi_encode.AbiValue{
+        .{ .address = TEST_ADDR },
+        .{ .uint256 = 1_000_000_000_000_000_000 },
+    };
+    const result = eth.abi_encode.encodeValues(allocator, &args) catch unreachable;
+    defer allocator.free(result);
+    std.mem.doNotOptimizeAway(result.ptr);
+}
+
+fn benchAbiEncodeDynamic(allocator: std.mem.Allocator) void {
+    const array_items = [_]eth.abi_encode.AbiValue{
+        .{ .uint256 = 1 },
+        .{ .uint256 = 2 },
+        .{ .uint256 = 3 },
+        .{ .uint256 = 4 },
+        .{ .uint256 = 5 },
+    };
+    const args = [_]eth.abi_encode.AbiValue{
+        .{ .string = "The quick brown fox jumps over the lazy dog" },
+        .{ .bytes = "hello world, this is a dynamic bytes benchmark test payload" },
+        .{ .array = &array_items },
+    };
+    const result = eth.abi_encode.encodeValues(allocator, &args) catch unreachable;
+    defer allocator.free(result);
+    std.mem.doNotOptimizeAway(result.ptr);
+}
+
+// ============================================================================
+// Benchmark functions -- ABI decoding
+// ============================================================================
+
 fn benchAbiDecodeUint256(allocator: std.mem.Allocator) void {
-    // Pre-encoded uint256 value: 1 ETH in wei, left-padded to 32 bytes
     const encoded: [32]u8 = .{
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -215,16 +303,27 @@ fn benchAbiDecodeUint256(allocator: std.mem.Allocator) void {
     std.mem.doNotOptimizeAway(values.ptr);
 }
 
+fn benchAbiDecodeDynamic(allocator: std.mem.Allocator) void {
+    const types = [_]eth.abi_types.AbiType{ .string, .bytes };
+    const values = eth.abi_decode.decodeValues(precomputed_abi_dynamic, &types, allocator) catch unreachable;
+    defer eth.abi_decode.freeValues(values, allocator);
+    std.mem.doNotOptimizeAway(values.ptr);
+}
+
+// ============================================================================
+// Benchmark functions -- RLP
+// ============================================================================
+
 fn benchRlpEncodeTx(allocator: std.mem.Allocator) void {
     const tx = eth.transaction.Transaction{
         .eip1559 = .{
             .chain_id = 1,
             .nonce = 42,
-            .max_priority_fee_per_gas = 2_000_000_000, // 2 gwei
-            .max_fee_per_gas = 100_000_000_000, // 100 gwei
+            .max_priority_fee_per_gas = 2_000_000_000,
+            .max_fee_per_gas = 100_000_000_000,
             .gas_limit = 21000,
             .to = TEST_ADDR,
-            .value = 1_000_000_000_000_000_000, // 1 ETH
+            .value = 1_000_000_000_000_000_000,
             .data = &.{},
             .access_list = &.{},
         },
@@ -234,6 +333,106 @@ fn benchRlpEncodeTx(allocator: std.mem.Allocator) void {
     std.mem.doNotOptimizeAway(serialized.ptr);
 }
 
+fn benchRlpDecodeU256() void {
+    const decoded = eth.rlp.decode(u256, precomputed_rlp_u256) catch unreachable;
+    std.mem.doNotOptimizeAway(&decoded.value);
+}
+
+// ============================================================================
+// Benchmark functions -- u256 arithmetic
+// ============================================================================
+
+fn benchU256Add() void {
+    var a: u256 = 1_000_000_000_000_000_000;
+    var b: u256 = 997_000_000_000_000_000;
+    std.mem.doNotOptimizeAway(&a);
+    std.mem.doNotOptimizeAway(&b);
+    const result = a +% b;
+    std.mem.doNotOptimizeAway(&result);
+}
+
+fn benchU256Mul() void {
+    var a: u256 = 1_000_000_000_000_000_000;
+    var b: u256 = 997;
+    std.mem.doNotOptimizeAway(&a);
+    std.mem.doNotOptimizeAway(&b);
+    const result = a *% b;
+    std.mem.doNotOptimizeAway(&result);
+}
+
+fn benchU256Div() void {
+    var a: u256 = 997_000_000_000_000_000_000;
+    var b: u256 = 1_000_000_000_000_000_000;
+    std.mem.doNotOptimizeAway(&a);
+    std.mem.doNotOptimizeAway(&b);
+    const result = eth.uint256.fastDiv(a, b);
+    std.mem.doNotOptimizeAway(&result);
+}
+
+fn benchU256UniswapV2AmountOut() void {
+    var amount_in: u256 = 1_000_000_000_000_000_000; // 1 ETH
+    var reserve_in: u256 = 100_000_000_000_000_000_000; // 100 ETH
+    var reserve_out: u256 = 200_000_000_000; // 200k USDC (6 decimals)
+    // Single barrier covers all inputs (avoids 3 separate memory clobbers)
+    asm volatile (""
+        :
+        : [a] "r" (&amount_in),
+          [b] "r" (&reserve_in),
+          [c] "r" (&reserve_out),
+        : .{ .memory = true }
+    );
+
+    const amount_in_with_fee = amount_in *% 997;
+    const numerator = amount_in_with_fee *% reserve_out;
+    const denominator = reserve_in *% 1000 +% amount_in_with_fee;
+    const amount_out = eth.uint256.fastDiv(numerator, denominator);
+    std.mem.doNotOptimizeAway(&amount_out);
+}
+
+// ============================================================================
+// Benchmark functions -- Hex
+// ============================================================================
+
+fn benchHexEncode32() void {
+    const data: [32]u8 = TEST_MSG_HASH;
+    const result = eth.hex.bytesToHexBuf(32, &data);
+    std.mem.doNotOptimizeAway(&result);
+}
+
+fn benchHexDecode32() void {
+    var hex_str: []const u8 = "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470";
+    std.mem.doNotOptimizeAway(&hex_str);
+    var buf: [32]u8 = undefined;
+    _ = eth.hex.hexToBytes(&buf, hex_str) catch unreachable;
+    std.mem.doNotOptimizeAway(&buf);
+}
+
+// ============================================================================
+// Benchmark functions -- Transaction
+// ============================================================================
+
+fn benchTxHashEip1559(allocator: std.mem.Allocator) void {
+    const tx = eth.transaction.Transaction{
+        .eip1559 = .{
+            .chain_id = 1,
+            .nonce = 42,
+            .max_priority_fee_per_gas = 2_000_000_000,
+            .max_fee_per_gas = 100_000_000_000,
+            .gas_limit = 21000,
+            .to = TEST_ADDR,
+            .value = 1_000_000_000_000_000_000,
+            .data = &.{},
+            .access_list = &.{},
+        },
+    };
+    const hash = eth.transaction.hashForSigning(allocator, tx) catch unreachable;
+    std.mem.doNotOptimizeAway(&hash);
+}
+
+// ============================================================================
+// Benchmark functions -- HD Wallet
+// ============================================================================
+
 fn benchHdWalletDerive10() void {
     const master = eth.hd_wallet.masterKeyFromSeed(TEST_SEED) catch unreachable;
     for (0..10) |i| {
@@ -241,6 +440,10 @@ fn benchHdWalletDerive10() void {
         std.mem.doNotOptimizeAway(&child);
     }
 }
+
+// ============================================================================
+// Benchmark functions -- EIP-712
+// ============================================================================
 
 fn benchEip712Hash(allocator: std.mem.Allocator) void {
     const domain = eth.eip712.DomainSeparator{
@@ -275,38 +478,70 @@ fn benchEip712Hash(allocator: std.mem.Allocator) void {
     std.mem.doNotOptimizeAway(&result);
 }
 
-fn benchChecksumAddress() void {
-    const addr = TEST_ADDR;
-    const checksum = eth.primitives.addressToChecksum(&addr);
-    std.mem.doNotOptimizeAway(&checksum);
-}
-
 // ============================================================================
 // Main
 // ============================================================================
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.heap.c_allocator;
+
+    // Pre-compute data for decode benchmarks
+    const abi_dyn_args = [_]eth.abi_encode.AbiValue{
+        .{ .string = "The quick brown fox jumps over the lazy dog" },
+        .{ .bytes = "hello world, this is a dynamic bytes benchmark test payload" },
+    };
+    const abi_dyn_encoded = try eth.abi_encode.encodeValues(allocator, &abi_dyn_args);
+    precomputed_abi_dynamic = abi_dyn_encoded;
+
+    const rlp_encoded = try eth.rlp.encode(allocator, @as(u256, 1_000_000_000_000_000_000));
+    precomputed_rlp_u256 = rlp_encoded;
+
+    // Pre-compute public key for address derivation benchmark
+    precomputed_pubkey = eth.secp256k1.derivePublicKey(TEST_PRIVKEY) catch unreachable;
 
     const WARMUP = 100;
     const ITERS = 10_000;
-    // Signing/EC ops are expensive -- use fewer iterations
     const SIGN_ITERS = 1_000;
+    const TX_ITERS = 5_000;
 
     const results = [_]BenchResult{
+        // Keccak256
+        bench("keccak256_empty", WARMUP, ITERS, benchKeccakEmpty),
         bench("keccak256_32b", WARMUP, ITERS, benchKeccak32),
+        bench("keccak256_256b", WARMUP, ITERS, benchKeccak256b),
         bench("keccak256_1kb", WARMUP, ITERS, benchKeccak1k),
+        bench("keccak256_4kb", WARMUP, ITERS, benchKeccak4k),
+        // secp256k1
         bench("secp256k1_sign", WARMUP, SIGN_ITERS, benchSecp256k1Sign),
         bench("secp256k1_sign_recover", WARMUP, SIGN_ITERS, benchSecp256k1Recover),
+        // Address
         bench("address_derivation", WARMUP, SIGN_ITERS, benchAddressDerivation),
-        benchAlloc("abi_encode_transfer", WARMUP, ITERS, allocator, benchAbiEncodeTransfer),
-        benchAlloc("abi_decode_uint256", WARMUP, ITERS, allocator, benchAbiDecodeUint256),
-        benchAlloc("rlp_encode_eip1559_tx", WARMUP, ITERS, allocator, benchRlpEncodeTx),
-        bench("hd_wallet_derive_10", WARMUP, SIGN_ITERS, benchHdWalletDerive10),
-        benchAlloc("eip712_hash_typed_data", WARMUP, ITERS, allocator, benchEip712Hash),
+        bench("address_from_hex", WARMUP, ITERS, benchAddressFromHex),
         bench("checksum_address", WARMUP, ITERS, benchChecksumAddress),
+        // ABI encoding
+        benchAlloc("abi_encode_transfer", WARMUP, ITERS, allocator, benchAbiEncodeTransfer),
+        benchAlloc("abi_encode_static", WARMUP, ITERS, allocator, benchAbiEncodeStatic),
+        benchAlloc("abi_encode_dynamic", WARMUP, ITERS, allocator, benchAbiEncodeDynamic),
+        // ABI decoding
+        benchAlloc("abi_decode_uint256", WARMUP, ITERS, allocator, benchAbiDecodeUint256),
+        benchAlloc("abi_decode_dynamic", WARMUP, ITERS, allocator, benchAbiDecodeDynamic),
+        // RLP
+        benchAlloc("rlp_encode_eip1559_tx", WARMUP, ITERS, allocator, benchRlpEncodeTx),
+        bench("rlp_decode_u256", WARMUP, ITERS, benchRlpDecodeU256),
+        // u256 arithmetic
+        bench("u256_add", WARMUP, ITERS, benchU256Add),
+        bench("u256_mul", WARMUP, ITERS, benchU256Mul),
+        bench("u256_div", WARMUP, ITERS, benchU256Div),
+        bench("u256_uniswapv2_amount_out", WARMUP, ITERS, benchU256UniswapV2AmountOut),
+        // Hex
+        bench("hex_encode_32b", WARMUP, ITERS, benchHexEncode32),
+        bench("hex_decode_32b", WARMUP, ITERS, benchHexDecode32),
+        // Transaction
+        benchAlloc("tx_hash_eip1559", WARMUP, TX_ITERS, allocator, benchTxHashEip1559),
+        // HD Wallet (eth-zig only)
+        bench("hd_wallet_derive_10", WARMUP, SIGN_ITERS, benchHdWalletDerive10),
+        // EIP-712 (eth-zig only)
+        benchAlloc("eip712_hash_typed_data", WARMUP, ITERS, allocator, benchEip712Hash),
     };
 
     printResults(&results);

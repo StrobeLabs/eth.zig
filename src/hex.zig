@@ -7,14 +7,21 @@ pub const HexError = error{
     OutputTooSmall,
 };
 
+/// Comptime-generated lookup table for hex decoding.
+/// Maps ASCII byte -> nibble value (0-15), or 0xFF for invalid characters.
+const hex_lut: [256]u8 = blk: {
+    var table: [256]u8 = .{0xFF} ** 256;
+    for ('0'..('9' + 1)) |c| table[c] = c - '0';
+    for ('a'..('f' + 1)) |c| table[c] = c - 'a' + 10;
+    for ('A'..('F' + 1)) |c| table[c] = c - 'A' + 10;
+    break :blk table;
+};
+
 /// Decode a single hex character to its 4-bit value.
 pub fn charToNibble(c: u8) HexError!u4 {
-    return switch (c) {
-        '0'...'9' => @intCast(c - '0'),
-        'a'...'f' => @intCast(c - 'a' + 10),
-        'A'...'F' => @intCast(c - 'A' + 10),
-        else => error.InvalidHexCharacter,
-    };
+    const v = hex_lut[c];
+    if (v == 0xFF) return error.InvalidHexCharacter;
+    return @intCast(v);
 }
 
 /// Decode hex string to bytes. Accepts optional "0x" prefix.

@@ -1,0 +1,21 @@
+[package]
+name = "alloy-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy-primitives = { version = "0.8", features = ["rlp"] }
+alloy-rlp = "0.3"
+alloy-rlp-derive = "0.3"
+alloy-sol-types = "0.8"
+alloy-dyn-abi = "0.8"
+alloy-consensus = "0.6"
+alloy-signer = "0.6"
+alloy-signer-local = "0.6"
+alloy-network = "0.6"
+k256 = { version = "0.13", features = ["ecdsa"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "eth_comparison"
+harness = false

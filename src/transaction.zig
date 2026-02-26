@@ -119,26 +119,6 @@ pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8,
 // Internal helpers
 // ============================================================================
 
-/// Encode a length prefix for an RLP list. Re-implemented here since the rlp module's
-/// encodeLength is not public.
-fn encodeLength(allocator: std.mem.Allocator, list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
-    if (len < 56) {
-        try list.append(allocator, offset + @as(u8, @intCast(len)));
-    } else {
-        var len_bytes: usize = 0;
-        var temp = len;
-        while (temp > 0) : (temp >>= 8) {
-            len_bytes += 1;
-        }
-        try list.append(allocator, offset + 55 + @as(u8, @intCast(len_bytes)));
-        var i: usize = len_bytes;
-        while (i > 0) {
-            i -= 1;
-            try list.append(allocator, @intCast((len >> @intCast(i * 8)) & 0xff));
-        }
-    }
-}
-
 /// Encode the common base fields for a legacy transaction (nonce through data).
 fn encodeLegacyBaseFields(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), legacy: LegacyTransaction) !void {
     try rlp.encodeInto(allocator, buf, legacy.nonce);
@@ -149,26 +129,41 @@ fn encodeLegacyBaseFields(allocator: std.mem.Allocator, buf: *std.ArrayList(u8),
     try rlp.encodeInto(allocator, buf, legacy.data);
 }
 
+/// Calculate the payload length of legacy transaction fields.
+fn calculateLegacyFieldsLength(legacy: LegacyTransaction) usize {
+    var payload_len: usize = 0;
+    payload_len += rlp.encodedLength(legacy.nonce);
+    payload_len += rlp.encodedLength(legacy.gas_price);
+    payload_len += rlp.encodedLength(legacy.gas_limit);
+    payload_len += rlp.encodedLength(legacy.to);
+    payload_len += rlp.encodedLength(legacy.value);
+    payload_len += rlp.encodedLength(legacy.data);
+    if (legacy.chain_id) |chain_id| {
+        payload_len += rlp.encodedLength(chain_id);
+        payload_len += rlp.encodedLength(@as(u64, 0));
+        payload_len += rlp.encodedLength(@as(u64, 0));
+    }
+    return payload_len;
+}
+
 /// Serialize a legacy transaction for signing.
 fn serializeLegacyForSigning(allocator: std.mem.Allocator, legacy: LegacyTransaction) ![]u8 {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(allocator);
+    const payload_len = calculateLegacyFieldsLength(legacy);
+    const total = rlp.lengthPrefixSize(payload_len) + payload_len;
 
-    // Build the list payload
-    try encodeLegacyBaseFields(allocator, &buf, legacy);
-
-    // EIP-155: append chainId, 0, 0
-    if (legacy.chain_id) |chain_id| {
-        try rlp.encodeInto(allocator, &buf, chain_id);
-        try rlp.encodeInto(allocator, &buf, @as(u64, 0));
-        try rlp.encodeInto(allocator, &buf, @as(u64, 0));
-    }
-
-    // Wrap in list header
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
-    try encodeLength(allocator, &result, buf.items.len, 0xc0);
-    try result.appendSlice(allocator, buf.items);
+    try result.ensureTotalCapacity(allocator, total);
+
+    // Write list header + fields directly
+    encodeLengthAssumeCapacity(&result, payload_len, 0xc0);
+    try encodeLegacyBaseFields(allocator, &result, legacy);
+
+    if (legacy.chain_id) |chain_id| {
+        try rlp.encodeInto(allocator, &result, chain_id);
+        try rlp.encodeInto(allocator, &result, @as(u64, 0));
+        try rlp.encodeInto(allocator, &result, @as(u64, 0));
+    }
 
     return result.toOwnedSlice(allocator);
 }
@@ -220,78 +215,236 @@ fn encodeTypedFields(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), tx: 
 
 /// Encode a list of 32-byte blob versioned hashes.
 fn encodeBlobHashes(allocator: std.mem.Allocator, list: *std.ArrayList(u8), hashes: []const [32]u8) !void {
-    var temp: std.ArrayList(u8) = .empty;
-    defer temp.deinit(allocator);
+    // Pre-calculate payload length
+    var payload_len: usize = 0;
     for (hashes) |h| {
-        try rlp.encodeInto(allocator, &temp, h);
+        payload_len += rlp.encodedLength(h);
     }
-    try encodeLength(allocator, list, temp.items.len, 0xc0);
-    try list.appendSlice(allocator, temp.items);
+    try list.ensureTotalCapacity(allocator, list.items.len + rlp.lengthPrefixSize(payload_len) + payload_len);
+    encodeLengthAssumeCapacity(list, payload_len, 0xc0);
+    for (hashes) |h| {
+        try rlp.encodeInto(allocator, list, h);
+    }
+}
+
+/// Write typed transaction fields directly to buffer. Returns bytes written.
+fn writeTypedFieldsDirect(buf: []u8, tx: anytype) usize {
+    const T = @TypeOf(tx);
+    var pos: usize = 0;
+
+    pos += rlp.writeDirect(buf[pos..], tx.chain_id);
+    pos += rlp.writeDirect(buf[pos..], tx.nonce);
+
+    if (@hasField(T, "max_priority_fee_per_gas")) {
+        pos += rlp.writeDirect(buf[pos..], tx.max_priority_fee_per_gas);
+        pos += rlp.writeDirect(buf[pos..], tx.max_fee_per_gas);
+    } else {
+        pos += rlp.writeDirect(buf[pos..], tx.gas_price);
+    }
+
+    pos += rlp.writeDirect(buf[pos..], tx.gas_limit);
+
+    if (@hasField(T, "to")) {
+        pos += rlp.writeDirect(buf[pos..], tx.to);
+    }
+
+    pos += rlp.writeDirect(buf[pos..], tx.value);
+    pos += rlp.writeDirect(buf[pos..], tx.data);
+
+    // Access list
+    pos += writeAccessListDirect(buf[pos..], tx.access_list);
+
+    if (@hasField(T, "max_fee_per_blob_gas")) {
+        pos += rlp.writeDirect(buf[pos..], tx.max_fee_per_blob_gas);
+        // blob_versioned_hashes
+        var hashes_payload: usize = 0;
+        for (tx.blob_versioned_hashes) |h| {
+            hashes_payload += rlp.encodedLength(h);
+        }
+        pos += rlp.writeLengthDirect(buf[pos..], hashes_payload, 0xc0);
+        for (tx.blob_versioned_hashes) |h| {
+            pos += rlp.writeDirect(buf[pos..], h);
+        }
+    }
+
+    return pos;
+}
+
+/// Write access list directly to buffer. Returns bytes written.
+fn writeAccessListDirect(buf: []u8, access_list: access_list_mod.AccessList) usize {
+    var outer_payload_len: usize = 0;
+    for (access_list) |item| {
+        const addr_len = rlp.encodedLength(item.address);
+        var keys_payload_len: usize = 0;
+        for (item.storage_keys) |key| {
+            keys_payload_len += rlp.encodedLength(key);
+        }
+        const keys_list_len = rlp.lengthPrefixSize(keys_payload_len) + keys_payload_len;
+        const item_payload_len = addr_len + keys_list_len;
+        outer_payload_len += rlp.lengthPrefixSize(item_payload_len) + item_payload_len;
+    }
+
+    var pos = rlp.writeLengthDirect(buf, outer_payload_len, 0xc0);
+
+    for (access_list) |item| {
+        const addr_len = rlp.encodedLength(item.address);
+        var keys_payload_len: usize = 0;
+        for (item.storage_keys) |key| {
+            keys_payload_len += rlp.encodedLength(key);
+        }
+        const keys_list_len = rlp.lengthPrefixSize(keys_payload_len) + keys_payload_len;
+        const item_payload_len = addr_len + keys_list_len;
+
+        pos += rlp.writeLengthDirect(buf[pos..], item_payload_len, 0xc0);
+        pos += rlp.writeDirect(buf[pos..], item.address);
+        pos += rlp.writeLengthDirect(buf[pos..], keys_payload_len, 0xc0);
+        for (item.storage_keys) |key| {
+            pos += rlp.writeDirect(buf[pos..], key);
+        }
+    }
+
+    return pos;
+}
+
+/// Calculate the total payload length of typed transaction fields for RLP list.
+fn calculateTypedFieldsLength(tx: anytype) usize {
+    const T = @TypeOf(tx);
+    var payload_len: usize = 0;
+
+    payload_len += rlp.encodedLength(tx.chain_id);
+    payload_len += rlp.encodedLength(tx.nonce);
+
+    if (@hasField(T, "max_priority_fee_per_gas")) {
+        payload_len += rlp.encodedLength(tx.max_priority_fee_per_gas);
+        payload_len += rlp.encodedLength(tx.max_fee_per_gas);
+    } else {
+        payload_len += rlp.encodedLength(tx.gas_price);
+    }
+
+    payload_len += rlp.encodedLength(tx.gas_limit);
+
+    if (@hasField(T, "to")) {
+        const to_field = tx.to;
+        payload_len += rlp.encodedLength(to_field);
+    }
+
+    payload_len += rlp.encodedLength(tx.value);
+    payload_len += rlp.encodedLength(tx.data);
+
+    payload_len += access_list_mod.accessListEncodedLength(tx.access_list);
+
+    if (@hasField(T, "max_fee_per_blob_gas")) {
+        payload_len += rlp.encodedLength(tx.max_fee_per_blob_gas);
+        // blob_versioned_hashes list
+        var hashes_payload: usize = 0;
+        for (tx.blob_versioned_hashes) |h| {
+            hashes_payload += rlp.encodedLength(h);
+        }
+        payload_len += rlp.lengthPrefixSize(hashes_payload) + hashes_payload;
+    }
+
+    return payload_len;
 }
 
 /// Serialize a typed transaction (EIP-2930/1559/4844) for signing.
 /// Returns: type_byte ++ RLP([fields...])
 fn serializeTypedForSigning(allocator: std.mem.Allocator, type_byte: u8, tx: anytype) ![]u8 {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(allocator);
+    // Pre-calculate total size for single allocation
+    const payload_len = calculateTypedFieldsLength(tx);
+    const total = 1 + rlp.lengthPrefixSize(payload_len) + payload_len;
 
-    try encodeTypedFields(allocator, &buf, tx);
+    const buf = try allocator.alloc(u8, total);
+    errdefer allocator.free(buf);
 
-    // Wrap in list header and prepend type byte
-    var result: std.ArrayList(u8) = .empty;
-    errdefer result.deinit(allocator);
-    try result.append(allocator, type_byte);
-    try encodeLength(allocator, &result, buf.items.len, 0xc0);
-    try result.appendSlice(allocator, buf.items);
+    // Write type byte
+    buf[0] = type_byte;
+    var pos: usize = 1;
+    // Write RLP list header
+    pos += rlp.writeLengthDirect(buf[pos..], payload_len, 0xc0);
+    // Write fields directly into buffer
+    pos += writeTypedFieldsDirect(buf[pos..], tx);
 
-    return result.toOwnedSlice(allocator);
+    return buf[0..total];
+}
+
+/// Encode a length prefix without allocation (capacity must be pre-ensured).
+fn encodeLengthAssumeCapacity(list: *std.ArrayList(u8), len: usize, offset: u8) void {
+    if (len < 56) {
+        list.appendAssumeCapacity(offset + @as(u8, @intCast(len)));
+    } else {
+        var len_bytes: usize = 0;
+        var temp = len;
+        while (temp > 0) : (temp >>= 8) {
+            len_bytes += 1;
+        }
+        list.appendAssumeCapacity(offset + 55 + @as(u8, @intCast(len_bytes)));
+        var i: usize = len_bytes;
+        while (i > 0) {
+            i -= 1;
+            list.appendAssumeCapacity(@intCast((len >> @intCast(i * 8)) & 0xff));
+        }
+    }
 }
 
 /// Serialize a signed legacy transaction.
 fn serializeLegacySigned(allocator: std.mem.Allocator, legacy: LegacyTransaction, r: [32]u8, s: [32]u8, v: u8) ![]u8 {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(allocator);
+    // Calculate payload length
+    var payload_len: usize = 0;
+    payload_len += rlp.encodedLength(legacy.nonce);
+    payload_len += rlp.encodedLength(legacy.gas_price);
+    payload_len += rlp.encodedLength(legacy.gas_limit);
+    payload_len += rlp.encodedLength(legacy.to);
+    payload_len += rlp.encodedLength(legacy.value);
+    payload_len += rlp.encodedLength(legacy.data);
+    payload_len += rlp.encodedLength(v);
+    payload_len += encodedU256BytesLength(&r);
+    payload_len += encodedU256BytesLength(&s);
 
-    // Base fields
-    try encodeLegacyBaseFields(allocator, &buf, legacy);
+    const total = rlp.lengthPrefixSize(payload_len) + payload_len;
 
-    // For EIP-155, v = chain_id * 2 + 35 + recovery_id
-    // The caller passes the final v value; we encode it directly.
-    try rlp.encodeInto(allocator, &buf, v);
-
-    // r and s: encode as big-endian integers (strip leading zeros)
-    try encodeU256Bytes(allocator, &buf, &r);
-    try encodeU256Bytes(allocator, &buf, &s);
-
-    // Wrap in list header
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
-    try encodeLength(allocator, &result, buf.items.len, 0xc0);
-    try result.appendSlice(allocator, buf.items);
+    try result.ensureTotalCapacity(allocator, total);
+
+    encodeLengthAssumeCapacity(&result, payload_len, 0xc0);
+    try encodeLegacyBaseFields(allocator, &result, legacy);
+    try rlp.encodeInto(allocator, &result, v);
+    try encodeU256Bytes(allocator, &result, &r);
+    try encodeU256Bytes(allocator, &result, &s);
 
     return result.toOwnedSlice(allocator);
 }
 
 /// Serialize a signed typed transaction.
 fn serializeTypedSigned(allocator: std.mem.Allocator, type_byte: u8, tx: anytype, r: [32]u8, s: [32]u8, v: u8) ![]u8 {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(allocator);
+    // Pre-calculate total size
+    var payload_len = calculateTypedFieldsLength(tx);
+    payload_len += rlp.encodedLength(v);
+    payload_len += encodedU256BytesLength(&r);
+    payload_len += encodedU256BytesLength(&s);
 
-    try encodeTypedFields(allocator, &buf, tx);
+    const total = 1 + rlp.lengthPrefixSize(payload_len) + payload_len;
 
-    // Append signature: v (recovery_id for typed txs, 0 or 1), r, s
-    try rlp.encodeInto(allocator, &buf, v);
-    try encodeU256Bytes(allocator, &buf, &r);
-    try encodeU256Bytes(allocator, &buf, &s);
-
-    // Wrap in list header and prepend type byte
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
-    try result.append(allocator, type_byte);
-    try encodeLength(allocator, &result, buf.items.len, 0xc0);
-    try result.appendSlice(allocator, buf.items);
+    try result.ensureTotalCapacity(allocator, total);
+
+    result.appendAssumeCapacity(type_byte);
+    encodeLengthAssumeCapacity(&result, payload_len, 0xc0);
+    try encodeTypedFields(allocator, &result, tx);
+    try rlp.encodeInto(allocator, &result, v);
+    try encodeU256Bytes(allocator, &result, &r);
+    try encodeU256Bytes(allocator, &result, &s);
 
     return result.toOwnedSlice(allocator);
+}
+
+/// Calculate the encoded length of a 32-byte big-endian value as RLP integer.
+fn encodedU256BytesLength(bytes: *const [32]u8) usize {
+    var start: usize = 0;
+    while (start < 32 and bytes[start] == 0) : (start += 1) {}
+    if (start == 32) return rlp.encodedLength(@as(u64, 0));
+    return rlp.encodedLength(bytes[start..]);
 }
 
 /// Encode a 32-byte big-endian value as an RLP integer (stripping leading zeros).

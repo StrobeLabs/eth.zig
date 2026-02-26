@@ -77,6 +77,17 @@ pub fn safeDiv(a: u256, b: u256) ?u256 {
     return a / b;
 }
 
+/// Fast u256 division that uses narrower operations when values fit.
+/// This avoids LLVM's slow generic 256-bit division for common cases.
+pub fn fastDiv(a: u256, b: u256) u256 {
+    // Both fit in u128 - use LLVM's faster 128-bit division
+    if ((a >> 128) == 0 and (b >> 128) == 0) {
+        return @as(u128, @truncate(a)) / @as(u128, @truncate(b));
+    }
+    // Full u256 division for large values
+    return a / b;
+}
+
 /// Maximum u256 value.
 pub const MAX: u256 = std.math.maxInt(u256);
 

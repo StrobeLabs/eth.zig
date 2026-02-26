@@ -14,12 +14,100 @@ pub const RlpError = error{
 // Encoding
 // ============================================================================
 
+/// Calculate the size of the length prefix for a given payload length.
+pub fn lengthPrefixSize(len: usize) usize {
+    if (len < 56) return 1;
+    var len_bytes: usize = 0;
+    var temp = len;
+    while (temp > 0) : (temp >>= 8) {
+        len_bytes += 1;
+    }
+    return 1 + len_bytes;
+}
+
+/// Calculate the byte length needed to represent a uint value.
+fn encodedUintByteLen(val: u256) usize {
+    if (val == 0) return 0;
+    return (256 - @as(usize, @clz(val)) + 7) / 8;
+}
+
+/// Calculate the RLP-encoded length of a uint value.
+fn encodedUintLength(val: u256) usize {
+    if (val == 0) return 1; // 0x80
+    if (val < 128) return 1; // single byte
+    const byte_len = encodedUintByteLen(val);
+    return lengthPrefixSize(byte_len) + byte_len;
+}
+
+/// Calculate the RLP-encoded length of a byte slice.
+fn encodedBytesLength(bytes: []const u8) usize {
+    if (bytes.len == 1 and bytes[0] < 0x80) return 1;
+    return lengthPrefixSize(bytes.len) + bytes.len;
+}
+
+/// Calculate the total RLP-encoded length of a value without allocating.
+pub fn encodedLength(value: anytype) usize {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T);
+
+    switch (info) {
+        .bool => return 1,
+        .int, .comptime_int => return encodedUintLength(@intCast(value)),
+        .pointer => |ptr| {
+            switch (ptr.size) {
+                .one => return encodedLength(value.*),
+                .slice => {
+                    if (ptr.child == u8) {
+                        return encodedBytesLength(value);
+                    } else {
+                        // Slice of non-bytes: encode as list
+                        var payload_len: usize = 0;
+                        for (value) |item| {
+                            payload_len += encodedLength(item);
+                        }
+                        return lengthPrefixSize(payload_len) + payload_len;
+                    }
+                },
+                else => @compileError("unsupported pointer type for RLP length"),
+            }
+        },
+        .array => |arr| {
+            if (arr.child == u8) {
+                return encodedBytesLength(&value);
+            } else {
+                var payload_len: usize = 0;
+                for (&value) |*item| {
+                    payload_len += encodedLength(item.*);
+                }
+                return lengthPrefixSize(payload_len) + payload_len;
+            }
+        },
+        .@"struct" => |s| {
+            var payload_len: usize = 0;
+            inline for (s.fields) |field| {
+                payload_len += encodedLength(@field(value, field.name));
+            }
+            return lengthPrefixSize(payload_len) + payload_len;
+        },
+        .optional => {
+            if (value) |v| {
+                return encodedLength(v);
+            } else {
+                return 1; // 0x80
+            }
+        },
+        else => return 0,
+    }
+}
+
 /// Encode a value to RLP. Returns allocated bytes.
 pub fn encode(allocator: std.mem.Allocator, value: anytype) (std.mem.Allocator.Error || RlpError)![]u8 {
-    var list: std.ArrayList(u8) = .empty;
-    errdefer list.deinit(allocator);
-    try encodeInto(allocator, &list, value);
-    return list.toOwnedSlice(allocator);
+    const total_len = encodedLength(value);
+    const buf = try allocator.alloc(u8, total_len);
+    errdefer allocator.free(buf);
+    const written = writeDirect(buf, value);
+    _ = written;
+    return buf;
 }
 
 /// Encode a value and append to the given ArrayList.
@@ -66,16 +154,16 @@ pub fn encodeInto(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value:
             }
         },
         .@"struct" => |s| {
-            // Structs encode as RLP lists of their fields
-            var temp: std.ArrayList(u8) = .empty;
-            defer temp.deinit(allocator);
-
+            // Pre-calculate payload length to avoid temp ArrayList
+            var payload_len: usize = 0;
             inline for (s.fields) |field| {
-                try encodeInto(allocator, &temp, @field(value, field.name));
+                payload_len += encodedLength(@field(value, field.name));
             }
 
-            try encodeLength(allocator, list, temp.items.len, 0xc0);
-            try list.appendSlice(allocator, temp.items);
+            try encodeLength(allocator, list, payload_len, 0xc0);
+            inline for (s.fields) |field| {
+                try encodeInto(allocator, list, @field(value, field.name));
+            }
         },
         .optional => {
             if (value) |v| {
@@ -102,12 +190,7 @@ fn encodeUint(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value: any
         return;
     }
 
-    // Determine byte length needed
-    var byte_len: usize = 0;
-    var temp = val;
-    while (temp > 0) : (temp >>= 8) {
-        byte_len += 1;
-    }
+    const byte_len = (256 - @as(usize, @clz(val)) + 7) / 8;
 
     try encodeLength(allocator, list, byte_len, 0x80);
 
@@ -130,15 +213,16 @@ fn encodeBytes(allocator: std.mem.Allocator, list: *std.ArrayList(u8), bytes: []
 }
 
 fn encodeList(allocator: std.mem.Allocator, list: *std.ArrayList(u8), items: anytype) (std.mem.Allocator.Error || RlpError)!void {
-    var temp: std.ArrayList(u8) = .empty;
-    defer temp.deinit(allocator);
-
+    // Pre-calculate payload length to avoid temp ArrayList
+    var payload_len: usize = 0;
     for (items) |item| {
-        try encodeInto(allocator, &temp, item);
+        payload_len += encodedLength(item);
     }
 
-    try encodeLength(allocator, list, temp.items.len, 0xc0);
-    try list.appendSlice(allocator, temp.items);
+    try encodeLength(allocator, list, payload_len, 0xc0);
+    for (items) |item| {
+        try encodeInto(allocator, list, item);
+    }
 }
 
 fn encodeLength(allocator: std.mem.Allocator, list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
@@ -160,6 +244,138 @@ fn encodeLength(allocator: std.mem.Allocator, list: *std.ArrayList(u8), len: usi
             i -= 1;
             try list.append(allocator, @intCast((len >> @intCast(i * 8)) & 0xff));
         }
+    }
+}
+
+// ============================================================================
+// Direct buffer writing (zero-overhead, no ArrayList)
+// ============================================================================
+
+/// Write RLP length prefix directly to buffer. Returns bytes written.
+pub fn writeLengthDirect(buf: []u8, len: usize, offset: u8) usize {
+    if (len < 56) {
+        buf[0] = offset + @as(u8, @intCast(len));
+        return 1;
+    } else {
+        var len_bytes: usize = 0;
+        var temp = len;
+        while (temp > 0) : (temp >>= 8) {
+            len_bytes += 1;
+        }
+        buf[0] = offset + 55 + @as(u8, @intCast(len_bytes));
+        var i: usize = len_bytes;
+        var pos: usize = 1;
+        while (i > 0) {
+            i -= 1;
+            buf[pos] = @intCast((len >> @intCast(i * 8)) & 0xff);
+            pos += 1;
+        }
+        return pos;
+    }
+}
+
+/// Write RLP-encoded uint directly to buffer. Returns bytes written.
+fn writeUintDirect(buf: []u8, value: anytype) usize {
+    const val: u256 = @intCast(value);
+    if (val == 0) {
+        buf[0] = 0x80;
+        return 1;
+    }
+    if (val < 128) {
+        buf[0] = @intCast(val);
+        return 1;
+    }
+    const byte_len = (256 - @as(usize, @clz(val)) + 7) / 8;
+    var pos = writeLengthDirect(buf, byte_len, 0x80);
+    var i: usize = byte_len;
+    while (i > 0) {
+        i -= 1;
+        buf[pos] = @truncate(val >> @intCast(i * 8));
+        pos += 1;
+    }
+    return pos;
+}
+
+/// Write RLP-encoded bytes directly to buffer. Returns bytes written.
+fn writeBytesDirect(buf: []u8, bytes: []const u8) usize {
+    if (bytes.len == 1 and bytes[0] < 0x80) {
+        buf[0] = bytes[0];
+        return 1;
+    }
+    const hdr = writeLengthDirect(buf, bytes.len, 0x80);
+    @memcpy(buf[hdr..][0..bytes.len], bytes);
+    return hdr + bytes.len;
+}
+
+/// Write RLP-encoded value directly to buffer. Returns bytes written.
+/// This is the zero-overhead version of encodeInto - no ArrayList, no allocator.
+pub fn writeDirect(buf: []u8, value: anytype) usize {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T);
+
+    switch (info) {
+        .bool => {
+            buf[0] = if (value) 0x01 else 0x80;
+            return 1;
+        },
+        .int, .comptime_int => return writeUintDirect(buf, value),
+        .pointer => |ptr| {
+            switch (ptr.size) {
+                .one => return writeDirect(buf, value.*),
+                .slice => {
+                    if (ptr.child == u8) {
+                        return writeBytesDirect(buf, value);
+                    } else {
+                        // Slice of non-bytes: encode as list
+                        var payload_len: usize = 0;
+                        for (value) |item| {
+                            payload_len += encodedLength(item);
+                        }
+                        var pos = writeLengthDirect(buf, payload_len, 0xc0);
+                        for (value) |item| {
+                            pos += writeDirect(buf[pos..], item);
+                        }
+                        return pos;
+                    }
+                },
+                else => @compileError("unsupported pointer type for RLP direct write"),
+            }
+        },
+        .array => |arr| {
+            if (arr.child == u8) {
+                return writeBytesDirect(buf, &value);
+            } else {
+                var payload_len: usize = 0;
+                for (&value) |*item| {
+                    payload_len += encodedLength(item.*);
+                }
+                var pos = writeLengthDirect(buf, payload_len, 0xc0);
+                for (&value) |*item| {
+                    pos += writeDirect(buf[pos..], item.*);
+                }
+                return pos;
+            }
+        },
+        .@"struct" => |s| {
+            var payload_len: usize = 0;
+            inline for (s.fields) |field| {
+                payload_len += encodedLength(@field(value, field.name));
+            }
+            var pos = writeLengthDirect(buf, payload_len, 0xc0);
+            inline for (s.fields) |field| {
+                pos += writeDirect(buf[pos..], @field(value, field.name));
+            }
+            return pos;
+        },
+        .optional => {
+            if (value) |v| {
+                return writeDirect(buf, v);
+            } else {
+                buf[0] = 0x80;
+                return 1;
+            }
+        },
+        else => return 0,
     }
 }
 
@@ -282,6 +498,13 @@ fn bytesToUint(comptime T: type, bytes: []const u8) RlpError!T {
     if (bytes.len == 0) return 0;
     if (bytes.len > @sizeOf(T)) return error.Overflow;
     if (bytes.len > 1 and bytes[0] == 0) return error.LeadingZero;
+
+    // Fast path: use direct memory read + byte swap (single BSWAP instruction)
+    if (bytes.len <= 8) {
+        var buf: [8]u8 = .{0, 0, 0, 0, 0, 0, 0, 0};
+        @memcpy(buf[8 - bytes.len ..], bytes);
+        return @intCast(std.mem.readInt(u64, &buf, .big));
+    }
 
     var result: T = 0;
     for (bytes) |b| {
