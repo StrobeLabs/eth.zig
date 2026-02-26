@@ -81,6 +81,7 @@ pub fn safeDiv(a: u256, b: u256) ?u256 {
 /// Avoids LLVM's slow generic u256 runtime library calls (~280ns)
 /// by using native u64/u128 operations (~10-30ns).
 pub fn fastDiv(a: u256, b: u256) u256 {
+    if (b == 0) @panic("division by zero");
     // Both fit in u128 - use LLVM's native 128-bit division
     if ((a >> 128) == 0 and (b >> 128) == 0) {
         return @as(u128, @truncate(a)) / @as(u128, @truncate(b));
