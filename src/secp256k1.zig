@@ -501,36 +501,14 @@ test "sign produces low-s (EIP-2) canonical signature" {
     // Hardhat account #0
     const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    // n/2 = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0
-    const half_n: [32]u8 = .{
-        0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D,
-        0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0,
-    };
-
     const messages = [_][]const u8{ "canonical1", "canonical2", "canonical3", "canonical4", "canonical5" };
 
     for (messages) |msg| {
         const message_hash = keccak.hash(msg);
         const sig = try sign(private_key, message_hash);
 
-        // Extract s as big-endian bytes and verify s <= n/2
-        const s_bytes = sig.s;
-        var s_is_lte = false;
-        for (0..32) |i| {
-            if (s_bytes[i] < half_n[i]) {
-                s_is_lte = true;
-                break;
-            } else if (s_bytes[i] > half_n[i]) {
-                break;
-            }
-        }
-        // If we didn't break early, all bytes were equal (s == n/2), which is also valid
-        if (!s_is_lte) {
-            // Check if all bytes are equal (s == n/2)
-            s_is_lte = std.mem.eql(u8, &s_bytes, &half_n);
-        }
-        try std.testing.expect(s_is_lte);
+        // Verify s <= n/2 using the existing isHighS helper and HALF_ORDER_BYTES
+        const s_scalar = Scalar.fromBytes(sig.s, .big) catch unreachable;
+        try std.testing.expect(!isHighS(s_scalar));
     }
 }
