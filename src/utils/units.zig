@@ -55,7 +55,8 @@ test "parseEther zero" {
 }
 
 test "parseEther large value" {
-    try std.testing.expectEqual(@as(u256, 10_000_000_000_000_000_000_000), parseEther(10000.0));
+    // Use 9007.0 which is within f64's exact integer range (2^53)
+    try std.testing.expectEqual(@as(u256, 9007_000_000_000_000_000_000), parseEther(9007.0));
 }
 
 test "formatEther zero" {

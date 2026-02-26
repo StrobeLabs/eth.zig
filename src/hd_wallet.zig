@@ -235,26 +235,12 @@ test "BIP-32 master key from known seed" {
     @memcpy(seed[0..32], &first_half);
 
     const master = try masterKeyFromSeed(seed);
-    // Master key should be non-zero
-    var key_nonzero = false;
-    for (master.key) |b| if (b != 0) {
-        key_nonzero = true;
-        break;
-    };
-    try std.testing.expect(key_nonzero);
 
-    // Chain code should be non-zero
-    var cc_nonzero = false;
-    for (master.chain_code) |b| if (b != 0) {
-        cc_nonzero = true;
-        break;
-    };
-    try std.testing.expect(cc_nonzero);
-
-    // Deterministic
-    const master2 = try masterKeyFromSeed(seed);
-    try std.testing.expectEqualSlices(u8, &master.key, &master2.key);
-    try std.testing.expectEqualSlices(u8, &master.chain_code, &master2.chain_code);
+    // Pin exact expected BIP-32 vector outputs
+    const expected_key = try hex_mod.hexToBytesFixed(32, "4cc2c096af45067fed8c711d57ed5c4923eb3ee761e08f5474c33754b80c9d0f");
+    const expected_chain_code = try hex_mod.hexToBytesFixed(32, "2218ccd37b9b7c6d41122fed49d2ddcc151b2f463301b8fa9d5067bdbdb40af2");
+    try std.testing.expectEqualSlices(u8, &expected_key, &master.key);
+    try std.testing.expectEqualSlices(u8, &expected_chain_code, &master.chain_code);
 }
 
 test "known mnemonic abandon...about to exact address" {
