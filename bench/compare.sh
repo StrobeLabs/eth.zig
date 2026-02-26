@@ -8,7 +8,7 @@ ALLOY_DIR="$SCRIPT_DIR/alloy-bench"
 # Check prerequisites
 command -v zig >/dev/null 2>&1 || { echo "ERROR: zig not found. Install from https://ziglang.org/"; exit 1; }
 command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo not found. Install from https://rustup.rs/"; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 not found."; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 not found. Install from https://www.python.org/downloads/"; exit 1; }
 
 echo ""
 echo "================================================================"

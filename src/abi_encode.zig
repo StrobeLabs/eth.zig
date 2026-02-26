@@ -89,12 +89,28 @@ fn dynamicTailSize(val: AbiValue) usize {
     };
 }
 
+/// Calculate the inline encoded size of a static ABI value.
+/// Static fixed_arrays and tuples are encoded inline and may exceed 32 bytes.
+fn staticEncodedSize(val: AbiValue) usize {
+    return switch (val) {
+        .fixed_array, .tuple => |items| {
+            var size: usize = 0;
+            for (items) |item| size += staticEncodedSize(item);
+            return size;
+        },
+        else => 32,
+    };
+}
+
 /// Calculate the total encoded size of a slice of values (head + tail).
 fn calcEncodedSize(values: []const AbiValue) usize {
-    var size: usize = values.len * 32; // head section
+    var size: usize = 0;
     for (values) |val| {
         if (val.isDynamic()) {
+            size += 32; // offset pointer
             size += dynamicTailSize(val);
+        } else {
+            size += staticEncodedSize(val);
         }
     }
     return size;
@@ -308,13 +324,16 @@ fn writeValuesDirect(buf: []u8, values: []const AbiValue) void {
         var pos: usize = 0;
         for (values) |val| {
             writeStaticValueDirect(buf[pos..], val);
-            pos += 32;
+            pos += staticEncodedSize(val);
         }
         return;
     }
 
-    // Dynamic path: calculate offsets and write heads + tails
-    const head_size = n * 32;
+    // Dynamic path: calculate head section size and offsets
+    var head_size: usize = 0;
+    for (values) |val| {
+        head_size += if (val.isDynamic()) 32 else staticEncodedSize(val);
+    }
     var tail_offset: usize = head_size;
 
     var offsets: [32]usize = undefined;
@@ -330,10 +349,11 @@ fn writeValuesDirect(buf: []u8, values: []const AbiValue) void {
     for (values, 0..) |val, i| {
         if (val.isDynamic()) {
             writeU256Direct(buf[pos..][0..32], @intCast(offsets[i]));
+            pos += 32;
         } else {
             writeStaticValueDirect(buf[pos..], val);
+            pos += staticEncodedSize(val);
         }
-        pos += 32;
     }
 
     // Write tails
