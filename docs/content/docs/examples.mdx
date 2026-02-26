@@ -1,0 +1,110 @@
+---
+title: Examples
+description: Runnable code examples for eth.zig -- address derivation, signing, ERC-20, HD wallets, and more.
+---
+
+The [`examples/`](https://github.com/StrobeLabs/eth.zig/tree/main/examples) directory in the repo contains self-contained programs for each major feature.
+
+| Example | Description | Requires RPC |
+|---------|-------------|:---:|
+| `01_derive_address` | Derive address from private key | No |
+| `02_check_balance` | Query ETH balance via JSON-RPC | Yes |
+| `03_sign_message` | EIP-191 personal message signing | No |
+| `04_send_transaction` | Send ETH with Wallet | Yes (Anvil) |
+| `05_read_erc20` | ERC-20 module API showcase | Yes |
+| `06_hd_wallet` | BIP-44 HD wallet derivation | No |
+| `07_comptime_selectors` | Comptime function selectors | No |
+
+Run any example:
+
+```bash
+cd examples && zig build && ./zig-out/bin/01_derive_address
+```
+
+---
+
+## Derive an Address
+
+```zig
+const eth = @import("eth");
+
+// WARNING: This is the default Anvil/Hardhat test key. Never use it for real funds.
+const private_key = try eth.hex.hexToBytesFixed(
+    32,
+    "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+);
+const signer = eth.signer.Signer.init(private_key);
+const addr = try signer.address();
+const checksum = eth.primitives.addressToChecksum(&addr);
+// "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+```
+
+## Sign and Send a Transaction
+
+```zig
+const eth = @import("eth");
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+defer transport.deinit();
+var provider = eth.provider.Provider.init(allocator, &transport);
+
+var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+const tx_hash = try wallet.sendTransaction(.{
+    .to = recipient_address,
+    .value = eth.units.parseEther(1.0),
+});
+```
+
+## Read an ERC-20 Token
+
+```zig
+const eth = @import("eth");
+
+// Comptime selectors -- zero runtime cost
+const balance_sel = eth.erc20.selectors.balanceOf;
+
+// Or use the typed wrapper
+var token = eth.erc20.ERC20.init(allocator, token_addr, &provider);
+const balance = try token.balanceOf(holder_addr);
+const name = try token.name();
+defer allocator.free(name);
+```
+
+## Comptime Function Selectors
+
+```zig
+const eth = @import("eth");
+
+// Computed at compile time -- zero runtime cost
+const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+// transfer_sel == [4]u8{ 0xa9, 0x05, 0x9c, 0xbb }
+
+const transfer_topic = eth.abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
+// transfer_topic == keccak256("Transfer(address,address,uint256)")
+```
+
+## HD Wallet from Mnemonic
+
+```zig
+const eth = @import("eth");
+
+const words = [_][]const u8{
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "about",
+};
+const seed = try eth.mnemonic.toSeed(&words, "");
+const key = try eth.hd_wallet.deriveEthAccount(seed, 0);
+const addr = key.toAddress();
+```
+
+## Multicall3 Batch Reads
+
+```zig
+const eth = @import("eth");
+
+var mc = eth.multicall.Multicall3.init(allocator, &provider);
+try mc.addCall(token_addr, eth.erc20.selectors.balanceOf, .{holder_addr});
+try mc.addCall(token_addr, eth.erc20.selectors.totalSupply, .{});
+const results = try mc.execute();
+```

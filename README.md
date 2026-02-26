@@ -1,12 +1,15 @@
 # eth.zig
 
 [![CI](https://github.com/strobelabs/eth.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/strobelabs/eth.zig/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-ethzig.org-blue)](https://ethzig.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.15.2-orange)](https://ziglang.org/)
 
 **The fastest Ethereum library. Pure Zig. Zero dependencies.**
 
 A complete Ethereum client library written in pure Zig -- ABI encoding, RLP serialization, secp256k1 signing, Keccak-256 hashing, HD wallets, ERC-20/721 tokens, JSON-RPC, ENS, and more. No C bindings. No system libraries. Just `zig build`.
+
+**[Read the docs at ethzig.org](https://ethzig.org)**
 
 ## Why eth.zig?
 
@@ -122,7 +125,7 @@ const addr = key.toAddress();
 **One-liner:**
 
 ```bash
-zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.2.1
+zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.2.2
 ```
 
 **Or add manually** to your `build.zig.zon`:
@@ -130,7 +133,7 @@ zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.2.1
 ```zig
 .dependencies = .{
     .eth = .{
-        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.2.1",
+        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.2.2",
         .hash = "...", // run `zig build` and it will tell you the expected hash
     },
 },

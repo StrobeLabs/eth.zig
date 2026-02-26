@@ -1,0 +1,23 @@
+{
+  "pages": [
+    "---Getting Started---",
+    "introduction",
+    "installation",
+    "---Guides---",
+    "examples",
+    "transactions",
+    "contracts",
+    "tokens",
+    "hd-wallets",
+    "comptime",
+    "ens",
+    "websockets",
+    "---Reference---",
+    "modules",
+    "benchmarks",
+    "comparison",
+    "---Community---",
+    "contributing",
+    "faq"
+  ]
+}

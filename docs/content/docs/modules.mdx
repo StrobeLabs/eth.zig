@@ -1,0 +1,176 @@
+---
+title: Modules
+description: Complete module reference for eth.zig -- primitives, encoding, crypto, transport, and more.
+---
+
+Complete reference for all eth.zig modules, organized by layer.
+
+## Primitives
+
+Core types and encoding utilities.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `primitives` | `Address`, `Hash`, `Bytes32`, `addressToChecksum` | Core Ethereum types with EIP-55 checksum support |
+| `uint256` | `u256`, arithmetic ops | 256-bit unsigned integer type |
+| `hex` | `hexToBytesFixed`, `bytesToHex` | Hex string encoding and decoding |
+| `units` | `parseEther`, `parseGwei`, `formatEther` | Wei/Gwei/Ether unit conversions |
+
+## Encoding
+
+RLP and ABI encoding/decoding with comptime support.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `rlp` | `encode`, `decode` | Recursive Length Prefix encoding |
+| `abi_encode` | `encode`, `encodePacked` | ABI encoding for function calls and data |
+| `abi_decode` | `decode`, `decodeOutput` | ABI decoding of return values and calldata |
+| `abi_types` | `AbiType`, `Function`, `Event` | ABI type definitions |
+| `abi_comptime` | `comptimeSelector`, `comptimeTopic` | Compile-time function selectors and event topics |
+| `abi_json` | `parseAbi` | Parse Solidity JSON ABI files |
+
+### Comptime Selectors
+
+```zig
+const eth = @import("eth");
+
+// Computed at compile time -- zero runtime cost
+const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+// transfer_sel == [4]u8{ 0xa9, 0x05, 0x9c, 0xbb }
+
+const transfer_topic = eth.abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
+// transfer_topic == keccak256("Transfer(address,address,uint256)")
+```
+
+## Crypto
+
+Pure Zig cryptographic primitives -- no C dependencies.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `secp256k1` | `sign`, `recover`, `publicKey` | ECDSA on secp256k1 (RFC 6979, EIP-2 low-S) |
+| `signer` | `Signer` | High-level signing with address derivation |
+| `signature` | `Signature`, `recoverAddress` | Signature type with v/r/s and recovery |
+| `keccak` | `keccak256` | Keccak-256 hashing |
+| `eip155` | `applyEip155`, `chainId` | EIP-155 replay protection |
+
+## Transaction Types
+
+All Ethereum transaction formats.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `transaction` | `Transaction`, `LegacyTx`, `Eip1559Tx`, `Eip4844Tx` | Legacy, EIP-2930, EIP-1559, EIP-4844 transaction types |
+| `receipt` | `TransactionReceipt` | Transaction receipt with logs and status |
+| `block` | `Block`, `BlockHeader` | Block and block header types |
+| `blob` | `Blob`, `BlobSidecar` | EIP-4844 blob transaction support |
+| `access_list` | `AccessList`, `AccessListItem` | EIP-2930 access list types |
+
+## Accounts
+
+HD wallet and mnemonic support.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `mnemonic` | `generate`, `toSeed`, `validate` | BIP-39 mnemonic phrase generation and validation |
+| `hd_wallet` | `deriveEthAccount`, `HDKey` | BIP-32/44 hierarchical deterministic key derivation |
+
+### HD Wallet Example
+
+```zig
+const eth = @import("eth");
+
+const words = [_][]const u8{
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "about",
+};
+const seed = try eth.mnemonic.toSeed(&words, "");
+const key = try eth.hd_wallet.deriveEthAccount(seed, 0);
+const addr = key.toAddress();
+```
+
+## Transport
+
+JSON-RPC communication with Ethereum nodes.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `http_transport` | `HttpTransport` | HTTP JSON-RPC transport |
+| `ws_transport` | `WebSocketTransport` | WebSocket JSON-RPC transport with TLS |
+| `json_rpc` | `Request`, `Response` | JSON-RPC 2.0 types |
+| `provider` | `Provider` | High-level provider with 24+ JSON-RPC methods |
+| `subscription` | `Subscription` | WebSocket event subscriptions |
+
+### Provider Methods
+
+The `Provider` supports all standard Ethereum JSON-RPC methods:
+
+| Method | Description |
+|--------|-------------|
+| `getBalance` | Get ETH balance |
+| `getTransactionCount` | Get account nonce |
+| `getBlockNumber` | Current block number |
+| `getBlock` | Get block by number or hash |
+| `getTransactionReceipt` | Get transaction receipt |
+| `call` | Execute a read-only call |
+| `estimateGas` | Estimate gas for a transaction |
+| `sendRawTransaction` | Broadcast a signed transaction |
+| `getLogs` | Query event logs |
+| `getCode` | Get contract bytecode |
+| `getStorageAt` | Read contract storage |
+| `getGasPrice` | Current gas price |
+| `getMaxPriorityFeePerGas` | EIP-1559 priority fee |
+| `getChainId` | Chain ID |
+
+## ENS
+
+Ethereum Name Service resolution.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `ens_namehash` | `namehash` | ENS name to namehash conversion |
+| `ens_resolver` | `resolve` | Forward resolution (name to address) |
+| `ens_reverse` | `reverseResolve` | Reverse resolution (address to name) |
+
+## Client
+
+High-level client abstractions for common operations.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `wallet` | `Wallet` | Signing wallet with `sendTransaction`, `readContract`, `writeContract` |
+| `contract` | `Contract` | Contract interaction helpers |
+| `multicall` | `Multicall3` | Batch multiple read calls into a single RPC request |
+| `event` | `Event`, `decodeLog` | Event log decoding and filtering |
+| `erc20` | `ERC20`, `selectors` | Typed ERC-20 wrapper with comptime selectors |
+| `erc721` | `ERC721` | Typed ERC-721 wrapper |
+
+### ERC-20 Example
+
+```zig
+const eth = @import("eth");
+
+var token = eth.erc20.ERC20.init(allocator, token_addr, &provider);
+const balance = try token.balanceOf(holder_addr);
+const name = try token.name();
+defer allocator.free(name);
+const decimals = try token.decimals();
+```
+
+## Standards
+
+Ethereum Improvement Proposals.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `eip712` | `hashTypedData`, `signTypedData` | EIP-712 typed structured data hashing and signing |
+| `abi_json` | `parseAbi`, `AbiFunction` | Parse Solidity JSON ABI into typed structures |
+
+## Chains
+
+Pre-defined chain configurations.
+
+| Module | Key Exports | Description |
+|--------|-------------|-------------|
+| `chains` | `ethereum`, `arbitrum`, `optimism`, `base`, `polygon` | Chain ID, RPC URLs, block explorers |

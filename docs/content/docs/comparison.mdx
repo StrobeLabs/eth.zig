@@ -1,0 +1,58 @@
+---
+title: Comparison
+description: How eth.zig compares to alloy.rs, Zabi, and other Ethereum libraries.
+---
+
+## Performance vs alloy.rs (Rust)
+
+[alloy.rs](https://alloy.rs) is the leading Rust Ethereum library, backed by Paradigm. eth.zig outperforms it on the majority of benchmarks.
+
+| Category | eth.zig | alloy.rs |
+|----------|---------|----------|
+| Benchmarks won | **19/26** | 5/26 |
+| ABI encoding | Faster (1.18-1.72x) | Faster on 1 specialized path |
+| Hashing (Keccak) | Faster (1.19-1.45x) | -- |
+| Hex operations | Faster (1.00-2.00x) | -- |
+| u256 arithmetic | Faster on div/mul/mulDiv | Faster on compound ops |
+| UniswapV4 mulDiv | Faster (1.42x) | -- |
+| secp256k1 signing | -- | Faster (precomputed tables) |
+
+See [full benchmark results](/benchmarks) for details.
+
+## Features vs Zabi (Zig)
+
+[Zabi](https://www.zabi.sh/) is another Zig Ethereum library. Here's how they compare:
+
+| Feature | eth.zig | Zabi |
+|---------|---------|------|
+| Dependencies | 0 | 0 |
+| Comptime selectors | Yes | No |
+| Pure Zig crypto (secp256k1) | Yes | No (C binding) |
+| ABI encode/decode | Yes | Yes |
+| HD wallets (BIP-32/39/44) | Yes | Yes |
+| ERC-20/721 wrappers | Yes | No |
+| JSON ABI parsing | Yes | Yes |
+| WebSocket transport | Yes | Yes |
+| ENS resolution | Yes | Yes |
+| EIP-712 typed data | Yes | Yes |
+| Multicall3 | Yes | No |
+
+### Key Differences
+
+**Pure Zig crypto**: eth.zig implements secp256k1 entirely in Zig. Zabi uses a C binding to libsecp256k1. This means eth.zig has zero C dependencies -- no cross-compilation issues, no linking headaches, and full auditability.
+
+**Comptime selectors**: eth.zig computes function selectors and event topics at compile time. This is unique to eth.zig and eliminates runtime hashing overhead. See [Comptime Selectors](/comptime).
+
+**Typed token wrappers**: eth.zig provides ERC-20 and ERC-721 structs that wrap the contract address and provider for a clean API (`token.balanceOf(addr)` instead of raw ABI encoding).
+
+## vs ethers.js / viem (JavaScript)
+
+| Aspect | eth.zig | ethers.js / viem |
+|--------|---------|-----------------|
+| Language | Zig | JavaScript/TypeScript |
+| Performance | Nanoseconds | Microseconds-milliseconds |
+| Dependencies | 0 | Many (npm packages) |
+| Use case | Backend, infra, bots | Frontend, scripts, dApps |
+| Binary size | Single static binary | Node.js runtime required |
+
+eth.zig is not a replacement for JavaScript libraries in browser environments. It targets backend infrastructure, MEV bots, indexers, and latency-sensitive applications where performance matters.

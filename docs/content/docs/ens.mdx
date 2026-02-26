@@ -1,0 +1,68 @@
+---
+title: ENS Resolution
+description: Ethereum Name Service forward and reverse resolution with eth.zig.
+---
+
+eth.zig supports ENS (Ethereum Name Service) resolution -- converting human-readable names like `vitalik.eth` to Ethereum addresses and back.
+
+## Forward Resolution
+
+Resolve an ENS name to an address:
+
+```zig
+const eth = @import("eth");
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://eth.llamarpc.com");
+defer transport.deinit();
+var provider = eth.provider.Provider.init(allocator, &transport);
+
+// Resolve vitalik.eth -> 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+const addr = try eth.ens_resolver.resolve(allocator, &provider, "vitalik.eth");
+```
+
+The resolver performs two on-chain lookups:
+1. Queries the ENS registry for the resolver contract address
+2. Calls `addr(bytes32)` on the resolver to get the Ethereum address
+
+Returns `null` if the name has no resolver or resolves to the zero address.
+
+## Reverse Resolution
+
+Resolve an address back to an ENS name:
+
+```zig
+const eth = @import("eth");
+
+const name = try eth.ens_reverse.reverseResolve(allocator, &provider, address);
+defer if (name) |n| allocator.free(n);
+
+// name == "vitalik.eth" (or null if no reverse record)
+```
+
+## Namehash
+
+Compute the ENS namehash (used internally for registry lookups):
+
+```zig
+const eth = @import("eth");
+
+const node = eth.ens_namehash.namehash("vitalik.eth");
+// node is a [32]u8 hash used as the ENS registry key
+```
+
+The namehash algorithm recursively hashes each label separated by `.`, as defined in [EIP-137](https://eips.ethereum.org/EIPS/eip-137).
+
+## Text Records
+
+ENS names can have associated text records (email, URL, avatar, etc.):
+
+```zig
+const eth = @import("eth");
+
+// The resolver module also supports text record lookups
+// using the text(bytes32,string) function selector
+```
+
+## Requirements
+
+ENS resolution requires a connection to an Ethereum mainnet node (or a node with ENS registry deployed). The ENS registry contract is at `0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`.

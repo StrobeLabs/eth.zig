@@ -1,0 +1,89 @@
+---
+title: Contract Interaction
+description: Reading and writing to Ethereum smart contracts with eth.zig.
+---
+
+eth.zig provides two levels of contract interaction: low-level functions (`contractRead`/`contractWrite`) and the high-level `Contract` struct.
+
+## Reading a Contract
+
+Use `contractRead` to call a contract function and decode the result:
+
+```zig
+const eth = @import("eth");
+
+// Define the function selector (comptime -- zero runtime cost)
+const balanceOf_sel = eth.abi_comptime.comptimeSelector("balanceOf(address)");
+
+// Read balanceOf for a given address
+const results = try eth.contract.contractRead(
+    allocator,
+    &provider,
+    token_address,
+    balanceOf_sel,
+    &.{.{ .address = holder_address }},
+    &.{.uint256},
+);
+defer eth.contract.freeReturnValues(results, allocator);
+
+const balance = results[0].uint256;
+```
+
+## Writing to a Contract
+
+Use `contractWrite` to send a state-changing transaction:
+
+```zig
+const eth = @import("eth");
+
+const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+
+const tx_hash = try eth.contract.contractWrite(
+    allocator,
+    &wallet,
+    token_address,
+    transfer_sel,
+    &.{
+        .{ .address = recipient },
+        .{ .uint256 = amount },
+    },
+);
+```
+
+## Contract Struct
+
+The `Contract` struct binds a provider and address for repeated interaction:
+
+```zig
+const eth = @import("eth");
+
+var contract = eth.contract.Contract.init(allocator, contract_address, &provider);
+
+// Raw read (returns bytes)
+const result_bytes = try contract.call(calldata);
+defer allocator.free(result_bytes);
+
+// Typed read with selector
+const result = try contract.readRaw(selector, &.{.{ .address = addr }});
+defer allocator.free(result);
+```
+
+## Multicall3
+
+Batch multiple read calls into a single RPC request using Multicall3:
+
+```zig
+const eth = @import("eth");
+
+var mc = eth.multicall.Multicall3.init(allocator, &provider);
+
+// Queue calls
+try mc.addCall(token_addr, eth.erc20.selectors.balanceOf, .{holder_addr});
+try mc.addCall(token_addr, eth.erc20.selectors.totalSupply, .{});
+try mc.addCall(token_addr, eth.erc20.selectors.decimals, .{});
+
+// Execute all in one RPC call
+const results = try mc.execute();
+```
+
+This reduces RPC round-trips and is essential for building efficient indexers or dashboards.

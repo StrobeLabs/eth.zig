@@ -1,0 +1,79 @@
+---
+title: eth.zig
+description: The fastest Ethereum library. Pure Zig. Zero dependencies.
+---
+
+**The fastest Ethereum library. Pure Zig. Zero dependencies.**
+
+eth.zig provides everything you need to interact with Ethereum from Zig -- signing transactions, encoding ABI calls, managing HD wallets, reading ERC-20 tokens, talking to nodes over JSON-RPC, and more.
+
+## Why eth.zig?
+
+- **Faster than Rust** -- eth.zig [beats alloy.rs](/benchmarks) (Rust's leading Ethereum library, backed by Paradigm) on **19 out of 26 benchmarks**, including ABI encoding, Keccak-256 hashing, u256 arithmetic, and UniswapV4 mulDiv.
+- **Zero dependencies** -- Built entirely on Zig's standard library. No C bindings, no vendored C code, no system libraries. Just `zig build` and go.
+- **Comptime-first** -- Function selectors and event topics are computed at compile time with zero runtime cost. The compiler does the hashing so your program doesn't have to.
+- **Pure Zig crypto** -- secp256k1 ECDSA, Keccak-256, BIP-32/39/44 HD wallets -- all implemented in pure Zig. No OpenSSL, no libsecp256k1, no FFI.
+
+## Performance vs alloy.rs
+
+eth.zig wins **19/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
+
+| Operation | eth.zig | alloy.rs | Winner |
+|-----------|---------|----------|--------|
+| Keccak-256 (32B) | 128 ns | 175 ns | **zig 1.37x** |
+| ABI encode (static) | 29 ns | 50 ns | **zig 1.72x** |
+| ABI decode (dynamic) | 75 ns | 133 ns | **zig 1.77x** |
+| u256 division | 3 ns | 12 ns | **zig 4.00x** |
+| u256 multiply | 2 ns | 5 ns | **zig 2.50x** |
+| UniswapV4 mulDiv | 12 ns | 17 ns | **zig 1.42x** |
+| Hex decode (32B) | 12 ns | 24 ns | **zig 2.00x** |
+| Address from hex | 8 ns | 13 ns | **zig 1.62x** |
+
+See the [full benchmark results](/benchmarks) for all 26 operations.
+
+## Quick Start
+
+```zig
+const std = @import("std");
+const eth = @import("eth");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Derive an address from a private key
+    const private_key = try eth.hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    const signer = eth.signer.Signer.init(private_key);
+    const addr = try signer.address();
+    const checksum = eth.primitives.addressToChecksum(&addr);
+    _ = checksum;
+
+    // Sign and send a transaction
+    var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const recipient_address = try eth.hex.hexToBytesFixed(20, "0000000000000000000000000000000000000000");
+    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    const tx_hash = try wallet.sendTransaction(.{
+        .to = recipient_address,
+        .value = eth.units.parseEther(1.0),
+    });
+    _ = tx_hash;
+}
+```
+
+## Guides
+
+<Cards>
+  <Card title="Installation" href="/installation" />
+  <Card title="Examples" href="/examples" />
+  <Card title="Modules" href="/modules" />
+  <Card title="Benchmarks" href="/benchmarks" />
+</Cards>
+
+## Resources
+
+- **GitHub**: [eth.zig repository](https://github.com/StrobeLabs/eth.zig)
+- **Twitter**: [@StrobeLabs](https://x.com/StrobeLabs)

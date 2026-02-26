@@ -1,0 +1,79 @@
+---
+title: HD Wallets
+description: BIP-32/39/44 hierarchical deterministic wallets in pure Zig.
+---
+
+eth.zig implements the full HD wallet stack -- BIP-39 mnemonic phrases, BIP-32 key derivation, and BIP-44 Ethereum account paths -- in pure Zig with no external dependencies.
+
+## From Mnemonic to Address
+
+```zig
+const eth = @import("eth");
+
+// 12-word mnemonic
+const words = [_][]const u8{
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "abandon",
+    "abandon", "abandon", "abandon", "about",
+};
+
+// Convert mnemonic to seed (BIP-39)
+const seed = try eth.mnemonic.toSeed(&words, "");
+
+// Derive Ethereum account 0 (BIP-44 path: m/44'/60'/0'/0/0)
+const key = try eth.hd_wallet.deriveEthAccount(seed, 0);
+
+// Get the address
+const addr = key.toAddress();
+const checksum = eth.primitives.addressToChecksum(&addr);
+```
+
+## Deriving Multiple Accounts
+
+Use the account index to derive multiple addresses from the same seed:
+
+```zig
+const eth = @import("eth");
+
+const seed = try eth.mnemonic.toSeed(&words, "");
+
+// m/44'/60'/0'/0/0
+const account_0 = try eth.hd_wallet.deriveEthAccount(seed, 0);
+
+// m/44'/60'/0'/0/1
+const account_1 = try eth.hd_wallet.deriveEthAccount(seed, 1);
+
+// m/44'/60'/0'/0/2
+const account_2 = try eth.hd_wallet.deriveEthAccount(seed, 2);
+```
+
+Each call derives a unique Ethereum account following the standard BIP-44 derivation path for Ethereum (`m/44'/60'/0'/0/{index}`).
+
+## Mnemonic Validation
+
+```zig
+const eth = @import("eth");
+
+const valid = eth.mnemonic.validate(&words);
+// Returns true if the mnemonic is valid (correct word count and checksum)
+```
+
+## BIP-39 Passphrase
+
+You can use an optional passphrase (sometimes called the "25th word") for additional security:
+
+```zig
+const seed = try eth.mnemonic.toSeed(&words, "my secret passphrase");
+```
+
+The same mnemonic with a different passphrase produces a completely different seed and set of addresses.
+
+## How It Works
+
+| Standard | Purpose | Implementation |
+|----------|---------|----------------|
+| BIP-39 | Mnemonic to seed | PBKDF2-HMAC-SHA512 (2048 rounds) |
+| BIP-32 | Hierarchical key derivation | HMAC-SHA512 with secp256k1 |
+| BIP-44 | Standard derivation paths | `m/44'/60'/0'/0/{index}` for Ethereum |
+
+All cryptographic operations (HMAC-SHA512, PBKDF2, secp256k1) are implemented in pure Zig.

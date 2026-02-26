@@ -1,0 +1,89 @@
+---
+title: Comptime Selectors
+description: Compile-time function selectors and event topics -- a key differentiator of eth.zig.
+---
+
+One of eth.zig's most powerful features is **comptime-first design**. Function selectors and event topics are computed at compile time, eliminating runtime hashing entirely.
+
+## Function Selectors
+
+A Solidity function selector is the first 4 bytes of the Keccak-256 hash of the function signature. In eth.zig, this is done at compile time:
+
+```zig
+const eth = @import("eth");
+
+// Computed at compile time -- zero runtime cost
+const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+// transfer_sel == [4]u8{ 0xa9, 0x05, 0x9c, 0xbb }
+
+const approve_sel = eth.abi_comptime.comptimeSelector("approve(address,uint256)");
+// approve_sel == [4]u8{ 0x09, 0x5e, 0xa7, 0xb3 }
+```
+
+The Zig compiler evaluates `comptimeSelector` during compilation. The resulting binary contains only the precomputed 4-byte selectors -- no hashing at runtime.
+
+## Event Topics
+
+Event topics (used for log filtering) work the same way:
+
+```zig
+const eth = @import("eth");
+
+const transfer_topic = eth.abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
+// transfer_topic == keccak256("Transfer(address,address,uint256)")
+
+const approval_topic = eth.abi_comptime.comptimeTopic("Approval(address,address,uint256)");
+```
+
+## Why This Matters
+
+In other Ethereum libraries, function selectors are typically computed at runtime:
+
+| Approach | When It Runs | Cost |
+|----------|-------------|------|
+| eth.zig `comptimeSelector` | Compile time | 0 ns at runtime |
+| Runtime `keccak256(signature)` | Every call | ~128 ns per hash |
+| Cached/lazy hash | First call | ~128 ns once, then lookup |
+
+For hot paths (MEV bots, indexers, high-frequency DeFi), eliminating per-call hashing overhead adds up.
+
+## ERC-20 Precomputed Selectors
+
+The ERC-20 wrapper provides all standard selectors as comptime constants:
+
+```zig
+const selectors = eth.erc20.selectors;
+
+selectors.name;          // name()
+selectors.symbol;        // symbol()
+selectors.decimals;      // decimals()
+selectors.totalSupply;   // totalSupply()
+selectors.balanceOf;     // balanceOf(address)
+selectors.transfer;      // transfer(address,uint256)
+selectors.approve;       // approve(address,uint256)
+selectors.allowance;     // allowance(address,address)
+selectors.transferFrom;  // transferFrom(address,address,uint256)
+```
+
+## Custom Selectors
+
+Define selectors for any contract function:
+
+```zig
+const eth = @import("eth");
+
+// UniswapV2 Router
+const swap_sel = eth.abi_comptime.comptimeSelector(
+    "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"
+);
+
+// Aave V3 Pool
+const supply_sel = eth.abi_comptime.comptimeSelector(
+    "supply(address,uint256,address,uint16)"
+);
+
+// Any custom function
+const my_sel = eth.abi_comptime.comptimeSelector(
+    "myFunction(uint256,bytes32,bool)"
+);
+```

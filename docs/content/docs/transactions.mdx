@@ -1,0 +1,119 @@
+---
+title: Transactions
+description: Building, signing, and sending Ethereum transactions with eth.zig.
+---
+
+eth.zig supports all Ethereum transaction types -- Legacy, EIP-2930 (access lists), EIP-1559 (priority fees), and EIP-4844 (blob transactions).
+
+## Sending a Transaction
+
+The `Wallet` handles the full lifecycle: auto-filling nonce, gas, and chain ID from the provider, then signing and broadcasting.
+
+```zig
+const eth = @import("eth");
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+defer transport.deinit();
+var provider = eth.provider.Provider.init(allocator, &transport);
+
+const private_key = try eth.hex.hexToBytesFixed(32, "your_private_key_hex");
+var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+
+// Send 1 ETH -- nonce, gas, and chain_id are auto-filled
+const tx_hash = try wallet.sendTransaction(.{
+    .to = recipient_address,
+    .value = eth.units.parseEther(1.0),
+});
+```
+
+### SendTransactionOpts
+
+All fields except `to` and `value` are optional and will be fetched from the provider if not specified:
+
+| Field | Type | Default |
+|-------|------|---------|
+| `to` | `?[20]u8` | `null` |
+| `value` | `u256` | `0` |
+| `data` | `[]const u8` | `&.{}` |
+| `gas_limit` | `?u64` | Auto (estimateGas) |
+| `max_fee_per_gas` | `?u256` | Auto (getGasPrice) |
+| `max_priority_fee_per_gas` | `?u256` | Auto (getMaxPriorityFeePerGas) |
+| `nonce` | `?u64` | Auto (getTransactionCount) |
+
+## Transaction Types
+
+### Legacy (Type 0)
+
+Pre-EIP-1559 transactions with a single `gas_price`:
+
+```zig
+const tx = eth.transaction.Transaction{ .legacy = .{
+    .nonce = 0,
+    .gas_price = 20_000_000_000, // 20 Gwei
+    .gas_limit = 21_000,
+    .to = recipient,
+    .value = eth.units.parseEther(1.0),
+    .data = &.{},
+    .chain_id = 1,
+}};
+```
+
+### EIP-1559 (Type 2)
+
+Modern transactions with base fee + priority fee:
+
+```zig
+const tx = eth.transaction.Transaction{ .eip1559 = .{
+    .chain_id = 1,
+    .nonce = 0,
+    .max_priority_fee_per_gas = 1_000_000_000, // 1 Gwei tip
+    .max_fee_per_gas = 30_000_000_000, // 30 Gwei max
+    .gas_limit = 21_000,
+    .to = recipient,
+    .value = eth.units.parseEther(1.0),
+    .data = &.{},
+    .access_list = &.{},
+}};
+```
+
+### EIP-4844 (Type 3)
+
+Blob transactions for L2 data availability:
+
+```zig
+const tx = eth.transaction.Transaction{ .eip4844 = .{
+    .chain_id = 1,
+    .nonce = 0,
+    .max_priority_fee_per_gas = 1_000_000_000,
+    .max_fee_per_gas = 30_000_000_000,
+    .gas_limit = 21_000,
+    .to = recipient,
+    .value = 0,
+    .data = &.{},
+    .access_list = &.{},
+    .max_fee_per_blob_gas = 1_000_000_000,
+    .blob_versioned_hashes = &.{blob_hash},
+}};
+```
+
+## Serialization
+
+Serialize transactions for signing or broadcasting:
+
+```zig
+// Serialize for signing (produces the sighash payload)
+const serialized = try eth.transaction.serializeForSigning(allocator, tx);
+defer allocator.free(serialized);
+
+// Hash the serialized transaction
+const sighash = eth.keccak.keccak256(serialized);
+```
+
+## Unit Conversions
+
+```zig
+const eth_mod = @import("eth");
+
+const one_ether = eth_mod.units.parseEther(1.0);    // 1000000000000000000
+const one_gwei = eth_mod.units.parseGwei(1.0);       // 1000000000
+```

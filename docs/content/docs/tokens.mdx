@@ -1,0 +1,85 @@
+---
+title: ERC-20 & ERC-721 Tokens
+description: Interacting with ERC-20 and ERC-721 tokens using eth.zig typed wrappers.
+---
+
+eth.zig provides typed wrappers for ERC-20 and ERC-721 tokens with comptime function selectors.
+
+## ERC-20
+
+The `ERC20` struct wraps a token address and provider for convenient access:
+
+```zig
+const eth = @import("eth");
+
+var token = eth.erc20.ERC20.init(allocator, token_addr, &provider);
+
+// Read token metadata
+const name = try token.name();
+defer allocator.free(name);
+
+const symbol = try token.symbol();
+defer allocator.free(symbol);
+
+const decimals = try token.decimals();
+const total_supply = try token.totalSupply();
+
+// Check balance
+const balance = try token.balanceOf(holder_addr);
+```
+
+### Comptime Selectors
+
+All ERC-20 function selectors are available as comptime constants:
+
+```zig
+const selectors = eth.erc20.selectors;
+
+// These are computed at compile time -- zero runtime cost
+const balance_sel = selectors.balanceOf;       // balanceOf(address)
+const transfer_sel = selectors.transfer;       // transfer(address,uint256)
+const approve_sel = selectors.approve;         // approve(address,uint256)
+const allowance_sel = selectors.allowance;     // allowance(address,address)
+const total_sel = selectors.totalSupply;       // totalSupply()
+```
+
+### Writing (Transfer, Approve)
+
+For state-changing operations, use the contract module with a Wallet:
+
+```zig
+const eth = @import("eth");
+
+const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+
+const tx_hash = try eth.contract.contractWrite(
+    allocator,
+    &wallet,
+    token_address,
+    transfer_sel,
+    &.{
+        .{ .address = recipient },
+        .{ .uint256 = amount },
+    },
+);
+```
+
+## ERC-721
+
+The `ERC721` struct provides similar typed access for NFTs:
+
+```zig
+const eth = @import("eth");
+
+var nft = eth.erc721.ERC721.init(allocator, nft_addr, &provider);
+
+// Query ownership
+const owner = try nft.ownerOf(token_id);
+
+// Check balance (number of NFTs owned)
+const count = try nft.balanceOf(owner_addr);
+
+// Token URI for metadata
+const uri = try nft.tokenURI(token_id);
+defer allocator.free(uri);
+```

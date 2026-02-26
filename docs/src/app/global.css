@@ -1,0 +1,48 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* Lighter dark mode - override fumadocs defaults */
+.dark {
+  --color-fd-background: hsl(0, 0%, 14%);
+  --color-fd-card: hsl(0, 0%, 16%);
+  --color-fd-muted: hsl(0, 0%, 18%);
+  --color-fd-popover: hsl(0, 0%, 16%);
+  --color-fd-secondary: hsl(0, 0%, 18%);
+}
+
+.dark #nd-sidebar {
+  --color-fd-muted: hsl(0, 0%, 20%);
+  --color-fd-secondary: hsl(0, 0%, 22%);
+}
+
+/* Equal spacing above and below headers */
+h2 {
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+h3:not(.not-prose) {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Sidebar section headers - style separators as proper category labels */
+#nd-sidebar p {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-fd-foreground);
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-fd-border);
+}
+
+/* No border on the first section header */
+#nd-sidebar p:first-of-type {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}

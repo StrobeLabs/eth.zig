@@ -4,3 +4,9 @@ zig-pkg/
 .DS_Store
 .env*
 !.env.example
+
+# Docs site build artifacts
+docs/node_modules/
+docs/.next/
+docs/.source/
+docs/out/

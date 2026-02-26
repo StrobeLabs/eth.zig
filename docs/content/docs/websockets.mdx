@@ -1,0 +1,72 @@
+---
+title: WebSocket Subscriptions
+description: Real-time Ethereum event streaming with WebSocket transport in eth.zig.
+---
+
+eth.zig includes a WebSocket transport for real-time subscriptions to Ethereum events -- new blocks, pending transactions, and log events.
+
+## Connecting
+
+```zig
+const eth = @import("eth");
+
+var ws = eth.ws_transport.WebSocketTransport.init(allocator, "wss://eth-mainnet.ws.alchemyapi.io/v2/YOUR_KEY");
+defer ws.deinit();
+```
+
+The WebSocket transport supports both `ws://` and `wss://` (TLS) URLs. TLS is handled natively in pure Zig.
+
+## Subscriptions
+
+Subscribe to real-time events:
+
+```zig
+const eth = @import("eth");
+
+var ws = eth.ws_transport.WebSocketTransport.init(allocator, "wss://rpc.example.com");
+defer ws.deinit();
+
+// Subscribe to new block headers
+var sub = try eth.subscription.Subscription.init(allocator, &ws, .newHeads);
+defer sub.deinit();
+
+// Process incoming events
+while (try sub.next()) |event| {
+    // Handle new block header
+    _ = event;
+}
+```
+
+## JSON-RPC over WebSocket
+
+You can also use WebSocket for regular JSON-RPC calls (lower latency than HTTP for frequent requests):
+
+```zig
+const eth = @import("eth");
+
+var ws = eth.ws_transport.WebSocketTransport.init(allocator, "wss://rpc.example.com");
+defer ws.deinit();
+var provider = eth.provider.Provider.init(allocator, &ws);
+
+const block_number = try provider.getBlockNumber();
+const balance = try provider.getBalance(address);
+```
+
+## When to Use WebSocket
+
+| Use Case | Transport |
+|----------|-----------|
+| One-off RPC calls | HTTP |
+| High-frequency reads | WebSocket |
+| Real-time event streaming | WebSocket |
+| Subscription to new blocks | WebSocket |
+| Watching for specific events | WebSocket |
+
+## URL Format
+
+```
+ws://host:port/path    -- unencrypted
+wss://host:port/path   -- TLS encrypted (recommended)
+```
+
+Default ports: 80 for `ws://`, 443 for `wss://`.

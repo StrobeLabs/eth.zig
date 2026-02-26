@@ -1,0 +1,63 @@
+---
+title: FAQ
+description: Frequently asked questions about eth.zig.
+---
+
+## Is eth.zig production-ready?
+
+eth.zig is at v0.2.2. All listed features are complete and tested, but the library is young. It's suitable for infrastructure projects, bots, and tools. Evaluate for your risk tolerance before using in high-value production systems.
+
+## What Zig version do I need?
+
+Zig >= 0.15.2. The library tracks Zig stable releases and is also tested against nightly builds in CI.
+
+## Why pure Zig instead of C bindings?
+
+Three reasons:
+
+1. **Zero supply chain risk** -- No vendored C code means no hidden vulnerabilities in dependencies you didn't write.
+2. **Cross-compilation** -- Pure Zig compiles to any target Zig supports without needing platform-specific C libraries.
+3. **Auditability** -- Every line of crypto code (secp256k1, Keccak-256, BIP-32/39/44) is readable Zig.
+
+## How does secp256k1 signing compare to alloy.rs?
+
+alloy.rs wins on secp256k1 signing (4.09x faster) because it uses precomputed EC tables with variable-time operations. eth.zig uses Zig's standard library constant-time elliptic curve implementation, which is safer against timing side-channels but slower.
+
+eth.zig wins on nearly everything else: ABI encoding, hashing, hex ops, u256 arithmetic, address parsing, and transaction serialization.
+
+## Does eth.zig support all Ethereum transaction types?
+
+Yes:
+- **Legacy** (Type 0) -- pre-EIP-1559
+- **EIP-2930** (Type 1) -- access lists
+- **EIP-1559** (Type 2) -- priority fees
+- **EIP-4844** (Type 3) -- blob transactions
+
+EIP-7702 transactions are planned.
+
+## Which chains are supported?
+
+eth.zig includes chain definitions for:
+- Ethereum (mainnet + Sepolia + Holesky)
+- Arbitrum (One + Sepolia)
+- Optimism (mainnet + Sepolia)
+- Base (mainnet + Sepolia)
+- Polygon (mainnet + Amoy)
+
+Any EVM-compatible chain works -- these are just convenience configurations.
+
+## Can I use eth.zig for MEV / HFT?
+
+Yes, that's a primary use case. eth.zig's performance advantages over alloy.rs are most relevant in latency-sensitive scenarios: ABI encoding (1.72x faster), u256 arithmetic (up to 4x faster), and comptime selectors (zero-cost at runtime).
+
+## How do I report a security vulnerability?
+
+See [SECURITY.md](https://github.com/StrobeLabs/eth.zig/blob/main/SECURITY.md). Email security@strobelabs.com. We acknowledge reports within 48 hours.
+
+## Is there a Discord or community chat?
+
+Follow [@StrobeLabs](https://x.com/StrobeLabs) on Twitter for updates. Community channels are coming soon.
+
+## How can I contribute?
+
+See the [Contributing](/contributing) guide. We welcome PRs, bug reports, and feature requests.
