@@ -42,4 +42,27 @@ pub fn build(b: *std.Build) void {
     const run_integration_tests = b.addRunArtifact(integration_tests);
     const integration_step = b.step("integration-test", "Run integration tests (requires Anvil)");
     integration_step.dependOn(&run_integration_tests.step);
+
+    // Benchmarks (always ReleaseFast for meaningful numbers)
+    const bench_module = b.addModule("eth_bench", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "eth", .module = bench_module },
+            },
+        }),
+    });
+
+    const run_bench = b.addRunArtifact(bench_exe);
+    const bench_step = b.step("bench", "Run benchmarks (ReleaseFast)");
+    bench_step.dependOn(&run_bench.step);
 }

@@ -1,0 +1,93 @@
+# Contributing to eth.zig
+
+Thanks for your interest in contributing to eth.zig! This document covers everything you need to get started.
+
+## Prerequisites
+
+- [Zig >= 0.15.2](https://ziglang.org/download/)
+- Git
+
+## Getting Started
+
+```bash
+git clone https://github.com/StrobeLabs/eth.zig.git
+cd eth.zig
+
+# Build
+zig build
+
+# Run tests
+zig build test
+
+# Check formatting
+zig fmt --check src/ tests/
+
+# Format code
+zig fmt src/ tests/
+```
+
+## Architecture
+
+eth.zig uses a layered architecture where each layer only depends on layers below it. This makes every layer independently testable.
+
+```
+Layer 1:  Primitives     (zero deps, no allocator needed)
+          primitives.zig, uint256.zig, hex.zig
+
+Layer 2:  Encoding       (-> primitives)
+          rlp.zig, abi_encode.zig, abi_decode.zig, abi_types.zig, abi_comptime.zig
+
+Layer 3:  Crypto         (-> primitives)
+          keccak.zig, secp256k1.zig, signature.zig
+
+Layer 4:  Types          (-> primitives, encoding, crypto)
+          transaction.zig, receipt.zig, block.zig, log.zig, access_list.zig, blob.zig
+
+Layer 5:  Signer         (-> crypto, types)
+          signer.zig, eip155.zig, hd_wallet.zig, mnemonic.zig
+
+Layer 6:  Transport      (-> types)
+          http_transport.zig, ws_transport.zig, json_rpc.zig, subscription.zig
+
+Layer 7:  Client         (-> transport, types, encoding)
+          provider.zig, wallet.zig
+
+Layer 8:  Contract       (-> client, encoding, signer)
+          contract.zig, event.zig, multicall.zig
+
+Layer 9:  Standards      (-> client, contract, crypto)
+          eip712.zig, ens/
+
+Layer 10: Chains         (pure data, zero deps)
+          chains/
+```
+
+Layers 1-3 have zero I/O. Layers 1-5 have zero network dependencies.
+
+## Pull Requests
+
+1. Fork the repo and create a branch from `main`
+2. Write your code -- follow existing patterns in the codebase
+3. Add tests for new functionality
+4. Run `zig fmt src/ tests/` to format your code
+5. Run `zig build test` to make sure all tests pass
+6. Open a PR against `main`
+
+## Code Style
+
+- Follow `zig fmt` formatting (enforced by CI)
+- Use descriptive variable names
+- Keep functions focused and small
+- Add doc comments (`///`) to public functions
+- Prefer comptime over runtime where possible -- this is a core design principle
+- No external dependencies -- everything builds on Zig's standard library
+
+## Reporting Issues
+
+- Use the bug report template for bugs
+- Use the feature request template for new features
+- Include Zig version, OS, and steps to reproduce
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.
