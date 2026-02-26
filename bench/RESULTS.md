@@ -1,8 +1,10 @@
-# eth-zig vs alloy.rs Benchmark Comparison
+# eth.zig vs alloy.rs: Ethereum Library Benchmark Comparison
 
-**Score: eth-zig wins 18/24 | alloy.rs wins 5/24 | tied 1/24**
+Pure Zig vs Rust -- a head-to-head performance comparison of [eth.zig](https://github.com/StrobeLabs/eth.zig) and [alloy.rs](https://alloy.rs) across 24 core Ethereum operations: Keccak-256 hashing, ABI encoding/decoding, RLP serialization, secp256k1 ECDSA signing, u256 arithmetic, hex operations, address derivation, and EIP-1559 transaction hashing.
 
-Benchmarks run on Apple Silicon with `ReleaseFast` (zig) and `--release` (cargo).
+**Score: eth.zig wins 18/24 | alloy.rs wins 5/24 | tied 1/24**
+
+Benchmarks run on Apple Silicon with `ReleaseFast` (Zig) and `--release` (Cargo).
 
 ## Full Comparison
 

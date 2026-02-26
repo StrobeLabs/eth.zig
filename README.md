@@ -4,17 +4,43 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.15.2-orange)](https://ziglang.org/)
 
-**The Ethereum library for Zig.**
+**The fastest Ethereum library. Pure Zig. Zero dependencies.**
 
-eth.zig provides everything you need to interact with Ethereum from Zig -- signing transactions, encoding ABI calls, managing HD wallets, reading ERC-20 tokens, talking to nodes over JSON-RPC, and more.
+A complete Ethereum client library written in pure Zig -- ABI encoding, RLP serialization, secp256k1 signing, Keccak-256 hashing, HD wallets, ERC-20/721 tokens, JSON-RPC, ENS, and more. No C bindings. No system libraries. Just `zig build`.
 
 ## Why eth.zig?
 
-**Zero dependencies** -- Built entirely on Zig's standard library. No C bindings, no vendored C code, no system libraries. Just `zig build` and go.
+**Faster than Rust** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **18 out of 24 benchmarks**. ABI encoding, hashing, hex operations, address parsing, transaction serialization -- eth.zig is faster across the board.
+
+**Zero dependencies** -- Built entirely on Zig's standard library. No C bindings, no vendored C code, no system libraries.
 
 **Comptime-first** -- Function selectors and event topics are computed at compile time with zero runtime cost. The compiler does the hashing so your program doesn't have to.
 
 **Pure Zig crypto** -- secp256k1 ECDSA, Keccak-256, BIP-32/39/44 HD wallets -- all implemented in pure Zig. No OpenSSL, no libsecp256k1, no FFI.
+
+## Performance vs alloy.rs
+
+eth.zig wins **18/24 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
+
+| Operation | eth.zig | alloy.rs | |
+|-----------|---------|----------|-|
+| Keccak-256 (32B) | 263 ns | 337 ns | **zig 1.28x** |
+| Keccak-256 (4KB) | 7,828 ns | 9,229 ns | **zig 1.18x** |
+| ABI encode (static) | 69 ns | 97 ns | **zig 1.41x** |
+| ABI encode (dynamic) | 246 ns | 316 ns | **zig 1.28x** |
+| ABI decode (uint256) | 46 ns | 49 ns | **zig 1.07x** |
+| ABI decode (dynamic) | 170 ns | 258 ns | **zig 1.52x** |
+| Address derivation | 262 ns | 362 ns | **zig 1.38x** |
+| Address from hex | 16 ns | 25 ns | **zig 1.56x** |
+| Address checksum | 307 ns | 388 ns | **zig 1.26x** |
+| u256 multiply | 4 ns | 10 ns | **zig 2.50x** |
+| u256 division | 6 ns | 23 ns | **zig 3.83x** |
+| Hex encode (32B) | 21 ns | 22 ns | **zig 1.05x** |
+| Hex decode (32B) | 23 ns | 45 ns | **zig 1.96x** |
+| RLP decode u256 | 6 ns | 8 ns | **zig 1.33x** |
+| TX hash (EIP-1559) | 366 ns | 403 ns | **zig 1.10x** |
+
+alloy.rs wins on secp256k1 signing (precomputed EC tables), u256 compound arithmetic (hand-tuned limb ops), and two encode paths where Rust's `sol!` macro generates specialized code at compile time. See [full results](bench/RESULTS.md).
 
 ## Quick Start
 
@@ -94,7 +120,7 @@ const addr = key.toAddress();
 **One-liner:**
 
 ```bash
-zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.1.0
+zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.2.1
 ```
 
 **Or add manually** to your `build.zig.zon`:
@@ -102,7 +128,7 @@ zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.1.0
 ```zig
 .dependencies = .{
     .eth = .{
-        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.1.0",
+        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.2.1",
         .hash = "...", // run `zig build` and it will tell you the expected hash
     },
 },
@@ -185,7 +211,20 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | Provider middleware (retry, caching) | Planned |
 | Hardware wallet signers | Planned |
 
-## Feature Comparison vs Zabi
+## Comparison with Other Libraries
+
+### Performance vs alloy.rs (Rust)
+
+| Category | eth.zig | alloy.rs |
+|----------|---------|----------|
+| Benchmarks won | **18/24** | 5/24 |
+| ABI encoding | Faster (1.07-1.52x) | Faster on 1 specialized path |
+| Hashing (Keccak) | Faster (1.18-1.32x) | -- |
+| Hex operations | Faster (1.05-1.96x) | -- |
+| u256 arithmetic | Faster on div/mul | Faster on compound ops |
+| secp256k1 signing | -- | Faster (precomputed tables) |
+
+### Features vs Zabi (Zig)
 
 | Feature | eth.zig | Zabi |
 |---------|---------|------|
@@ -210,6 +249,14 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 ```bash
 zig build test                # Unit tests
 zig build integration-test    # Integration tests (requires Anvil)
+```
+
+## Benchmarks
+
+```bash
+zig build bench                                       # Run eth.zig benchmarks
+cd bench/alloy-bench && cargo bench --bench eth_comparison  # Run alloy.rs benchmarks
+bash bench/compare.sh                                 # Side-by-side comparison
 ```
 
 ## Contributing
