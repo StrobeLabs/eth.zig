@@ -379,14 +379,51 @@ fn benchU256UniswapV2AmountOut() void {
         : [a] "r" (&amount_in),
           [b] "r" (&reserve_in),
           [c] "r" (&reserve_out),
-        : .{ .memory = true }
-    );
+        : .{ .memory = true });
 
-    const amount_in_with_fee = amount_in *% 997;
-    const numerator = amount_in_with_fee *% reserve_out;
-    const denominator = reserve_in *% 1000 +% amount_in_with_fee;
+    const amount_in_with_fee = eth.uint256.fastMul(amount_in, 997);
+    const numerator = eth.uint256.fastMul(amount_in_with_fee, reserve_out);
+    const denominator = eth.uint256.fastMul(reserve_in, 1000) +% amount_in_with_fee;
     const amount_out = eth.uint256.fastDiv(numerator, denominator);
     std.mem.doNotOptimizeAway(&amount_out);
+}
+
+fn benchU256MulDiv() void {
+    // FullMath.mulDiv: (a * b) / c with 512-bit intermediate
+    // Common pattern in UniswapV3/V4 SqrtPriceMath
+    var a: u256 = 1_000_000_000_000_000_000; // 1e18 liquidity
+    var b: u256 = 79228162514264337593543950336; // ~1.0 sqrtPriceX96
+    var c: u256 = 1_000_000_000_000_001_000; // liquidity + amountIn
+    asm volatile (""
+        :
+        : [a] "r" (&a),
+          [b] "r" (&b),
+          [c] "r" (&c),
+        : .{ .memory = true });
+    const result = eth.uint256.mulDiv(a, b, c);
+    std.mem.doNotOptimizeAway(&result);
+}
+
+fn benchU256UniswapV4Swap() void {
+    // UniswapV4 getNextSqrtPriceFromAmount0RoundingUp:
+    // sqrtPriceNext = liquidity * sqrtPriceX96 / (liquidity + amount * sqrtPriceX96)
+    var liquidity: u256 = 1_000_000_000_000_000_000; // 1e18
+    var sqrt_price: u256 = 79228162514264337593543950336; // ~1.0 in Q96
+    var amount_in: u256 = 1_000_000_000_000_000; // 0.001 ETH
+    asm volatile (""
+        :
+        : [a] "r" (&liquidity),
+          [b] "r" (&sqrt_price),
+          [c] "r" (&amount_in),
+        : .{ .memory = true });
+
+    // Step 1: amount * sqrtPrice (may overflow u256 so use mulDiv path)
+    const product = eth.uint256.fastMul(amount_in, sqrt_price);
+    // Step 2: denominator = liquidity + product
+    const denominator = liquidity +% product;
+    // Step 3: numerator = liquidity * sqrtPrice / denominator (full precision)
+    const next_sqrt_price = eth.uint256.mulDiv(liquidity, sqrt_price, denominator);
+    std.mem.doNotOptimizeAway(&next_sqrt_price);
 }
 
 // ============================================================================
@@ -533,6 +570,8 @@ pub fn main() !void {
         bench("u256_mul", WARMUP, ITERS, benchU256Mul),
         bench("u256_div", WARMUP, ITERS, benchU256Div),
         bench("u256_uniswapv2_amount_out", WARMUP, ITERS, benchU256UniswapV2AmountOut),
+        bench("u256_mulDiv", WARMUP, ITERS, benchU256MulDiv),
+        bench("u256_uniswapv4_swap", WARMUP, ITERS, benchU256UniswapV4Swap),
         // Hex
         bench("hex_encode_32b", WARMUP, ITERS, benchHexEncode32),
         bench("hex_decode_32b", WARMUP, ITERS, benchHexDecode32),

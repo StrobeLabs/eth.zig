@@ -295,6 +295,25 @@ fn writeValuesDirect(buf: []u8, values: []const AbiValue) void {
     const n = values.len;
     if (n == 0) return;
 
+    // Fast path: if all values are static, skip offset calculation entirely
+    var has_dynamic = false;
+    for (values) |val| {
+        if (val.isDynamic()) {
+            has_dynamic = true;
+            break;
+        }
+    }
+
+    if (!has_dynamic) {
+        var pos: usize = 0;
+        for (values) |val| {
+            writeStaticValueDirect(buf[pos..], val);
+            pos += 32;
+        }
+        return;
+    }
+
+    // Dynamic path: calculate offsets and write heads + tails
     const head_size = n * 32;
     var tail_offset: usize = head_size;
 

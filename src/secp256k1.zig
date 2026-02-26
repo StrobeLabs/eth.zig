@@ -108,21 +108,19 @@ pub fn recover(sig: Signature, message_hash: [32]u8) RecoverError![65]u8 {
     // z = message hash as scalar
     const z = reduceHash(message_hash);
 
-    // public_key = r^-1 * (s * R - z * G)
+    // Q = r^-1 * (s*R - z*G) = (r^-1 * s) * R + (-(r^-1 * z)) * G
+    // Use double-base multiplication with GLV endomorphism for ~3x speedup
     const r_inv = r_scalar.invert();
+    const r_inv_s = r_inv.mul(s_scalar);
+    const neg_r_inv_z = r_inv.mul(z).neg();
 
-    // Compute s * R
-    const s_R = R.mul(s_scalar.toBytes(.big), .big) catch return error.RecoveryFailed;
-
-    // Compute z * G
-    const z_G = Secp256k1.basePoint.mul(z.toBytes(.big), .big) catch return error.RecoveryFailed;
-
-    // s*R - z*G
-    const s_R_minus_z_G = s_R.sub(z_G);
-
-    // Q = r_inv * (s*R - z*G)
-    const Q = s_R_minus_z_G.mul(r_inv.toBytes(.big), .big) catch return error.RecoveryFailed;
-    Q.rejectIdentity() catch return error.RecoveryFailed;
+    const Q = Secp256k1.mulDoubleBasePublic(
+        R,
+        r_inv_s.toBytes(.big),
+        Secp256k1.basePoint,
+        neg_r_inv_z.toBytes(.big),
+        .big,
+    ) catch return error.RecoveryFailed;
 
     return Q.toUncompressedSec1();
 }

@@ -5,6 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 ALLOY_DIR="$SCRIPT_DIR/alloy-bench"
 
+# Check prerequisites
+command -v zig >/dev/null 2>&1 || { echo "ERROR: zig not found. Install from https://ziglang.org/"; exit 1; }
+command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo not found. Install from https://rustup.rs/"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 not found."; exit 1; }
+
 echo ""
 echo "================================================================"
 echo "  eth-zig vs alloy.rs  --  Benchmark Comparison"
@@ -93,6 +98,8 @@ name_map = {
     'u256_mul': 'u256/mul',
     'u256_div': 'u256/div',
     'u256_uniswapv2_amount_out': 'u256/uniswap_v2_amountOut',
+    'u256_mulDiv': 'u256/mulDiv',
+    'u256_uniswapv4_swap': 'u256/uniswap_v4_swap',
     'hex_encode_32b': 'hex/encode_32b',
     'hex_decode_32b': 'hex/decode_32b',
     'tx_hash_eip1559': 'tx_hash/eip1559',
@@ -105,7 +112,7 @@ bench_order = [
     'abi_encode_transfer', 'abi_encode_static', 'abi_encode_dynamic',
     'abi_decode_uint256', 'abi_decode_dynamic',
     'rlp_encode_eip1559_tx', 'rlp_decode_u256',
-    'u256_add', 'u256_mul', 'u256_div', 'u256_uniswapv2_amount_out',
+    'u256_add', 'u256_mul', 'u256_div', 'u256_uniswapv2_amount_out', 'u256_mulDiv', 'u256_uniswapv4_swap',
     'hex_encode_32b', 'hex_decode_32b',
     'tx_hash_eip1559',
 ]

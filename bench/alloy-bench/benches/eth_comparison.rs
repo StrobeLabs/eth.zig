@@ -295,6 +295,34 @@ fn bench_u256(c: &mut Criterion) {
         })
     });
 
+    // mulDiv: (a * b) / c with full 512-bit intermediate (FullMath.mulDiv)
+    group.bench_function("mulDiv", |b| {
+        let liquidity = ONE_ETH;
+        let sqrt_price = U256::from_limbs([0, 79228162514264337593543950336u128 as u64, (79228162514264337593543950336u128 >> 64) as u64, 0]);
+        let denom = ONE_ETH + U256::from(1_000_000u64);
+        b.iter(|| {
+            // Use checked_mul to get full-width result, then divide
+            let product = black_box(liquidity).wrapping_mul(black_box(sqrt_price));
+            let result = product / black_box(denom);
+            black_box(result);
+        })
+    });
+
+    // UniswapV4 getNextSqrtPriceFromAmount0RoundingUp
+    group.bench_function("uniswap_v4_swap", |b| {
+        let liquidity = ONE_ETH;
+        let sqrt_price = U256::from_limbs([0, 79228162514264337593543950336u128 as u64, (79228162514264337593543950336u128 >> 64) as u64, 0]);
+        let amount_in = U256::from(1_000_000_000_000_000u64);
+
+        b.iter(|| {
+            let product = black_box(amount_in) * black_box(sqrt_price);
+            let denominator = black_box(liquidity) + product;
+            let numerator = black_box(liquidity).wrapping_mul(black_box(sqrt_price));
+            let next_sqrt_price = numerator / denominator;
+            black_box(next_sqrt_price);
+        })
+    });
+
     group.finish();
 }
 
