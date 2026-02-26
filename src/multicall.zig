@@ -30,7 +30,7 @@ pub const Multicall = struct {
     provider: *provider_mod.Provider,
     multicall_address: [20]u8,
     allocator: std.mem.Allocator,
-    calls: std.ArrayList(Call3),
+    calls: std.ArrayList(Call3) = .empty,
 
     /// Create a new Multicall instance.
     pub fn init(allocator: std.mem.Allocator, provider: *provider_mod.Provider, multicall_address: [20]u8) Multicall {
@@ -38,18 +38,17 @@ pub const Multicall = struct {
             .provider = provider,
             .multicall_address = multicall_address,
             .allocator = allocator,
-            .calls = std.ArrayList(Call3).init(allocator),
         };
     }
 
     /// Free the internal calls list.
     pub fn deinit(self: *Multicall) void {
-        self.calls.deinit();
+        self.calls.deinit(self.allocator);
     }
 
     /// Add a call to the batch.
     pub fn addCall(self: *Multicall, target: [20]u8, call_data: []const u8, allow_failure: bool) !void {
-        try self.calls.append(.{
+        try self.calls.append(self.allocator, .{
             .target = target,
             .allow_failure = allow_failure,
             .call_data = call_data,
@@ -94,17 +93,17 @@ pub const Multicall = struct {
     ///   - bytes length (32 bytes)
     ///   - bytes data (padded to 32)
     pub fn encodeAggregate3(self: *Multicall) ![]u8 {
-        var buf = std.ArrayList(u8).init(self.allocator);
-        errdefer buf.deinit();
+        var buf: std.ArrayList(u8) = .empty;
+        errdefer buf.deinit(self.allocator);
 
         // Function selector
-        try buf.appendSlice(&AGGREGATE3_SELECTOR);
+        try buf.appendSlice(self.allocator, &AGGREGATE3_SELECTOR);
 
         // Offset to array data (relative to start of params)
-        try appendWord(&buf, 0x20);
+        try appendWord(self.allocator, &buf, 0x20);
 
         // Array length
-        try appendWord(&buf, self.calls.items.len);
+        try appendWord(self.allocator, &buf, self.calls.items.len);
 
         // Calculate offsets for each tuple element within the array.
         // After the array of offsets (n * 32 bytes), the tuple data starts.
@@ -135,7 +134,7 @@ pub const Multicall = struct {
         // Offsets section: n * 32 bytes
         var current_offset: usize = n * 32;
         for (0..n) |i| {
-            try appendWord(&buf, current_offset);
+            try appendWord(self.allocator, &buf, current_offset);
             current_offset += tuple_sizes[i];
         }
 
@@ -144,24 +143,24 @@ pub const Multicall = struct {
             // address (left-padded to 32 bytes)
             var addr_word: [32]u8 = [_]u8{0} ** 32;
             @memcpy(addr_word[12..32], &c.target);
-            try buf.appendSlice(&addr_word);
+            try buf.appendSlice(self.allocator, &addr_word);
 
             // bool
-            try appendWord(&buf, if (c.allow_failure) @as(usize, 1) else @as(usize, 0));
+            try appendWord(self.allocator, &buf, if (c.allow_failure) @as(usize, 1) else @as(usize, 0));
 
             // offset to bytes data within the tuple (always 0x60 = 3 * 32)
-            try appendWord(&buf, 0x60);
+            try appendWord(self.allocator, &buf, 0x60);
 
             // bytes length
-            try appendWord(&buf, c.call_data.len);
+            try appendWord(self.allocator, &buf, c.call_data.len);
 
             // bytes data (padded)
-            try buf.appendSlice(c.call_data);
+            try buf.appendSlice(self.allocator, c.call_data);
             const padding = padTo32(c.call_data.len) - c.call_data.len;
-            try buf.appendNTimes(0, padding);
+            try buf.appendNTimes(self.allocator, 0, padding);
         }
 
-        return buf.toOwnedSlice();
+        return buf.toOwnedSlice(self.allocator);
     }
 };
 
@@ -238,10 +237,10 @@ pub fn freeResults(allocator: std.mem.Allocator, results: []Result) void {
 // ============================================================================
 
 /// Append a usize as a big-endian 32-byte word to the buffer.
-fn appendWord(buf: *std.ArrayList(u8), value: usize) !void {
+fn appendWord(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), value: usize) !void {
     const val_u256: u256 = @intCast(value);
     const bytes = uint256_mod.toBigEndianBytes(val_u256);
-    try buf.appendSlice(&bytes);
+    try buf.appendSlice(allocator, &bytes);
 }
 
 /// Calculate the number of bytes needed to pad `len` up to a 32-byte boundary.

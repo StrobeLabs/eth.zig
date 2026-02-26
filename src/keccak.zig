@@ -17,6 +17,7 @@ pub fn hash(data: []const u8) Hash {
 /// Compute Keccak-256 hash at comptime.
 pub fn comptimeHash(comptime data: []const u8) Hash {
     comptime {
+        @setEvalBranchQuota(10000);
         var result: Hash = undefined;
         Keccak256.hash(data, &result, .{});
         return result;

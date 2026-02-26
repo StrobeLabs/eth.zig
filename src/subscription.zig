@@ -163,53 +163,53 @@ pub fn buildSubscribeParams(allocator: std.mem.Allocator, params: SubscriptionPa
 
 /// Build params for a log subscription with optional address and topics filters.
 fn buildLogSubscribeParams(allocator: std.mem.Allocator, params: LogSubscriptionParams) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    errdefer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
 
-    try buf.appendSlice("[\"logs\",{");
+    try buf.appendSlice(allocator, "[\"logs\",{");
 
     var has_field = false;
 
     if (params.address) |addr| {
-        try buf.appendSlice("\"address\":\"0x");
+        try buf.appendSlice(allocator, "\"address\":\"0x");
         var hex_buf: [40]u8 = undefined;
         const hex_chars = "0123456789abcdef";
         for (addr, 0..) |byte, i| {
             hex_buf[i * 2] = hex_chars[byte >> 4];
             hex_buf[i * 2 + 1] = hex_chars[byte & 0x0f];
         }
-        try buf.appendSlice(&hex_buf);
-        try buf.appendSlice("\"");
+        try buf.appendSlice(allocator, &hex_buf);
+        try buf.appendSlice(allocator, "\"");
         has_field = true;
     }
 
     if (params.topics) |topics| {
-        if (has_field) try buf.appendSlice(",");
-        try buf.appendSlice("\"topics\":[");
+        if (has_field) try buf.appendSlice(allocator, ",");
+        try buf.appendSlice(allocator, "\"topics\":[");
 
         for (topics, 0..) |topic_opt, i| {
-            if (i > 0) try buf.appendSlice(",");
+            if (i > 0) try buf.appendSlice(allocator, ",");
             if (topic_opt) |topic| {
-                try buf.appendSlice("\"0x");
+                try buf.appendSlice(allocator, "\"0x");
                 var hex_buf: [64]u8 = undefined;
                 const hex_chars = "0123456789abcdef";
                 for (topic, 0..) |byte, j| {
                     hex_buf[j * 2] = hex_chars[byte >> 4];
                     hex_buf[j * 2 + 1] = hex_chars[byte & 0x0f];
                 }
-                try buf.appendSlice(&hex_buf);
-                try buf.appendSlice("\"");
+                try buf.appendSlice(allocator, &hex_buf);
+                try buf.appendSlice(allocator, "\"");
             } else {
-                try buf.appendSlice("null");
+                try buf.appendSlice(allocator, "null");
             }
         }
 
-        try buf.appendSlice("]");
+        try buf.appendSlice(allocator, "]");
     }
 
-    try buf.appendSlice("}]");
+    try buf.appendSlice(allocator, "}]");
 
-    return buf.toOwnedSlice();
+    return buf.toOwnedSlice(allocator);
 }
 
 /// Format a 20-byte address as a "0x" + 40 hex chars string.

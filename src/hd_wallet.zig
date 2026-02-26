@@ -206,7 +206,7 @@ test "known BIP-39 mnemonic to address" {
         "abandon", "abandon", "abandon", "abandon",
         "abandon", "abandon", "abandon", "about",
     };
-    const seed = mnemonic_mod.toSeed(&words, "");
+    const seed = try mnemonic_mod.toSeed(&words, "");
 
     const key = try deriveEthAccount(seed, 0);
     const addr = key.toAddress();

@@ -1,0 +1,15 @@
+.{
+    .name = .eth_zig_examples,
+    .version = "0.1.0",
+    .fingerprint = 0xd73bf5facd267e8e,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .eth = .{
+            .path = "..",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}

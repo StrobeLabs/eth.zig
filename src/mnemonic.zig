@@ -171,7 +171,7 @@ fn wordToIndex(word: []const u8) ?u16 {
 
 /// Convert mnemonic to seed using PBKDF2-HMAC-SHA512.
 /// The passphrase is optional (empty string if not provided).
-pub fn toSeed(words: []const []const u8, passphrase: []const u8) [64]u8 {
+pub fn toSeed(words: []const []const u8, passphrase: []const u8) ![64]u8 {
     // Build mnemonic string: words joined by spaces
     var mnemonic_buf: [1024]u8 = undefined;
     var mnemonic_len: usize = 0;
@@ -196,7 +196,7 @@ pub fn toSeed(words: []const []const u8, passphrase: []const u8) [64]u8 {
 
     // PBKDF2-HMAC-SHA512, 2048 iterations
     var seed: [64]u8 = undefined;
-    std.crypto.pwhash.pbkdf2.pbkdf2(&seed, mnemonic, salt, 2048, .hmac_sha512);
+    try std.crypto.pwhash.pbkdf2(&seed, mnemonic, salt, 2048, std.crypto.auth.hmac.sha2.HmacSha512);
     return seed;
 }
 
@@ -251,15 +251,15 @@ test "known mnemonic to seed - BIP39 test vector 1" {
     try validate(&words);
 
     // Derive seed with empty passphrase
-    const seed = toSeed(&words, "");
+    const seed = try toSeed(&words, "");
 
     // Known expected seed (from BIP-39 test vectors with passphrase "TREZOR")
     // With empty passphrase, the seed is different. Let's at least verify it's deterministic.
-    const seed2 = toSeed(&words, "");
+    const seed2 = try toSeed(&words, "");
     try std.testing.expectEqualSlices(u8, &seed, &seed2);
 
     // Verify seed with "TREZOR" passphrase (BIP-39 reference)
-    const seed_trezor = toSeed(&words, "TREZOR");
+    const seed_trezor = try toSeed(&words, "TREZOR");
     // Should NOT equal the empty passphrase seed
     try std.testing.expect(!std.mem.eql(u8, &seed, &seed_trezor));
 }

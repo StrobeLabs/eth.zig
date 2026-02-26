@@ -92,15 +92,15 @@ pub const Provider = struct {
         const addr_hex = primitives.addressToHex(&address);
         const slot_hex = primitives.hashToHex(&slot);
 
-        var params_buf = std.ArrayList(u8).init(self.allocator);
-        defer params_buf.deinit();
-        try params_buf.appendSlice("[\"");
-        try params_buf.appendSlice(&addr_hex);
-        try params_buf.appendSlice("\",\"");
-        try params_buf.appendSlice(&slot_hex);
-        try params_buf.appendSlice("\",\"latest\"]");
+        var params_buf: std.ArrayList(u8) = .empty;
+        defer params_buf.deinit(self.allocator);
+        try params_buf.appendSlice(self.allocator, "[\"");
+        try params_buf.appendSlice(self.allocator, &addr_hex);
+        try params_buf.appendSlice(self.allocator, "\",\"");
+        try params_buf.appendSlice(self.allocator, &slot_hex);
+        try params_buf.appendSlice(self.allocator, "\",\"latest\"]");
 
-        const params = try params_buf.toOwnedSlice();
+        const params = try params_buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(params);
 
         const raw = try self.rpcCall(json_rpc.Method.eth_getStorageAt, params);
@@ -166,13 +166,13 @@ pub const Provider = struct {
         const tx_hex = try hex_mod.bytesToHex(self.allocator, signed_tx);
         defer self.allocator.free(tx_hex);
 
-        var params_buf = std.ArrayList(u8).init(self.allocator);
-        defer params_buf.deinit();
-        try params_buf.appendSlice("[\"");
-        try params_buf.appendSlice(tx_hex);
-        try params_buf.appendSlice("\"]");
+        var params_buf: std.ArrayList(u8) = .empty;
+        defer params_buf.deinit(self.allocator);
+        try params_buf.appendSlice(self.allocator, "[\"");
+        try params_buf.appendSlice(self.allocator, tx_hex);
+        try params_buf.appendSlice(self.allocator, "\"]");
 
-        const params = try params_buf.toOwnedSlice();
+        const params = try params_buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(params);
 
         const raw = try self.rpcCall(json_rpc.Method.eth_sendRawTransaction, params);
@@ -190,13 +190,13 @@ pub const Provider = struct {
     pub fn getTransactionReceipt(self: *Provider, tx_hash: [32]u8) !?receipt_mod.TransactionReceipt {
         const hash_hex = primitives.hashToHex(&tx_hash);
 
-        var params_buf = std.ArrayList(u8).init(self.allocator);
-        defer params_buf.deinit();
-        try params_buf.appendSlice("[\"");
-        try params_buf.appendSlice(&hash_hex);
-        try params_buf.appendSlice("\"]");
+        var params_buf: std.ArrayList(u8) = .empty;
+        defer params_buf.deinit(self.allocator);
+        try params_buf.appendSlice(self.allocator, "[\"");
+        try params_buf.appendSlice(self.allocator, &hash_hex);
+        try params_buf.appendSlice(self.allocator, "\"]");
 
-        const params = try params_buf.toOwnedSlice();
+        const params = try params_buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(params);
 
         const raw = try self.rpcCall(json_rpc.Method.eth_getTransactionReceipt, params);
@@ -215,13 +215,13 @@ pub const Provider = struct {
         const block_param = json_rpc.BlockParam{ .number = block_number };
         const block_str = block_param.toString(&num_buf);
 
-        var params_buf = std.ArrayList(u8).init(self.allocator);
-        defer params_buf.deinit();
-        try params_buf.appendSlice("[\"");
-        try params_buf.appendSlice(block_str);
-        try params_buf.appendSlice("\",false]");
+        var params_buf: std.ArrayList(u8) = .empty;
+        defer params_buf.deinit(self.allocator);
+        try params_buf.appendSlice(self.allocator, "[\"");
+        try params_buf.appendSlice(self.allocator, block_str);
+        try params_buf.appendSlice(self.allocator, "\",false]");
 
-        const params = try params_buf.toOwnedSlice();
+        const params = try params_buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(params);
 
         const raw = try self.rpcCall(json_rpc.Method.eth_getBlockByNumber, params);
@@ -259,15 +259,15 @@ pub const Provider = struct {
     fn formatAddressAndBlock(self: *Provider, address: [20]u8, block_tag: []const u8) ![]u8 {
         const addr_hex = primitives.addressToHex(&address);
 
-        var buf = std.ArrayList(u8).init(self.allocator);
-        errdefer buf.deinit();
-        try buf.appendSlice("[\"");
-        try buf.appendSlice(&addr_hex);
-        try buf.appendSlice("\",\"");
-        try buf.appendSlice(block_tag);
-        try buf.appendSlice("\"]");
+        var buf: std.ArrayList(u8) = .empty;
+        errdefer buf.deinit(self.allocator);
+        try buf.appendSlice(self.allocator, "[\"");
+        try buf.appendSlice(self.allocator, &addr_hex);
+        try buf.appendSlice(self.allocator, "\",\"");
+        try buf.appendSlice(self.allocator, block_tag);
+        try buf.appendSlice(self.allocator, "\"]");
 
-        return buf.toOwnedSlice();
+        return buf.toOwnedSlice(self.allocator);
     }
 
     fn formatCallParams(self: *Provider, to: [20]u8, data: []const u8, from: ?[20]u8) ![]u8 {
@@ -275,24 +275,24 @@ pub const Provider = struct {
         const data_hex = try hex_mod.bytesToHex(self.allocator, data);
         defer self.allocator.free(data_hex);
 
-        var buf = std.ArrayList(u8).init(self.allocator);
-        errdefer buf.deinit();
-        try buf.appendSlice("[{");
+        var buf: std.ArrayList(u8) = .empty;
+        errdefer buf.deinit(self.allocator);
+        try buf.appendSlice(self.allocator, "[{");
 
         if (from) |f| {
             const from_hex = primitives.addressToHex(&f);
-            try buf.appendSlice("\"from\":\"");
-            try buf.appendSlice(&from_hex);
-            try buf.appendSlice("\",");
+            try buf.appendSlice(self.allocator, "\"from\":\"");
+            try buf.appendSlice(self.allocator, &from_hex);
+            try buf.appendSlice(self.allocator, "\",");
         }
 
-        try buf.appendSlice("\"to\":\"");
-        try buf.appendSlice(&to_hex);
-        try buf.appendSlice("\",\"data\":\"");
-        try buf.appendSlice(data_hex);
-        try buf.appendSlice("\"},\"latest\"]");
+        try buf.appendSlice(self.allocator, "\"to\":\"");
+        try buf.appendSlice(self.allocator, &to_hex);
+        try buf.appendSlice(self.allocator, "\",\"data\":\"");
+        try buf.appendSlice(self.allocator, data_hex);
+        try buf.appendSlice(self.allocator, "\"},\"latest\"]");
 
-        return buf.toOwnedSlice();
+        return buf.toOwnedSlice(self.allocator);
     }
 };
 
@@ -693,55 +693,55 @@ fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_mod.B
 
 /// Serialize a LogFilter into a JSON params array string.
 fn formatLogFilter(allocator: std.mem.Allocator, filter: json_rpc.LogFilter) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    errdefer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
 
-    try buf.appendSlice("[{");
+    try buf.appendSlice(allocator, "[{");
     var first = true;
 
     if (filter.fromBlock) |fb| {
-        try appendJsonField(&buf, "fromBlock", fb, first);
+        try appendJsonField(allocator, &buf, "fromBlock", fb, first);
         first = false;
     }
     if (filter.toBlock) |tb| {
-        try appendJsonField(&buf, "toBlock", tb, first);
+        try appendJsonField(allocator, &buf, "toBlock", tb, first);
         first = false;
     }
     if (filter.address) |addr| {
-        try appendJsonField(&buf, "address", addr, first);
+        try appendJsonField(allocator, &buf, "address", addr, first);
         first = false;
     }
     if (filter.blockHash) |bh| {
-        try appendJsonField(&buf, "blockHash", bh, first);
+        try appendJsonField(allocator, &buf, "blockHash", bh, first);
         first = false;
     }
     if (filter.topics) |topics| {
-        if (!first) try buf.append(',');
-        try buf.appendSlice("\"topics\":[");
+        if (!first) try buf.append(allocator, ',');
+        try buf.appendSlice(allocator, "\"topics\":[");
         for (topics, 0..) |topic, i| {
-            if (i > 0) try buf.append(',');
+            if (i > 0) try buf.append(allocator, ',');
             if (topic) |t| {
-                try buf.append('"');
-                try buf.appendSlice(t);
-                try buf.append('"');
+                try buf.append(allocator, '"');
+                try buf.appendSlice(allocator, t);
+                try buf.append(allocator, '"');
             } else {
-                try buf.appendSlice("null");
+                try buf.appendSlice(allocator, "null");
             }
         }
-        try buf.append(']');
+        try buf.append(allocator, ']');
     }
 
-    try buf.appendSlice("}]");
-    return buf.toOwnedSlice();
+    try buf.appendSlice(allocator, "}]");
+    return buf.toOwnedSlice(allocator);
 }
 
-fn appendJsonField(buf: *std.ArrayList(u8), key: []const u8, value: []const u8, first: bool) !void {
-    if (!first) try buf.append(',');
-    try buf.append('"');
-    try buf.appendSlice(key);
-    try buf.appendSlice("\":\"");
-    try buf.appendSlice(value);
-    try buf.append('"');
+fn appendJsonField(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), key: []const u8, value: []const u8, first: bool) !void {
+    if (!first) try buf.append(allocator, ',');
+    try buf.append(allocator, '"');
+    try buf.appendSlice(allocator, key);
+    try buf.appendSlice(allocator, "\":\"");
+    try buf.appendSlice(allocator, value);
+    try buf.append(allocator, '"');
 }
 
 // ============================================================================

@@ -12,56 +12,56 @@ pub const AccessList = []const AccessListItem;
 
 /// RLP-encode an access list into the given ArrayList.
 /// Each item is encoded as: [address, [key0, key1, ...]].
-pub fn encodeAccessList(list: *std.ArrayList(u8), access_list: AccessList) (std.mem.Allocator.Error || rlp.RlpError)!void {
+pub fn encodeAccessList(allocator: std.mem.Allocator, list: *std.ArrayList(u8), access_list: AccessList) (std.mem.Allocator.Error || rlp.RlpError)!void {
     // Encode the outer list contents into a temp buffer, then wrap with list header.
-    var outer = std.ArrayList(u8).init(list.allocator);
-    defer outer.deinit();
+    var outer: std.ArrayList(u8) = .empty;
+    defer outer.deinit(allocator);
 
     for (access_list) |item| {
         // Each item is an RLP list: [address, [storageKey0, storageKey1, ...]]
-        var item_buf = std.ArrayList(u8).init(list.allocator);
-        defer item_buf.deinit();
+        var item_buf: std.ArrayList(u8) = .empty;
+        defer item_buf.deinit(allocator);
 
         // Encode address (20-byte string)
-        try rlp.encodeInto(&item_buf, item.address);
+        try rlp.encodeInto(allocator, &item_buf, item.address);
 
         // Encode storage keys as a list
-        var keys_buf = std.ArrayList(u8).init(list.allocator);
-        defer keys_buf.deinit();
+        var keys_buf: std.ArrayList(u8) = .empty;
+        defer keys_buf.deinit(allocator);
         for (item.storage_keys) |key| {
-            try rlp.encodeInto(&keys_buf, key);
+            try rlp.encodeInto(allocator, &keys_buf, key);
         }
 
         // Write list header + keys content
-        try encodeLength(&item_buf, keys_buf.items.len, 0xc0);
-        try item_buf.appendSlice(keys_buf.items);
+        try encodeLength(allocator, &item_buf, keys_buf.items.len, 0xc0);
+        try item_buf.appendSlice(allocator, keys_buf.items);
 
         // Write item list header + item content
-        try encodeLength(&outer, item_buf.items.len, 0xc0);
-        try outer.appendSlice(item_buf.items);
+        try encodeLength(allocator, &outer, item_buf.items.len, 0xc0);
+        try outer.appendSlice(allocator, item_buf.items);
     }
 
     // Write outer list header + outer content
-    try encodeLength(list, outer.items.len, 0xc0);
-    try list.appendSlice(outer.items);
+    try encodeLength(allocator, list, outer.items.len, 0xc0);
+    try list.appendSlice(allocator, outer.items);
 }
 
 /// Encode a length prefix (same logic as rlp.zig's internal encodeLength, re-implemented
 /// here since that function is not pub).
-fn encodeLength(list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
+fn encodeLength(allocator: std.mem.Allocator, list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
     if (len < 56) {
-        try list.append(offset + @as(u8, @intCast(len)));
+        try list.append(allocator, offset + @as(u8, @intCast(len)));
     } else {
         var len_bytes: usize = 0;
         var temp = len;
         while (temp > 0) : (temp >>= 8) {
             len_bytes += 1;
         }
-        try list.append(offset + 55 + @as(u8, @intCast(len_bytes)));
+        try list.append(allocator, offset + 55 + @as(u8, @intCast(len_bytes)));
         var i: usize = len_bytes;
         while (i > 0) {
             i -= 1;
-            try list.append(@intCast((len >> @intCast(i * 8)) & 0xff));
+            try list.append(allocator, @intCast((len >> @intCast(i * 8)) & 0xff));
         }
     }
 }
@@ -74,9 +74,9 @@ test "empty access list encodes as empty RLP list" {
     const allocator = std.testing.allocator;
     const empty: AccessList = &.{};
 
-    var list = std.ArrayList(u8).init(allocator);
-    defer list.deinit();
-    try encodeAccessList(&list, empty);
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(allocator);
+    try encodeAccessList(allocator, &list, empty);
 
     // Empty list = 0xc0
     try std.testing.expectEqualSlices(u8, &.{0xc0}, list.items);
@@ -94,9 +94,9 @@ test "access list with one item, no storage keys" {
     };
     const access_list: AccessList = &items;
 
-    var list = std.ArrayList(u8).init(allocator);
-    defer list.deinit();
-    try encodeAccessList(&list, access_list);
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(allocator);
+    try encodeAccessList(allocator, &list, access_list);
 
     // Inner item: [address(21 bytes), emptyList(1 byte)] = 22 bytes payload
     // address encoding: 0x94 + 20 bytes = 21 bytes
@@ -122,9 +122,9 @@ test "access list with one item and one storage key" {
     };
     const access_list: AccessList = &items;
 
-    var list = std.ArrayList(u8).init(allocator);
-    defer list.deinit();
-    try encodeAccessList(&list, access_list);
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(allocator);
+    try encodeAccessList(allocator, &list, access_list);
 
     // address: 0x94 + 20 bytes = 21 bytes
     // key: 0xa0 + 32 bytes = 33 bytes

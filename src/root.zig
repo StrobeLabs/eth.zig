@@ -48,9 +48,12 @@ pub const wallet = @import("wallet.zig");
 pub const contract = @import("contract.zig");
 pub const multicall = @import("multicall.zig");
 pub const event = @import("event.zig");
+pub const erc20 = @import("erc20.zig");
+pub const erc721 = @import("erc721.zig");
 
 // -- Layer 9: Standards --
 pub const eip712 = @import("eip712.zig");
+pub const abi_json = @import("abi_json.zig");
 
 // -- Layer 10: Chains --
 pub const chains = @import("chains/chain.zig");
@@ -102,8 +105,11 @@ test {
     _ = @import("contract.zig");
     _ = @import("multicall.zig");
     _ = @import("event.zig");
+    _ = @import("erc20.zig");
+    _ = @import("erc721.zig");
     // Layer 9
     _ = @import("eip712.zig");
+    _ = @import("abi_json.zig");
     // Layer 10
     _ = @import("chains/chain.zig");
     _ = @import("chains/ethereum.zig");

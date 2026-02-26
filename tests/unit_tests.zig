@@ -34,8 +34,11 @@ test {
     _ = eth.contract;
     _ = eth.multicall;
     _ = eth.event;
+    _ = eth.erc20;
+    _ = eth.erc721;
     // Layer 9: Standards
     _ = eth.eip712;
+    _ = eth.abi_json;
     // Layer 10: Chains
     _ = eth.chains;
     // Utils

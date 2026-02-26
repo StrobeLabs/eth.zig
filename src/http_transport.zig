@@ -23,23 +23,23 @@ pub const HttpTransport = struct {
 
     /// Build a JSON-RPC 2.0 request body from method, pre-serialized params, and id.
     pub fn buildRequestBody(allocator: std.mem.Allocator, method: []const u8, params_json: []const u8, id: u64) ![]u8 {
-        var buf = std.ArrayList(u8).init(allocator);
-        errdefer buf.deinit();
+        var buf: std.ArrayList(u8) = .empty;
+        errdefer buf.deinit(allocator);
 
-        try buf.appendSlice("{\"jsonrpc\":\"2.0\",\"method\":\"");
-        try buf.appendSlice(method);
-        try buf.appendSlice("\",\"params\":");
-        try buf.appendSlice(params_json);
-        try buf.appendSlice(",\"id\":");
+        try buf.appendSlice(allocator, "{\"jsonrpc\":\"2.0\",\"method\":\"");
+        try buf.appendSlice(allocator, method);
+        try buf.appendSlice(allocator, "\",\"params\":");
+        try buf.appendSlice(allocator, params_json);
+        try buf.appendSlice(allocator, ",\"id\":");
 
         // Format the id as a decimal string
         var id_buf: [20]u8 = undefined;
         const id_str = std.fmt.bufPrint(&id_buf, "{d}", .{id}) catch unreachable;
-        try buf.appendSlice(id_str);
+        try buf.appendSlice(allocator, id_str);
 
-        try buf.append('}');
+        try buf.append(allocator, '}');
 
-        return buf.toOwnedSlice();
+        return buf.toOwnedSlice(allocator);
     }
 
     /// Send a JSON-RPC request and return the raw response body.

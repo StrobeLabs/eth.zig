@@ -121,193 +121,193 @@ pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8,
 
 /// Encode a length prefix for an RLP list. Re-implemented here since the rlp module's
 /// encodeLength is not public.
-fn encodeLength(list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
+fn encodeLength(allocator: std.mem.Allocator, list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
     if (len < 56) {
-        try list.append(offset + @as(u8, @intCast(len)));
+        try list.append(allocator, offset + @as(u8, @intCast(len)));
     } else {
         var len_bytes: usize = 0;
         var temp = len;
         while (temp > 0) : (temp >>= 8) {
             len_bytes += 1;
         }
-        try list.append(offset + 55 + @as(u8, @intCast(len_bytes)));
+        try list.append(allocator, offset + 55 + @as(u8, @intCast(len_bytes)));
         var i: usize = len_bytes;
         while (i > 0) {
             i -= 1;
-            try list.append(@intCast((len >> @intCast(i * 8)) & 0xff));
+            try list.append(allocator, @intCast((len >> @intCast(i * 8)) & 0xff));
         }
     }
 }
 
 /// Encode the common base fields for a legacy transaction (nonce through data).
-fn encodeLegacyBaseFields(buf: *std.ArrayList(u8), legacy: LegacyTransaction) !void {
-    try rlp.encodeInto(buf, legacy.nonce);
-    try rlp.encodeInto(buf, legacy.gas_price);
-    try rlp.encodeInto(buf, legacy.gas_limit);
-    try rlp.encodeInto(buf, legacy.to);
-    try rlp.encodeInto(buf, legacy.value);
-    try rlp.encodeInto(buf, legacy.data);
+fn encodeLegacyBaseFields(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), legacy: LegacyTransaction) !void {
+    try rlp.encodeInto(allocator, buf, legacy.nonce);
+    try rlp.encodeInto(allocator, buf, legacy.gas_price);
+    try rlp.encodeInto(allocator, buf, legacy.gas_limit);
+    try rlp.encodeInto(allocator, buf, legacy.to);
+    try rlp.encodeInto(allocator, buf, legacy.value);
+    try rlp.encodeInto(allocator, buf, legacy.data);
 }
 
 /// Serialize a legacy transaction for signing.
 fn serializeLegacyForSigning(allocator: std.mem.Allocator, legacy: LegacyTransaction) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
 
     // Build the list payload
-    try encodeLegacyBaseFields(&buf, legacy);
+    try encodeLegacyBaseFields(allocator, &buf, legacy);
 
     // EIP-155: append chainId, 0, 0
     if (legacy.chain_id) |chain_id| {
-        try rlp.encodeInto(&buf, chain_id);
-        try rlp.encodeInto(&buf, @as(u64, 0));
-        try rlp.encodeInto(&buf, @as(u64, 0));
+        try rlp.encodeInto(allocator, &buf, chain_id);
+        try rlp.encodeInto(allocator, &buf, @as(u64, 0));
+        try rlp.encodeInto(allocator, &buf, @as(u64, 0));
     }
 
     // Wrap in list header
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
-    try encodeLength(&result, buf.items.len, 0xc0);
-    try result.appendSlice(buf.items);
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    try encodeLength(allocator, &result, buf.items.len, 0xc0);
+    try result.appendSlice(allocator, buf.items);
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Encode the fields of a typed (non-legacy) transaction for signing into an ArrayList.
 /// This encodes all the fields specific to each transaction type.
-fn encodeTypedFields(buf: *std.ArrayList(u8), tx: anytype) !void {
+fn encodeTypedFields(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), tx: anytype) !void {
     const T = @TypeOf(tx);
 
     // All typed transactions start with chain_id
-    try rlp.encodeInto(buf, tx.chain_id);
-    try rlp.encodeInto(buf, tx.nonce);
+    try rlp.encodeInto(allocator, buf, tx.chain_id);
+    try rlp.encodeInto(allocator, buf, tx.nonce);
 
     // EIP-1559 and EIP-4844 have priority fee + max fee; EIP-2930 has gas_price
     if (@hasField(T, "max_priority_fee_per_gas")) {
-        try rlp.encodeInto(buf, tx.max_priority_fee_per_gas);
-        try rlp.encodeInto(buf, tx.max_fee_per_gas);
+        try rlp.encodeInto(allocator, buf, tx.max_priority_fee_per_gas);
+        try rlp.encodeInto(allocator, buf, tx.max_fee_per_gas);
     } else {
-        try rlp.encodeInto(buf, tx.gas_price);
+        try rlp.encodeInto(allocator, buf, tx.gas_price);
     }
 
-    try rlp.encodeInto(buf, tx.gas_limit);
+    try rlp.encodeInto(allocator, buf, tx.gas_limit);
 
     // `to` field: EIP-4844 always has a destination (non-optional), others have optional
     if (@hasField(T, "to")) {
         const to_field = tx.to;
         const ToFieldType = @TypeOf(to_field);
         if (ToFieldType == ?[20]u8) {
-            try rlp.encodeInto(buf, to_field);
+            try rlp.encodeInto(allocator, buf, to_field);
         } else {
             // Non-optional [20]u8
-            try rlp.encodeInto(buf, to_field);
+            try rlp.encodeInto(allocator, buf, to_field);
         }
     }
 
-    try rlp.encodeInto(buf, tx.value);
-    try rlp.encodeInto(buf, tx.data);
+    try rlp.encodeInto(allocator, buf, tx.value);
+    try rlp.encodeInto(allocator, buf, tx.data);
 
     // Access list
-    try access_list_mod.encodeAccessList(buf, tx.access_list);
+    try access_list_mod.encodeAccessList(allocator, buf, tx.access_list);
 
     // EIP-4844 extra fields
     if (@hasField(T, "max_fee_per_blob_gas")) {
-        try rlp.encodeInto(buf, tx.max_fee_per_blob_gas);
+        try rlp.encodeInto(allocator, buf, tx.max_fee_per_blob_gas);
         // blob_versioned_hashes: list of [32]u8
-        try encodeBlobHashes(buf, tx.blob_versioned_hashes);
+        try encodeBlobHashes(allocator, buf, tx.blob_versioned_hashes);
     }
 }
 
 /// Encode a list of 32-byte blob versioned hashes.
-fn encodeBlobHashes(list: *std.ArrayList(u8), hashes: []const [32]u8) !void {
-    var temp = std.ArrayList(u8).init(list.allocator);
-    defer temp.deinit();
+fn encodeBlobHashes(allocator: std.mem.Allocator, list: *std.ArrayList(u8), hashes: []const [32]u8) !void {
+    var temp: std.ArrayList(u8) = .empty;
+    defer temp.deinit(allocator);
     for (hashes) |h| {
-        try rlp.encodeInto(&temp, h);
+        try rlp.encodeInto(allocator, &temp, h);
     }
-    try encodeLength(list, temp.items.len, 0xc0);
-    try list.appendSlice(temp.items);
+    try encodeLength(allocator, list, temp.items.len, 0xc0);
+    try list.appendSlice(allocator, temp.items);
 }
 
 /// Serialize a typed transaction (EIP-2930/1559/4844) for signing.
 /// Returns: type_byte ++ RLP([fields...])
 fn serializeTypedForSigning(allocator: std.mem.Allocator, type_byte: u8, tx: anytype) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
 
-    try encodeTypedFields(&buf, tx);
+    try encodeTypedFields(allocator, &buf, tx);
 
     // Wrap in list header and prepend type byte
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
-    try result.append(type_byte);
-    try encodeLength(&result, buf.items.len, 0xc0);
-    try result.appendSlice(buf.items);
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    try result.append(allocator, type_byte);
+    try encodeLength(allocator, &result, buf.items.len, 0xc0);
+    try result.appendSlice(allocator, buf.items);
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Serialize a signed legacy transaction.
 fn serializeLegacySigned(allocator: std.mem.Allocator, legacy: LegacyTransaction, r: [32]u8, s: [32]u8, v: u8) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
 
     // Base fields
-    try encodeLegacyBaseFields(&buf, legacy);
+    try encodeLegacyBaseFields(allocator, &buf, legacy);
 
     // For EIP-155, v = chain_id * 2 + 35 + recovery_id
     // The caller passes the final v value; we encode it directly.
-    try rlp.encodeInto(&buf, v);
+    try rlp.encodeInto(allocator, &buf, v);
 
     // r and s: encode as big-endian integers (strip leading zeros)
-    try encodeU256Bytes(&buf, &r);
-    try encodeU256Bytes(&buf, &s);
+    try encodeU256Bytes(allocator, &buf, &r);
+    try encodeU256Bytes(allocator, &buf, &s);
 
     // Wrap in list header
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
-    try encodeLength(&result, buf.items.len, 0xc0);
-    try result.appendSlice(buf.items);
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    try encodeLength(allocator, &result, buf.items.len, 0xc0);
+    try result.appendSlice(allocator, buf.items);
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Serialize a signed typed transaction.
 fn serializeTypedSigned(allocator: std.mem.Allocator, type_byte: u8, tx: anytype, r: [32]u8, s: [32]u8, v: u8) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
 
-    try encodeTypedFields(&buf, tx);
+    try encodeTypedFields(allocator, &buf, tx);
 
     // Append signature: v (recovery_id for typed txs, 0 or 1), r, s
-    try rlp.encodeInto(&buf, v);
-    try encodeU256Bytes(&buf, &r);
-    try encodeU256Bytes(&buf, &s);
+    try rlp.encodeInto(allocator, &buf, v);
+    try encodeU256Bytes(allocator, &buf, &r);
+    try encodeU256Bytes(allocator, &buf, &s);
 
     // Wrap in list header and prepend type byte
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
-    try result.append(type_byte);
-    try encodeLength(&result, buf.items.len, 0xc0);
-    try result.appendSlice(buf.items);
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    try result.append(allocator, type_byte);
+    try encodeLength(allocator, &result, buf.items.len, 0xc0);
+    try result.appendSlice(allocator, buf.items);
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Encode a 32-byte big-endian value as an RLP integer (stripping leading zeros).
 /// This is used for r and s signature values, which are 256-bit unsigned integers
 /// stored as fixed 32-byte arrays.
-fn encodeU256Bytes(list: *std.ArrayList(u8), bytes: *const [32]u8) !void {
+fn encodeU256Bytes(allocator: std.mem.Allocator, list: *std.ArrayList(u8), bytes: *const [32]u8) !void {
     // Find first non-zero byte
     var start: usize = 0;
     while (start < 32 and bytes[start] == 0) : (start += 1) {}
 
     if (start == 32) {
         // All zeros => encode as 0
-        try rlp.encodeInto(list, @as(u64, 0));
+        try rlp.encodeInto(allocator, list, @as(u64, 0));
     } else {
         // Encode the significant bytes as a byte string
-        try rlp.encodeInto(list, bytes[start..]);
+        try rlp.encodeInto(allocator, list, bytes[start..]);
     }
 }
 
@@ -635,14 +635,14 @@ test "eip2930 with access list" {
 
 test "encodeU256Bytes strips leading zeros" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList(u8).init(allocator);
-    defer list.deinit();
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(allocator);
 
     // Value with many leading zeros
     var val = [_]u8{0} ** 32;
     val[31] = 0x42;
 
-    try encodeU256Bytes(&list, &val);
+    try encodeU256Bytes(allocator, &list, &val);
 
     // Should encode as a single byte 0x42 (< 0x80, so single byte encoding)
     try std.testing.expectEqualSlices(u8, &.{0x42}, list.items);
@@ -650,11 +650,11 @@ test "encodeU256Bytes strips leading zeros" {
 
 test "encodeU256Bytes all zeros" {
     const allocator = std.testing.allocator;
-    var list = std.ArrayList(u8).init(allocator);
-    defer list.deinit();
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(allocator);
 
     const val = [_]u8{0} ** 32;
-    try encodeU256Bytes(&list, &val);
+    try encodeU256Bytes(allocator, &list, &val);
 
     // Should encode as RLP 0 = 0x80
     try std.testing.expectEqualSlices(u8, &.{0x80}, list.items);

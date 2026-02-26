@@ -70,11 +70,11 @@ pub fn encodeType(
     fields: []const FieldDef,
     referenced_types: []const TypeDef,
 ) std.mem.Allocator.Error![]u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    errdefer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
 
     // Primary type
-    try appendTypeString(&buf, type_name, fields);
+    try appendTypeString(allocator, &buf, type_name, fields);
 
     // Referenced types sorted alphabetically by name
     if (referenced_types.len > 0) {
@@ -98,11 +98,11 @@ pub fn encodeType(
         }.lessThan);
 
         for (indices) |idx| {
-            try appendTypeString(&buf, referenced_types[idx].name, referenced_types[idx].fields);
+            try appendTypeString(allocator, &buf, referenced_types[idx].name, referenced_types[idx].fields);
         }
     }
 
-    return buf.toOwnedSlice();
+    return buf.toOwnedSlice(allocator);
 }
 
 /// Compute the type hash: `keccak256(encodeType(...))`.
@@ -165,12 +165,12 @@ pub fn encodeData(
             // keccak256(concat(encodeData(item) for each item))
             // We need the element type (strip trailing "[]")
             const elem_type = stripArraySuffix(type_str);
-            var concat_buf = std.ArrayList(u8).init(allocator);
-            defer concat_buf.deinit();
+            var concat_buf: std.ArrayList(u8) = .empty;
+            defer concat_buf.deinit(allocator);
 
             for (items) |item| {
                 const encoded = try encodeData(allocator, item, elem_type, type_defs);
-                try concat_buf.appendSlice(&encoded);
+                try concat_buf.appendSlice(allocator, &encoded);
             }
 
             return keccak.hash(concat_buf.items);
@@ -199,14 +199,14 @@ pub fn hashStruct(
     const type_hash = try hashType(allocator, struct_val.type_name, fields, ref_types);
 
     // Build the data: typeHash || encodeData(field1) || encodeData(field2) || ...
-    var buf = std.ArrayList(u8).init(allocator);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
 
-    try buf.appendSlice(&type_hash);
+    try buf.appendSlice(allocator, &type_hash);
 
     for (struct_val.fields) |field| {
         const encoded = try encodeData(allocator, field.value, field.type_str, type_defs);
-        try buf.appendSlice(&encoded);
+        try buf.appendSlice(allocator, &encoded);
     }
 
     return keccak.hash(buf.items);
@@ -218,47 +218,47 @@ pub fn hashDomain(
     domain: DomainSeparator,
 ) std.mem.Allocator.Error![32]u8 {
     // Build the EIP712Domain type string dynamically based on which fields are present
-    var domain_fields = std.ArrayList(FieldDef).init(allocator);
-    defer domain_fields.deinit();
+    var domain_fields: std.ArrayList(FieldDef) = .empty;
+    defer domain_fields.deinit(allocator);
 
-    var domain_values = std.ArrayList(FieldValue).init(allocator);
-    defer domain_values.deinit();
+    var domain_values: std.ArrayList(FieldValue) = .empty;
+    defer domain_values.deinit(allocator);
 
     if (domain.name) |name| {
-        try domain_fields.append(.{ .name = "name", .type_str = "string" });
-        try domain_values.append(.{
+        try domain_fields.append(allocator, .{ .name = "name", .type_str = "string" });
+        try domain_values.append(allocator, .{
             .name = "name",
             .type_str = "string",
             .value = .{ .string_val = name },
         });
     }
     if (domain.version) |version| {
-        try domain_fields.append(.{ .name = "version", .type_str = "string" });
-        try domain_values.append(.{
+        try domain_fields.append(allocator, .{ .name = "version", .type_str = "string" });
+        try domain_values.append(allocator, .{
             .name = "version",
             .type_str = "string",
             .value = .{ .string_val = version },
         });
     }
     if (domain.chain_id) |chain_id| {
-        try domain_fields.append(.{ .name = "chainId", .type_str = "uint256" });
-        try domain_values.append(.{
+        try domain_fields.append(allocator, .{ .name = "chainId", .type_str = "uint256" });
+        try domain_values.append(allocator, .{
             .name = "chainId",
             .type_str = "uint256",
             .value = .{ .uint256 = chain_id },
         });
     }
     if (domain.verifying_contract) |contract| {
-        try domain_fields.append(.{ .name = "verifyingContract", .type_str = "address" });
-        try domain_values.append(.{
+        try domain_fields.append(allocator, .{ .name = "verifyingContract", .type_str = "address" });
+        try domain_values.append(allocator, .{
             .name = "verifyingContract",
             .type_str = "address",
             .value = .{ .address = contract },
         });
     }
     if (domain.salt) |salt| {
-        try domain_fields.append(.{ .name = "salt", .type_str = "bytes32" });
-        try domain_values.append(.{
+        try domain_fields.append(allocator, .{ .name = "salt", .type_str = "bytes32" });
+        try domain_values.append(allocator, .{
             .name = "salt",
             .type_str = "bytes32",
             .value = .{ .bytes32 = salt },
@@ -304,16 +304,16 @@ pub fn hashTypedData(
 // ============================================================================
 
 /// Append "TypeName(type1 name1,type2 name2,...)" to the buffer.
-fn appendTypeString(buf: *std.ArrayList(u8), type_name: []const u8, fields: []const FieldDef) std.mem.Allocator.Error!void {
-    try buf.appendSlice(type_name);
-    try buf.append('(');
+fn appendTypeString(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), type_name: []const u8, fields: []const FieldDef) std.mem.Allocator.Error!void {
+    try buf.appendSlice(allocator, type_name);
+    try buf.append(allocator, '(');
     for (fields, 0..) |field, i| {
-        if (i > 0) try buf.append(',');
-        try buf.appendSlice(field.type_str);
-        try buf.append(' ');
-        try buf.appendSlice(field.name);
+        if (i > 0) try buf.append(allocator, ',');
+        try buf.appendSlice(allocator, field.type_str);
+        try buf.append(allocator, ' ');
+        try buf.appendSlice(allocator, field.name);
     }
-    try buf.append(')');
+    try buf.append(allocator, ')');
 }
 
 /// Strip the trailing "[]" from an array type string. E.g., "Person[]" -> "Person".
@@ -399,8 +399,8 @@ fn collectReferencedTypes(
     try visited.put(primary_type_name, {});
 
     // BFS / iterative expansion
-    var queue = std.ArrayList([]const u8).init(allocator);
-    defer queue.deinit();
+    var queue: std.ArrayList([]const u8) = .empty;
+    defer queue.deinit(allocator);
 
     // Seed the queue with struct types referenced by the primary type
     if (findTypeDef(type_defs, primary_type_name)) |td| {
@@ -409,7 +409,7 @@ fn collectReferencedTypes(
             if (isStructType(base)) {
                 if (!visited.contains(base)) {
                     try visited.put(base, {});
-                    try queue.append(base);
+                    try queue.append(allocator, base);
                 }
             }
         }
@@ -427,7 +427,7 @@ fn collectReferencedTypes(
                 if (isStructType(base)) {
                     if (!visited.contains(base)) {
                         try visited.put(base, {});
-                        try queue.append(base);
+                        try queue.append(allocator, base);
                     }
                 }
             }
@@ -435,18 +435,18 @@ fn collectReferencedTypes(
     }
 
     // Build the result: all queued type names (excluding primary) as TypeDefs
-    var result = std.ArrayList(TypeDef).init(allocator);
-    defer result.deinit();
+    var result: std.ArrayList(TypeDef) = .empty;
+    defer result.deinit(allocator);
 
     for (queue.items) |name| {
         if (findTypeDef(type_defs, name)) |td| {
-            try result.append(td);
+            try result.append(allocator, td);
         }
     }
 
     // The sorting is done by encodeType, so we just return them unsorted here.
     // (encodeType sorts referenced types alphabetically.)
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 // ============================================================================

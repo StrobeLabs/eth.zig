@@ -16,41 +16,41 @@ pub const RlpError = error{
 
 /// Encode a value to RLP. Returns allocated bytes.
 pub fn encode(allocator: std.mem.Allocator, value: anytype) (std.mem.Allocator.Error || RlpError)![]u8 {
-    var list = std.ArrayList(u8).init(allocator);
-    errdefer list.deinit();
-    try encodeInto(&list, value);
-    return list.toOwnedSlice();
+    var list: std.ArrayList(u8) = .empty;
+    errdefer list.deinit(allocator);
+    try encodeInto(allocator, &list, value);
+    return list.toOwnedSlice(allocator);
 }
 
 /// Encode a value and append to the given ArrayList.
-pub fn encodeInto(list: *std.ArrayList(u8), value: anytype) (std.mem.Allocator.Error || RlpError)!void {
+pub fn encodeInto(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value: anytype) (std.mem.Allocator.Error || RlpError)!void {
     const T = @TypeOf(value);
     const info = @typeInfo(T);
 
     switch (info) {
         .bool => {
             if (value) {
-                try list.append(0x01);
+                try list.append(allocator, 0x01);
             } else {
-                try list.append(0x80);
+                try list.append(allocator, 0x80);
             }
         },
         .int, .comptime_int => {
-            try encodeUint(list, value);
+            try encodeUint(allocator, list, value);
         },
         .pointer => |ptr| {
             switch (ptr.size) {
-                .One => {
+                .one => {
                     // Pointer to array (e.g., *const [N]u8)
-                    try encodeInto(list, value.*);
+                    try encodeInto(allocator, list, value.*);
                 },
-                .Slice => {
+                .slice => {
                     if (ptr.child == u8) {
                         // Byte slice: encode as string
-                        try encodeBytes(list, value);
+                        try encodeBytes(allocator, list, value);
                     } else {
                         // Slice of non-bytes: encode as list
-                        try encodeList(list, value);
+                        try encodeList(allocator, list, value);
                     }
                 },
                 else => @compileError("unsupported pointer type for RLP encoding"),
@@ -59,46 +59,46 @@ pub fn encodeInto(list: *std.ArrayList(u8), value: anytype) (std.mem.Allocator.E
         .array => |arr| {
             if (arr.child == u8) {
                 // [N]u8: encode as string
-                try encodeBytes(list, &value);
+                try encodeBytes(allocator, list, &value);
             } else {
                 // [N]T: encode as list
-                try encodeList(list, &value);
+                try encodeList(allocator, list, &value);
             }
         },
         .@"struct" => |s| {
             // Structs encode as RLP lists of their fields
-            var temp = std.ArrayList(u8).init(list.allocator);
-            defer temp.deinit();
+            var temp: std.ArrayList(u8) = .empty;
+            defer temp.deinit(allocator);
 
             inline for (s.fields) |field| {
-                try encodeInto(&temp, @field(value, field.name));
+                try encodeInto(allocator, &temp, @field(value, field.name));
             }
 
-            try encodeLength(list, temp.items.len, 0xc0);
-            try list.appendSlice(temp.items);
+            try encodeLength(allocator, list, temp.items.len, 0xc0);
+            try list.appendSlice(allocator, temp.items);
         },
         .optional => {
             if (value) |v| {
-                try encodeInto(list, v);
+                try encodeInto(allocator, list, v);
             } else {
                 // None encodes as empty string
-                try list.append(0x80);
+                try list.append(allocator, 0x80);
             }
         },
         else => return error.UnsupportedType,
     }
 }
 
-fn encodeUint(list: *std.ArrayList(u8), value: anytype) std.mem.Allocator.Error!void {
+fn encodeUint(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value: anytype) std.mem.Allocator.Error!void {
     const val: u256 = @intCast(value);
 
     if (val == 0) {
-        try list.append(0x80);
+        try list.append(allocator, 0x80);
         return;
     }
 
     if (val < 128) {
-        try list.append(@intCast(val));
+        try list.append(allocator, @intCast(val));
         return;
     }
 
@@ -109,41 +109,41 @@ fn encodeUint(list: *std.ArrayList(u8), value: anytype) std.mem.Allocator.Error!
         byte_len += 1;
     }
 
-    try encodeLength(list, byte_len, 0x80);
+    try encodeLength(allocator, list, byte_len, 0x80);
 
     // Write big-endian bytes
     var i: usize = byte_len;
     while (i > 0) {
         i -= 1;
         const shift: u8 = @intCast(i * 8);
-        try list.append(@truncate(val >> shift));
+        try list.append(allocator, @truncate(val >> shift));
     }
 }
 
-fn encodeBytes(list: *std.ArrayList(u8), bytes: []const u8) std.mem.Allocator.Error!void {
+fn encodeBytes(allocator: std.mem.Allocator, list: *std.ArrayList(u8), bytes: []const u8) std.mem.Allocator.Error!void {
     if (bytes.len == 1 and bytes[0] < 0x80) {
-        try list.append(bytes[0]);
+        try list.append(allocator, bytes[0]);
     } else {
-        try encodeLength(list, bytes.len, 0x80);
-        try list.appendSlice(bytes);
+        try encodeLength(allocator, list, bytes.len, 0x80);
+        try list.appendSlice(allocator, bytes);
     }
 }
 
-fn encodeList(list: *std.ArrayList(u8), items: anytype) (std.mem.Allocator.Error || RlpError)!void {
-    var temp = std.ArrayList(u8).init(list.allocator);
-    defer temp.deinit();
+fn encodeList(allocator: std.mem.Allocator, list: *std.ArrayList(u8), items: anytype) (std.mem.Allocator.Error || RlpError)!void {
+    var temp: std.ArrayList(u8) = .empty;
+    defer temp.deinit(allocator);
 
     for (items) |item| {
-        try encodeInto(&temp, item);
+        try encodeInto(allocator, &temp, item);
     }
 
-    try encodeLength(list, temp.items.len, 0xc0);
-    try list.appendSlice(temp.items);
+    try encodeLength(allocator, list, temp.items.len, 0xc0);
+    try list.appendSlice(allocator, temp.items);
 }
 
-fn encodeLength(list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
+fn encodeLength(allocator: std.mem.Allocator, list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Allocator.Error!void {
     if (len < 56) {
-        try list.append(offset + @as(u8, @intCast(len)));
+        try list.append(allocator, offset + @as(u8, @intCast(len)));
     } else {
         // Compute byte length of len
         var len_bytes: usize = 0;
@@ -152,13 +152,13 @@ fn encodeLength(list: *std.ArrayList(u8), len: usize, offset: u8) std.mem.Alloca
             len_bytes += 1;
         }
 
-        try list.append(offset + 55 + @as(u8, @intCast(len_bytes)));
+        try list.append(allocator, offset + 55 + @as(u8, @intCast(len_bytes)));
 
         // Write length in big-endian
         var i: usize = len_bytes;
         while (i > 0) {
             i -= 1;
-            try list.append(@intCast((len >> @intCast(i * 8)) & 0xff));
+            try list.append(allocator, @intCast((len >> @intCast(i * 8)) & 0xff));
         }
     }
 }
