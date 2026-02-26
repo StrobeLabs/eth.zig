@@ -501,7 +501,7 @@ fn bytesToUint(comptime T: type, bytes: []const u8) RlpError!T {
 
     // Fast path: use direct memory read + byte swap (single BSWAP instruction)
     if (bytes.len <= 8) {
-        var buf: [8]u8 = .{0, 0, 0, 0, 0, 0, 0, 0};
+        var buf: [8]u8 = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
         @memcpy(buf[8 - bytes.len ..], bytes);
         return @intCast(std.mem.readInt(u64, &buf, .big));
     }
