@@ -90,3 +90,41 @@ test "parseEther formatEther roundtrip" {
 test "parseGwei formatGwei roundtrip" {
     try std.testing.expectApproxEqAbs(@as(f64, 30.0), formatGwei(parseGwei(30.0)), 1e-6);
 }
+
+test "parseEther handles values that require upper 128 bits" {
+    // 1e21 ETH -> 1e39 wei, which exceeds 128 bits.
+    const wei = parseEther(1e21);
+    try std.testing.expect((wei >> 128) > 0);
+}
+
+test "parseGwei handles values that require upper 128 bits" {
+    // 1e30 gwei -> 1e39 wei, which exceeds 128 bits.
+    const wei = parseGwei(1e30);
+    try std.testing.expect((wei >> 128) > 0);
+}
+
+test "formatEther is finite and monotonic for very large u256 values" {
+    const huge = (@as(u256, 1) << 200);
+    const larger = huge + (@as(u256, 1) << 199);
+
+    const f_huge = formatEther(huge);
+    const f_larger = formatEther(larger);
+
+    try std.testing.expect(std.math.isFinite(f_huge));
+    try std.testing.expect(std.math.isFinite(f_larger));
+    try std.testing.expect(f_huge > 0.0);
+    try std.testing.expect(f_larger > f_huge);
+}
+
+test "formatGwei is finite and monotonic for very large u256 values" {
+    const huge = (@as(u256, 1) << 200);
+    const larger = huge + (@as(u256, 1) << 199);
+
+    const f_huge = formatGwei(huge);
+    const f_larger = formatGwei(larger);
+
+    try std.testing.expect(std.math.isFinite(f_huge));
+    try std.testing.expect(std.math.isFinite(f_larger));
+    try std.testing.expect(f_huge > 0.0);
+    try std.testing.expect(f_larger > f_huge);
+}
