@@ -72,6 +72,7 @@ test {
     // Layer 1
     _ = @import("hex.zig");
     _ = @import("keccak.zig");
+    _ = @import("keccak_optimized.zig");
     _ = @import("uint256.zig");
     _ = @import("primitives.zig");
     // Layer 2
