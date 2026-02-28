@@ -21,11 +21,11 @@ const RHO = [25]u6{ 0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 
 // Lane complementing mask: lanes {1,2,8,12,17,20} are complemented.
 // This converts the chi step's NOT+AND into ANDN (single instruction on ARM/x86).
 const COMPLEMENT_LANES = [25]bool{
-    false, true, true, false, false,
-    false, false, false, true, false,
-    false, false, true, false, false,
-    false, false, true, false, false,
-    true, false, false, false, false,
+    false, true,  true,  false, false,
+    false, false, false, true,  false,
+    false, false, true,  false, false,
+    false, false, true,  false, false,
+    true,  false, false, false, false,
 };
 
 /// Optimized Keccak-256 hash. Lane complementing + interleaved rounds.
@@ -97,11 +97,11 @@ inline fn round(a: *[25]u64, rc: u64) void {
     var b: [25]u64 = undefined;
 
     const PI_DST = [25]u5{
-        0, 10, 20, 5, 15,
-        16, 1, 11, 21, 6,
-        7, 17, 2, 12, 22,
-        23, 8, 18, 3, 13,
-        14, 24, 9, 19, 4,
+        0,  10, 20, 5,  15,
+        16, 1,  11, 21, 6,
+        7,  17, 2,  12, 22,
+        23, 8,  18, 3,  13,
+        14, 24, 9,  19, 4,
     };
 
     inline for (0..25) |i| {
