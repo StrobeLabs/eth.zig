@@ -50,6 +50,9 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
     });
 
+    const zbench_dep = b.dependency("zbench", .{});
+    const zbench_mod = zbench_dep.module("zbench");
+
     const bench_exe = b.addExecutable(.{
         .name = "bench",
         .root_module = b.createModule(.{
@@ -58,6 +61,7 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseFast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
+                .{ .name = "zbench", .module = zbench_mod },
             },
         }),
     });
@@ -65,4 +69,22 @@ pub fn build(b: *std.Build) void {
     const run_bench = b.addRunArtifact(bench_exe);
     const bench_step = b.step("bench", "Run benchmarks (ReleaseFast)");
     bench_step.dependOn(&run_bench.step);
+
+    // Keccak comparison benchmark (eth.zig vs stdlib)
+    const keccak_compare_exe = b.addExecutable(.{
+        .name = "keccak-compare",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/keccak_compare.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "eth", .module = bench_module },
+                .{ .name = "zbench", .module = zbench_mod },
+            },
+        }),
+    });
+
+    const run_keccak_compare = b.addRunArtifact(keccak_compare_exe);
+    const keccak_compare_step = b.step("bench-keccak", "Compare eth.zig Keccak vs stdlib (ReleaseFast)");
+    keccak_compare_step.dependOn(&run_keccak_compare.step);
 }
