@@ -1,4 +1,5 @@
 const std = @import("std");
+const keccak_optimized = @import("keccak_optimized.zig");
 
 /// Ethereum-compatible Keccak-256 hash (0x01 padding, NOT SHA3's 0x06).
 /// Zig's stdlib provides this as a distinct type from Sha3_256.
@@ -8,10 +9,9 @@ pub const Keccak256 = std.crypto.hash.sha3.Keccak256;
 pub const Hash = [32]u8;
 
 /// Compute the Keccak-256 hash of the given data.
+/// Uses an optimized Keccak-f[1600] permutation with lane complementing.
 pub fn hash(data: []const u8) Hash {
-    var result: Hash = undefined;
-    Keccak256.hash(data, &result, .{});
-    return result;
+    return keccak_optimized.keccak256(data);
 }
 
 /// Compute Keccak-256 hash at comptime.
