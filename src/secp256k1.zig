@@ -230,6 +230,10 @@ pub fn pubkeyToAddress(pubkey: [65]u8) primitives.Address {
 
 /// Derive the public key from a private key.
 pub fn derivePublicKey(private_key: [32]u8) SignError![65]u8 {
+    // Validate private key: must be non-zero and less than curve order
+    const sk = Scalar.fromBytes(private_key, .big) catch return error.InvalidPrivateKey;
+    if (sk.isZero()) return error.InvalidPrivateKey;
+
     const point = basePointMulGlv(private_key, .big) catch
         Secp256k1.basePoint.mul(private_key, .big) catch return error.InvalidPrivateKey;
     point.rejectIdentity() catch return error.InvalidPrivateKey;

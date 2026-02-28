@@ -136,16 +136,11 @@ inline fn round(a: *[25]u64, rc: u64) void {
         //   if b[x+1] NOT complemented: chi_op = ~b[x+1] & b[x+2]
         // But we also need to maintain the complement invariant for the output lane.
         //
-        // Full truth table for chi with lane complementing:
-        // c[x+1]=0, c[x+2]=0: result = b[x] ^ (~b[x+1] & b[x+2]),  output complemented = c[x]
-        // c[x+1]=1, c[x+2]=0: result = b[x] ^ (b[x+1] & b[x+2]),   output complemented = !c[x] -> need to flip
-        // c[x+1]=0, c[x+2]=1: result = b[x] ^ (~b[x+1] | b[x+2]),  output complemented = !c[x] -> need to flip
-        // c[x+1]=1, c[x+2]=1: result = b[x] ^ (b[x+1] | b[x+2]),   output complemented = c[x]
-        a[base + 0] = chiLane(b0, b1, b2, c0, c1, c2);
-        a[base + 1] = chiLane(b1, b2, b3, c1, c2, c3);
-        a[base + 2] = chiLane(b2, b3, b4, c2, c3, c4);
-        a[base + 3] = chiLane(b3, b4, b0, c3, c4, c0);
-        a[base + 4] = chiLane(b4, b0, b1, c4, c0, c1);
+        a[base + 0] = chiLane(b0, b1, b2, c1, c2);
+        a[base + 1] = chiLane(b1, b2, b3, c2, c3);
+        a[base + 2] = chiLane(b2, b3, b4, c3, c4);
+        a[base + 3] = chiLane(b3, b4, b0, c4, c0);
+        a[base + 4] = chiLane(b4, b0, b1, c0, c1);
     }
 
     // Iota
@@ -156,26 +151,16 @@ inline fn chiLane(
     bx: u64,
     bx1: u64,
     bx2: u64,
-    comptime cx: bool,
     comptime cx1: bool,
     comptime cx2: bool,
 ) u64 {
-    // The chi step is: out = bx ^ (~bx1 & bx2)
-    // With lane complementing, bx1 and bx2 may already be complemented.
-    // We need the output to maintain cx's complement status.
-    //
-    // Case analysis on (cx1, cx2):
+    // Chi step with lane complementing (XKCP opt64).
+    // The operation depends on the complement status of bx1 and bx2:
     //   (false, false): ~bx1 & bx2           -> standard ANDN
     //   (true, false):  bx1 & bx2            -> AND (bx1 already ~'d)
-    //   (false, true):  ~bx1 | bx2           -> ORN (De Morgan: ~(bx1 & ~bx2))
+    //   (false, true):  ~bx1 | bx2           -> ORN (De Morgan)
     //   (true, true):   bx1 | bx2            -> OR  (both ~'d: De Morgan)
     //
-    // When (cx1 XOR cx2) is true, the chi operation flips the complement
-    // status of the output. If this doesn't match cx, we need to complement.
-    const chi_flips = cx1 != cx2;
-    const need_complement = chi_flips != cx; // should never happen if complement mask is correct
-    _ = need_complement;
-
     const chi_term = if (!cx1 and !cx2)
         ~bx1 & bx2
     else if (cx1 and !cx2)
@@ -287,7 +272,7 @@ test "optimized keccak256 large input 64KB" {
 }
 
 test "optimized keccak256 cross-validation sweep" {
-    // Test every size from 0 to 300 against stdlib
+    // Test every size from 0 to 299 against stdlib
     var data: [300]u8 = undefined;
     for (&data, 0..) |*b, i| b.* = @truncate(i *% 137 +% 42);
 
