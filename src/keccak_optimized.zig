@@ -70,8 +70,6 @@ fn xorBlock(state: *[25]u64, block: *const [RATE]u8) void {
 }
 
 fn keccakF(state: *[25]u64) void {
-    // Adjust round constants for lane complementing: RC XORed into lane 0,
-    // which is NOT complemented, so no adjustment needed.
     for (RC) |rc| {
         round(state, rc);
     }
@@ -95,13 +93,9 @@ inline fn round(a: *[25]u64, rc: u64) void {
         c[3] ^ math.rotl(u64, c[0], 1),
     };
 
-    // Theta + Rho + Pi (interleaved to reduce temporaries)
-    // Apply theta to all lanes, then rho-rotate, then pi-permute
+    // Theta + Rho + Pi (interleaved)
     var b: [25]u64 = undefined;
 
-    // a[y*5+x] ^= d[x], then rotate by RHO[y*5+x], then store at pi destination
-    // Pi: (x,y) -> (y, 2x+3y mod 5), or equivalently lane j goes to PI_DST[j]
-    // Using the standard Keccak convention where PI_DST[src] = dst:
     const PI_DST = [25]u5{
         0, 10, 20, 5, 15,
         16, 1, 11, 21, 6,
