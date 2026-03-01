@@ -1,5 +1,4 @@
 const std = @import("std");
-const keccak_optimized = @import("keccak_optimized.zig");
 
 /// Ethereum-compatible Keccak-256 hash (0x01 padding, NOT SHA3's 0x06).
 /// Zig's stdlib provides this as a distinct type from Sha3_256.
@@ -9,20 +8,18 @@ pub const Keccak256 = std.crypto.hash.sha3.Keccak256;
 pub const Hash = [32]u8;
 
 /// Compute the Keccak-256 hash of the given data.
-/// Uses an optimized Keccak-f[1600] permutation with lane complementing.
+/// Works at both comptime and runtime.
 pub fn hash(data: []const u8) Hash {
-    return keccak_optimized.keccak256(data);
+    if (@inComptime()) {
+        @setEvalBranchQuota(10000);
+    }
+    var result: Hash = undefined;
+    Keccak256.hash(data, &result, .{});
+    return result;
 }
 
-/// Compute Keccak-256 hash at comptime.
-pub fn comptimeHash(comptime data: []const u8) Hash {
-    comptime {
-        @setEvalBranchQuota(10000);
-        var result: Hash = undefined;
-        Keccak256.hash(data, &result, .{});
-        return result;
-    }
-}
+/// Deprecated: use hash() directly, it works at both comptime and runtime.
+pub const comptimeHash = hash;
 
 /// Compute the Keccak-256 hash of multiple concatenated slices.
 pub fn hashConcat(slices: []const []const u8) Hash {
@@ -41,13 +38,8 @@ pub fn selector(signature: []const u8) [4]u8 {
     return h[0..4].*;
 }
 
-/// Compute function selector at comptime.
-pub fn comptimeSelector(comptime signature: []const u8) [4]u8 {
-    comptime {
-        const h = comptimeHash(signature);
-        return h[0..4].*;
-    }
-}
+/// Deprecated: use selector() directly, it works at both comptime and runtime.
+pub const comptimeSelector = selector;
 
 // Tests
 test "keccak256 empty" {

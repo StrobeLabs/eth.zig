@@ -3,7 +3,7 @@ const contract_mod = @import("contract.zig");
 const abi_encode = @import("abi_encode.zig");
 const abi_decode = @import("abi_decode.zig");
 const abi_types = @import("abi_types.zig");
-const abi_comptime = @import("abi_comptime.zig");
+const keccak = @import("keccak.zig");
 const provider_mod = @import("provider.zig");
 const wallet_mod = @import("wallet.zig");
 const http_transport_mod = @import("http_transport.zig");
@@ -14,21 +14,21 @@ const Contract = contract_mod.Contract;
 
 /// Comptime-computed ERC-20 function selectors.
 pub const selectors = struct {
-    pub const name = abi_comptime.comptimeSelector("name()");
-    pub const symbol = abi_comptime.comptimeSelector("symbol()");
-    pub const decimals = abi_comptime.comptimeSelector("decimals()");
-    pub const totalSupply = abi_comptime.comptimeSelector("totalSupply()");
-    pub const balanceOf = abi_comptime.comptimeSelector("balanceOf(address)");
-    pub const allowance = abi_comptime.comptimeSelector("allowance(address,address)");
-    pub const transfer = abi_comptime.comptimeSelector("transfer(address,uint256)");
-    pub const approve = abi_comptime.comptimeSelector("approve(address,uint256)");
-    pub const transferFrom = abi_comptime.comptimeSelector("transferFrom(address,address,uint256)");
+    pub const name = keccak.selector("name()");
+    pub const symbol = keccak.selector("symbol()");
+    pub const decimals = keccak.selector("decimals()");
+    pub const totalSupply = keccak.selector("totalSupply()");
+    pub const balanceOf = keccak.selector("balanceOf(address)");
+    pub const allowance = keccak.selector("allowance(address,address)");
+    pub const transfer = keccak.selector("transfer(address,uint256)");
+    pub const approve = keccak.selector("approve(address,uint256)");
+    pub const transferFrom = keccak.selector("transferFrom(address,address,uint256)");
 };
 
 /// Comptime-computed ERC-20 event topics.
 pub const topics = struct {
-    pub const Transfer = abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
-    pub const Approval = abi_comptime.comptimeTopic("Approval(address,address,uint256)");
+    pub const Transfer = keccak.hash("Transfer(address,address,uint256)");
+    pub const Approval = keccak.hash("Approval(address,address,uint256)");
 };
 
 /// High-level ERC-20 token interface.

@@ -1,22 +1,22 @@
 const std = @import("std");
 const keccak = @import("keccak.zig");
 
-/// Compute a 4-byte Solidity function selector at compile time from a canonical signature.
+/// Deprecated: use keccak.selector() directly. Works at both comptime and runtime.
 ///
 /// Example:
-///   const sel = comptimeSelector("transfer(address,uint256)");
+///   const sel = keccak.selector("transfer(address,uint256)");
 ///   // sel == [4]u8{ 0xa9, 0x05, 0x9c, 0xbb }
-pub fn comptimeSelector(comptime signature: []const u8) [4]u8 {
-    return comptime keccak.comptimeSelector(signature);
+pub fn comptimeSelector(signature: []const u8) [4]u8 {
+    return keccak.selector(signature);
 }
 
-/// Compute a 32-byte Solidity event topic at compile time from a canonical signature.
+/// Deprecated: use keccak.hash() directly. Works at both comptime and runtime.
 ///
 /// Example:
-///   const topic = comptimeTopic("Transfer(address,address,uint256)");
+///   const topic = keccak.hash("Transfer(address,address,uint256)");
 ///   // topic == keccak256("Transfer(address,address,uint256)")
-pub fn comptimeTopic(comptime signature: []const u8) [32]u8 {
-    return comptime keccak.comptimeHash(signature);
+pub fn comptimeTopic(signature: []const u8) [32]u8 {
+    return keccak.hash(signature);
 }
 
 // ============================================================================
