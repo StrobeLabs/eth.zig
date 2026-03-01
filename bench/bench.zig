@@ -385,7 +385,9 @@ fn benchEip712Hash(allocator: std.mem.Allocator) void {
 // ============================================================================
 
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
     // Pre-compute data for decode benchmarks
     const abi_dyn_args = [_]eth.abi_encode.AbiValue{
