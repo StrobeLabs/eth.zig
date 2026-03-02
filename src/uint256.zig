@@ -116,6 +116,10 @@ fn countLimbs(limbs: [4]u64) usize {
 }
 
 fn divSingleLimb(num: [4]u64, nn: usize, d: u64) u256 {
+    return limbsToU256(divSingleLimbRaw(num, nn, d));
+}
+
+fn divSingleLimbRaw(num: [4]u64, nn: usize, d: u64) [4]u64 {
     var q: [4]u64 = .{ 0, 0, 0, 0 };
     var rem: u128 = 0;
     var i: usize = nn;
@@ -125,16 +129,18 @@ fn divSingleLimb(num: [4]u64, nn: usize, d: u64) u256 {
         q[i] = @truncate(rem / d);
         rem %= d;
     }
-    return limbsToU256(q);
+    return q;
 }
 
 fn divLimbs(numerator: u256, divisor: u256) u256 {
-    const num = u256ToLimbs(numerator);
-    const div = u256ToLimbs(divisor);
+    return limbsToU256(divLimbsRaw(u256ToLimbs(numerator), u256ToLimbs(divisor)));
+}
+
+fn divLimbsRaw(num: [4]u64, div: [4]u64) [4]u64 {
     const nn = countLimbs(num);
     const dd = countLimbs(div);
 
-    if (dd == 1) return divSingleLimb(num, nn, div[0]);
+    if (dd == 1) return divSingleLimbRaw(num, nn, div[0]);
 
     // Knuth Algorithm D: normalize so top bit of divisor's top limb is set
     const s: u6 = @intCast(@clz(div[dd - 1]));
@@ -220,7 +226,7 @@ fn divLimbs(numerator: u256, divisor: u256) u256 {
         q[j] = @truncate(qhat);
     }
 
-    return limbsToU256(q);
+    return q;
 }
 
 /// Fast u256 multiplication that uses narrower operations when values fit.
@@ -323,6 +329,110 @@ pub const ZERO: u256 = 0;
 
 /// One value.
 pub const ONE: u256 = 1;
+
+// ============================================================================
+// U256Limb: limb-native u256 for compound arithmetic
+// ============================================================================
+
+/// A u256 stored as 4 u64 limbs (little-endian: limbs[0] is least significant).
+/// Provides arithmetic that stays in limb space across operations, avoiding
+/// the overhead of u256 <-> u128 conversions that LLVM's native u256 incurs
+/// on each operation. Critical for compound DeFi math (UniswapV2 getAmountOut).
+pub const U256Limb = struct {
+    limbs: [4]u64,
+
+    pub fn fromU256(val: u256) U256Limb {
+        return .{ .limbs = u256ToLimbs(val) };
+    }
+
+    pub fn toU256(self: U256Limb) u256 {
+        return limbsToU256(self.limbs);
+    }
+
+    /// Multiply by a small u64 constant (e.g., 997, 1000, 10000).
+    /// 4 u64*u64 multiplies with carry chain. This is the critical hot path
+    /// for DEX math where u256 values are scaled by small fee constants.
+    pub fn mulSmall(self: U256Limb, b: u64) U256Limb {
+        var result: [4]u64 = .{ 0, 0, 0, 0 };
+        var carry: u64 = 0;
+        inline for (0..4) |i| {
+            const prod: u128 = @as(u128, self.limbs[i]) * b + carry;
+            result[i] = @truncate(prod);
+            carry = @intCast(prod >> 64);
+        }
+        return .{ .limbs = result };
+    }
+
+    /// Schoolbook 4x4 limb multiplication, truncated to 256 bits.
+    /// 10 u64*u64 multiplies (only lower 4 result limbs needed).
+    pub fn mul(self: U256Limb, b: U256Limb) U256Limb {
+        const a = self.limbs;
+        const bl = b.limbs;
+        var result: [4]u64 = .{ 0, 0, 0, 0 };
+
+        // For each source limb pair where i+j < 4
+        inline for (0..4) |i| {
+            var carry: u64 = 0;
+            inline for (0..4) |j| {
+                if (i + j < 4) {
+                    const prod: u128 = @as(u128, a[i]) * bl[j] + result[i + j] + carry;
+                    result[i + j] = @truncate(prod);
+                    carry = @intCast(prod >> 64);
+                }
+            }
+        }
+
+        return .{ .limbs = result };
+    }
+
+    /// Addition with wrapping (mod 2^256).
+    pub fn addWrap(self: U256Limb, b: U256Limb) U256Limb {
+        var result: [4]u64 = undefined;
+        var carry: u1 = 0;
+        inline for (0..4) |i| {
+            const s1 = @addWithOverflow(self.limbs[i], b.limbs[i]);
+            const s2 = @addWithOverflow(s1[0], @as(u64, carry));
+            result[i] = s2[0];
+            carry = s1[1] | s2[1];
+        }
+        return .{ .limbs = result };
+    }
+
+    /// Division using Knuth Algorithm D on limbs directly.
+    pub fn div(self: U256Limb, b: U256Limb) U256Limb {
+        // Check for zero divisor
+        if (b.limbs[0] == 0 and b.limbs[1] == 0 and b.limbs[2] == 0 and b.limbs[3] == 0) {
+            @panic("division by zero");
+        }
+        // Quick comparisons
+        const cmp = limbCmp(self.limbs, b.limbs);
+        if (cmp == .lt) return .{ .limbs = .{ 0, 0, 0, 0 } };
+        if (cmp == .eq) return .{ .limbs = .{ 1, 0, 0, 0 } };
+        return .{ .limbs = divLimbsRaw(self.limbs, b.limbs) };
+    }
+
+    fn limbCmp(a: [4]u64, b: [4]u64) std.math.Order {
+        var i: usize = 4;
+        while (i > 0) {
+            i -= 1;
+            if (a[i] < b[i]) return .lt;
+            if (a[i] > b[i]) return .gt;
+        }
+        return .eq;
+    }
+};
+
+/// Compute UniswapV2 getAmountOut entirely in limb space.
+/// amount_out = (amount_in * 997 * reserve_out) / (reserve_in * 1000 + amount_in * 997)
+pub fn uniswapV2AmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) u256 {
+    const a = U256Limb.fromU256(amount_in);
+    const ri = U256Limb.fromU256(reserve_in);
+    const ro = U256Limb.fromU256(reserve_out);
+    const a_fee = a.mulSmall(997);
+    const num = a_fee.mul(ro);
+    const den = ri.mulSmall(1000).addWrap(a_fee);
+    return num.div(den).toU256();
+}
 
 // Tests
 test "toBigEndianBytes and fromBigEndianBytes roundtrip" {
@@ -528,4 +638,98 @@ test "fastMul small values" {
     try std.testing.expectEqual(@as(u256, 20000), fastMul(100, 200));
     try std.testing.expectEqual(@as(u256, 0), fastMul(0, MAX));
     try std.testing.expectEqual(MAX, fastMul(1, MAX));
+}
+
+// U256Limb tests
+
+test "U256Limb fromU256/toU256 roundtrip" {
+    const values = [_]u256{ 0, 1, 0xFF, 1_000_000_000_000_000_000, MAX };
+    for (values) |v| {
+        try std.testing.expectEqual(v, U256Limb.fromU256(v).toU256());
+    }
+}
+
+test "U256Limb mulSmall matches native" {
+    const a: u256 = 1_000_000_000_000_000_000;
+    const la = U256Limb.fromU256(a);
+    try std.testing.expectEqual(a *% 997, la.mulSmall(997).toU256());
+    try std.testing.expectEqual(a *% 1000, la.mulSmall(1000).toU256());
+    try std.testing.expectEqual(a *% 10000, la.mulSmall(10000).toU256());
+
+    // Large value
+    const b: u256 = (@as(u256, 1) << 200) + 999;
+    const lb = U256Limb.fromU256(b);
+    try std.testing.expectEqual(b *% 997, lb.mulSmall(997).toU256());
+}
+
+test "U256Limb mul matches native" {
+    const a: u256 = 1_000_000_000_000_000_000;
+    const b: u256 = 200_000_000_000;
+    const la = U256Limb.fromU256(a);
+    const lb = U256Limb.fromU256(b);
+    try std.testing.expectEqual(a *% b, la.mul(lb).toU256());
+
+    // Larger values
+    const c: u256 = (@as(u256, 1) << 130) + 42;
+    const d: u256 = (@as(u256, 1) << 120) + 7;
+    const lc = U256Limb.fromU256(c);
+    const ld = U256Limb.fromU256(d);
+    try std.testing.expectEqual(c *% d, lc.mul(ld).toU256());
+}
+
+test "U256Limb addWrap matches native" {
+    const a: u256 = 100_000_000_000_000_000_000;
+    const b: u256 = 997_000_000_000_000_000_000;
+    const la = U256Limb.fromU256(a);
+    const lb = U256Limb.fromU256(b);
+    try std.testing.expectEqual(a +% b, la.addWrap(lb).toU256());
+
+    // Wrapping case
+    const lmax = U256Limb.fromU256(MAX);
+    const lone = U256Limb.fromU256(1);
+    try std.testing.expectEqual(MAX +% 1, lmax.addWrap(lone).toU256());
+}
+
+test "U256Limb div matches fastDiv" {
+    const a: u256 = 997_000_000_000_000_000_000;
+    const b: u256 = 1_000_000_000_000_000_000;
+    const la = U256Limb.fromU256(a);
+    const lb = U256Limb.fromU256(b);
+    try std.testing.expectEqual(fastDiv(a, b), la.div(lb).toU256());
+
+    // Large values requiring Knuth Algorithm D
+    const c: u256 = (@as(u256, 1) << 200) + 12345;
+    const d: u256 = (@as(u256, 1) << 130) + 99;
+    const lc = U256Limb.fromU256(c);
+    const ld = U256Limb.fromU256(d);
+    try std.testing.expectEqual(fastDiv(c, d), lc.div(ld).toU256());
+}
+
+test "uniswapV2AmountOut correctness" {
+    const amount_in: u256 = 1_000_000_000_000_000_000; // 1 ETH
+    const reserve_in: u256 = 100_000_000_000_000_000_000; // 100 ETH
+    const reserve_out: u256 = 200_000_000_000; // 200k USDC (6 decimals)
+
+    // Compute expected result using native u256
+    const amount_in_with_fee = fastMul(amount_in, 997);
+    const numerator = fastMul(amount_in_with_fee, reserve_out);
+    const denominator = fastMul(reserve_in, 1000) +% amount_in_with_fee;
+    const expected = fastDiv(numerator, denominator);
+
+    const result = uniswapV2AmountOut(amount_in, reserve_in, reserve_out);
+    try std.testing.expectEqual(expected, result);
+}
+
+test "uniswapV2AmountOut edge cases" {
+    // Small swap
+    const result1 = uniswapV2AmountOut(1000, 1_000_000, 1_000_000);
+    try std.testing.expect(result1 > 0);
+
+    // Large reserves
+    const result2 = uniswapV2AmountOut(
+        1_000_000_000_000_000_000,
+        @as(u256, 1_000_000) * 1_000_000_000_000_000_000,
+        @as(u256, 2_000_000_000) * 1_000_000,
+    );
+    try std.testing.expect(result2 > 0);
 }
