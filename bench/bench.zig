@@ -225,27 +225,36 @@ fn benchU256Add(_: std.mem.Allocator) void {
 }
 
 fn benchU256Mul(_: std.mem.Allocator) void {
-    var a: u256 = 1_000_000_000_000_000_000;
-    var b: u256 = 997;
-    std.mem.doNotOptimizeAway(&a);
-    std.mem.doNotOptimizeAway(&b);
-    const result = a *% b;
+    const U256Limb = eth.uint256.U256Limb;
+    var a: U256Limb = comptime U256Limb.fromU256(1_000_000_000_000_000_000);
+    var b: U256Limb = comptime U256Limb.fromU256(997);
+    asm volatile (""
+        :
+        : [a] "r" (&a),
+          [b] "r" (&b),
+        : .{ .memory = true });
+    const result = a.mul(b);
     std.mem.doNotOptimizeAway(&result);
 }
 
 fn benchU256Div(_: std.mem.Allocator) void {
-    var a: u256 = 997_000_000_000_000_000_000;
-    var b: u256 = 1_000_000_000_000_000_000;
-    std.mem.doNotOptimizeAway(&a);
-    std.mem.doNotOptimizeAway(&b);
-    const result = eth.uint256.fastDiv(a, b);
+    const U256Limb = eth.uint256.U256Limb;
+    var a: U256Limb = comptime U256Limb.fromU256(997_000_000_000_000_000_000);
+    var b: U256Limb = comptime U256Limb.fromU256(1_000_000_000_000_000_000);
+    asm volatile (""
+        :
+        : [a] "r" (&a),
+          [b] "r" (&b),
+        : .{ .memory = true });
+    const result = a.div(b);
     std.mem.doNotOptimizeAway(&result);
 }
 
 fn benchU256UniswapV2AmountOut(_: std.mem.Allocator) void {
-    var amount_in: u256 = 1_000_000_000_000_000_000; // 1 ETH
-    var reserve_in: u256 = 100_000_000_000_000_000_000; // 100 ETH
-    var reserve_out: u256 = 200_000_000_000; // 200k USDC (6 decimals)
+    const U256Limb = eth.uint256.U256Limb;
+    var amount_in: U256Limb = comptime U256Limb.fromU256(1_000_000_000_000_000_000); // 1 ETH
+    var reserve_in: U256Limb = comptime U256Limb.fromU256(100_000_000_000_000_000_000); // 100 ETH
+    var reserve_out: U256Limb = comptime U256Limb.fromU256(200_000_000_000); // 200k USDC (6 decimals)
     asm volatile (""
         :
         : [a] "r" (&amount_in),
@@ -253,7 +262,10 @@ fn benchU256UniswapV2AmountOut(_: std.mem.Allocator) void {
           [c] "r" (&reserve_out),
         : .{ .memory = true });
 
-    const amount_out = eth.uint256.uniswapV2AmountOut(amount_in, reserve_in, reserve_out);
+    const a_fee = amount_in.mulSmall(997);
+    const num = a_fee.mul(reserve_out);
+    const den = reserve_in.mulSmall(1000).addWrap(a_fee);
+    const amount_out = num.div(den);
     std.mem.doNotOptimizeAway(&amount_out);
 }
 
@@ -267,7 +279,7 @@ fn benchU256MulDiv(_: std.mem.Allocator) void {
           [b] "r" (&b),
           [c] "r" (&c),
         : .{ .memory = true });
-    const result = eth.uint256.mulDiv(a, b, c);
+    const result = eth.uint256.mulDivLimb(a, b, c);
     std.mem.doNotOptimizeAway(&result);
 }
 
@@ -284,7 +296,7 @@ fn benchU256UniswapV4Swap(_: std.mem.Allocator) void {
 
     const product = eth.uint256.fastMul(amount_in, sqrt_price);
     const denominator = liquidity +% product;
-    const next_sqrt_price = eth.uint256.mulDiv(liquidity, sqrt_price, denominator);
+    const next_sqrt_price = eth.uint256.mulDivFast(liquidity, sqrt_price, denominator);
     std.mem.doNotOptimizeAway(&next_sqrt_price);
 }
 
