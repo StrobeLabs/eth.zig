@@ -5,7 +5,7 @@ const Chain = chain.Chain;
 const NativeCurrency = chain.NativeCurrency;
 const Contract = chain.Contract;
 const BlockExplorer = chain.BlockExplorer;
-const comptime_address = chain.comptime_address;
+const addressFromHex = chain.addressFromHex;
 
 const pol_currency = NativeCurrency{
     .name = "POL",
@@ -22,7 +22,7 @@ pub const mainnet: Chain = .{
         .{ .name = "PolygonScan", .url = "https://polygonscan.com" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 25770160,
     },
 };
@@ -36,7 +36,7 @@ pub const amoy: Chain = .{
         .{ .name = "PolygonScan", .url = "https://amoy.polygonscan.com" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 3127388,
     },
     .testnet = true,
@@ -57,7 +57,7 @@ test "polygon mainnet native currency is POL" {
 }
 
 test "polygon mainnet multicall3 address" {
-    const expected = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11");
+    const expected = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11");
     try std.testing.expect(mainnet.multicall3 != null);
     try std.testing.expect(std.mem.eql(u8, &mainnet.multicall3.?.address, &expected));
 }

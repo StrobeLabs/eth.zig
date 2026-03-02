@@ -5,7 +5,7 @@ const Chain = chain.Chain;
 const NativeCurrency = chain.NativeCurrency;
 const Contract = chain.Contract;
 const BlockExplorer = chain.BlockExplorer;
-const comptime_address = chain.comptime_address;
+const addressFromHex = chain.addressFromHex;
 
 const eth_currency = NativeCurrency{
     .name = "Ether",
@@ -14,12 +14,12 @@ const eth_currency = NativeCurrency{
 };
 
 const multicall3_contract = Contract{
-    .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+    .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
     .block_created = 14353601,
 };
 
 const ens_registry_contract = Contract{
-    .address = comptime_address("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"),
+    .address = addressFromHex("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"),
     .block_created = 9380380,
 };
 
@@ -45,7 +45,7 @@ pub const sepolia: Chain = .{
         .{ .name = "Etherscan", .url = "https://sepolia.etherscan.io" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 751532,
     },
     .testnet = true,
@@ -60,7 +60,7 @@ pub const holesky: Chain = .{
         .{ .name = "Etherscan", .url = "https://holesky.etherscan.io" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 77,
     },
     .testnet = true,
@@ -81,13 +81,13 @@ test "mainnet native currency" {
 }
 
 test "mainnet multicall3 address" {
-    const expected = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11");
+    const expected = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11");
     try std.testing.expect(mainnet.multicall3 != null);
     try std.testing.expect(std.mem.eql(u8, &mainnet.multicall3.?.address, &expected));
 }
 
 test "mainnet ens registry" {
-    const expected = comptime_address("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
+    const expected = addressFromHex("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
     try std.testing.expect(mainnet.ens_registry != null);
     try std.testing.expect(std.mem.eql(u8, &mainnet.ens_registry.?.address, &expected));
 }

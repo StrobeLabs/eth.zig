@@ -37,9 +37,10 @@ pub const Chain = struct {
     testnet: bool = false,
 };
 
-/// Parse a hex address string into a 20-byte address at comptime.
-pub fn comptime_address(comptime hex_str: []const u8) Address {
-    return comptime hex_mod.hexToBytesFixed(20, hex_str) catch unreachable;
+/// Parse a hex address string into a 20-byte address.
+/// Works at both comptime and runtime.
+pub fn addressFromHex(hex_str: []const u8) Address {
+    return hex_mod.hexToBytesFixed(20, hex_str) catch unreachable;
 }
 
 /// Look up a chain by ID.
@@ -111,7 +112,7 @@ test "getChain testnets are marked correctly" {
 }
 
 test "getChain multicall3 addresses match across chains" {
-    const expected_multicall3 = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11");
+    const expected_multicall3 = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11");
 
     const chain_ids = [_]u64{ 1, 11155111, 17000, 42161, 42170, 421614, 10, 11155420, 8453, 84532, 137, 80002 };
 
@@ -124,8 +125,8 @@ test "getChain multicall3 addresses match across chains" {
     }
 }
 
-test "comptime_address produces correct bytes" {
-    const addr = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11");
+test "addressFromHex produces correct bytes" {
+    const addr = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11");
     try std.testing.expectEqual(@as(u8, 0xca), addr[0]);
     try std.testing.expectEqual(@as(u8, 0x11), addr[1]);
     try std.testing.expectEqual(@as(u8, 0x11), addr[19]);
@@ -136,7 +137,7 @@ test "ethereum mainnet has ens_registry" {
     try std.testing.expect(eth_mainnet != null);
     try std.testing.expect(eth_mainnet.?.ens_registry != null);
 
-    const expected_ens = comptime_address("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
+    const expected_ens = addressFromHex("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
     try std.testing.expect(std.mem.eql(u8, &eth_mainnet.?.ens_registry.?.address, &expected_ens));
 }
 
