@@ -92,16 +92,19 @@ const name = try token.name();
 defer allocator.free(name);
 ```
 
-### Comptime function selectors and event topics
+### Function selectors and event topics
 
 ```zig
 const eth = @import("eth");
 
 // Computed at compile time -- zero runtime cost
-const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+const transfer_sel = comptime eth.keccak.selector("transfer(address,uint256)");
 // transfer_sel == [4]u8{ 0xa9, 0x05, 0x9c, 0xbb }
 
-const transfer_topic = eth.abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
+// Same function works at runtime too
+const runtime_sel = eth.keccak.selector(runtime_signature);
+
+const transfer_topic = comptime eth.keccak.hash("Transfer(address,address,uint256)");
 // transfer_topic == keccak256("Transfer(address,address,uint256)")
 ```
 
@@ -174,7 +177,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | Layer | Modules | Description |
 |-------|---------|-------------|
 | **Primitives** | `primitives`, `uint256`, `hex` | Address, Hash, Bytes32, u256, hex encoding |
-| **Encoding** | `rlp`, `abi_encode`, `abi_decode`, `abi_types`, `abi_comptime` | RLP and ABI encoding/decoding, comptime selectors |
+| **Encoding** | `rlp`, `abi_encode`, `abi_decode`, `abi_types` | RLP and ABI encoding/decoding |
 | **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155` | ECDSA signing (RFC 6979), Keccak-256, EIP-155 |
 | **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions |
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |

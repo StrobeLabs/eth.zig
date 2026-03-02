@@ -12,7 +12,6 @@ test {
     _ = eth.abi_types;
     _ = eth.abi_encode;
     _ = eth.abi_decode;
-    _ = eth.abi_comptime;
     // Layer 3: Crypto
     _ = eth.signature;
     // Layer 4: Types

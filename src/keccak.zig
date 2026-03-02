@@ -18,9 +18,6 @@ pub fn hash(data: []const u8) Hash {
     return result;
 }
 
-/// Deprecated: use hash() directly, it works at both comptime and runtime.
-pub const comptimeHash = hash;
-
 /// Compute the Keccak-256 hash of multiple concatenated slices.
 pub fn hashConcat(slices: []const []const u8) Hash {
     var hasher = Keccak256.init(.{});
@@ -37,9 +34,6 @@ pub fn selector(signature: []const u8) [4]u8 {
     const h = hash(signature);
     return h[0..4].*;
 }
-
-/// Deprecated: use selector() directly, it works at both comptime and runtime.
-pub const comptimeSelector = selector;
 
 // Tests
 test "keccak256 empty" {
@@ -59,7 +53,7 @@ test "keccak256 hello world" {
 
 test "keccak256 transfer selector" {
     // transfer(address,uint256) selector = 0xa9059cbb
-    const sel = comptimeSelector("transfer(address,uint256)");
+    const sel = selector("transfer(address,uint256)");
     try std.testing.expectEqualSlices(u8, &.{ 0xa9, 0x05, 0x9c, 0xbb }, &sel);
 }
 
@@ -70,7 +64,7 @@ test "keccak256 hashConcat" {
 }
 
 test "comptime hash equals runtime hash" {
-    const comptime_result = comptimeHash("test");
+    const comptime_result = comptime hash("test");
     const runtime_result = hash("test");
     try std.testing.expectEqualSlices(u8, &comptime_result, &runtime_result);
 }

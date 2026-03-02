@@ -50,7 +50,7 @@ For state-changing operations, use the contract module with a Wallet:
 ```zig
 const eth = @import("eth");
 
-const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+const transfer_sel = comptime eth.keccak.selector("transfer(address,uint256)");
 
 const tx_hash = try eth.contract.contractWrite(
     allocator,
