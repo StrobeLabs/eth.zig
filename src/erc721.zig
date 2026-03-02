@@ -3,7 +3,7 @@ const contract_mod = @import("contract.zig");
 const abi_encode = @import("abi_encode.zig");
 const abi_decode = @import("abi_decode.zig");
 const abi_types = @import("abi_types.zig");
-const abi_comptime = @import("abi_comptime.zig");
+const keccak = @import("keccak.zig");
 const provider_mod = @import("provider.zig");
 const wallet_mod = @import("wallet.zig");
 const http_transport_mod = @import("http_transport.zig");
@@ -14,24 +14,24 @@ const Contract = contract_mod.Contract;
 
 /// Comptime-computed ERC-721 function selectors.
 pub const selectors = struct {
-    pub const name = abi_comptime.comptimeSelector("name()");
-    pub const symbol = abi_comptime.comptimeSelector("symbol()");
-    pub const tokenURI = abi_comptime.comptimeSelector("tokenURI(uint256)");
-    pub const balanceOf = abi_comptime.comptimeSelector("balanceOf(address)");
-    pub const ownerOf = abi_comptime.comptimeSelector("ownerOf(uint256)");
-    pub const getApproved = abi_comptime.comptimeSelector("getApproved(uint256)");
-    pub const isApprovedForAll = abi_comptime.comptimeSelector("isApprovedForAll(address,address)");
-    pub const transferFrom = abi_comptime.comptimeSelector("transferFrom(address,address,uint256)");
-    pub const safeTransferFrom = abi_comptime.comptimeSelector("safeTransferFrom(address,address,uint256)");
-    pub const approve = abi_comptime.comptimeSelector("approve(address,uint256)");
-    pub const setApprovalForAll = abi_comptime.comptimeSelector("setApprovalForAll(address,bool)");
+    pub const name = keccak.selector("name()");
+    pub const symbol = keccak.selector("symbol()");
+    pub const tokenURI = keccak.selector("tokenURI(uint256)");
+    pub const balanceOf = keccak.selector("balanceOf(address)");
+    pub const ownerOf = keccak.selector("ownerOf(uint256)");
+    pub const getApproved = keccak.selector("getApproved(uint256)");
+    pub const isApprovedForAll = keccak.selector("isApprovedForAll(address,address)");
+    pub const transferFrom = keccak.selector("transferFrom(address,address,uint256)");
+    pub const safeTransferFrom = keccak.selector("safeTransferFrom(address,address,uint256)");
+    pub const approve = keccak.selector("approve(address,uint256)");
+    pub const setApprovalForAll = keccak.selector("setApprovalForAll(address,bool)");
 };
 
 /// Comptime-computed ERC-721 event topics.
 pub const topics = struct {
-    pub const Transfer = abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
-    pub const Approval = abi_comptime.comptimeTopic("Approval(address,address,uint256)");
-    pub const ApprovalForAll = abi_comptime.comptimeTopic("ApprovalForAll(address,address,bool)");
+    pub const Transfer = keccak.hash("Transfer(address,address,uint256)");
+    pub const Approval = keccak.hash("Approval(address,address,uint256)");
+    pub const ApprovalForAll = keccak.hash("ApprovalForAll(address,address,bool)");
 };
 
 /// High-level ERC-721 NFT interface.
