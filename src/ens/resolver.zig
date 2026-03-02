@@ -19,13 +19,13 @@ pub const ENS_REGISTRY: Address = .{
 };
 
 /// Function selector for resolver(bytes32): 0x0178b8bf
-const RESOLVER_SELECTOR: [4]u8 = keccak.comptimeSelector("resolver(bytes32)");
+const RESOLVER_SELECTOR: [4]u8 = keccak.selector("resolver(bytes32)");
 
 /// Function selector for addr(bytes32): 0x3b3b57de
-const ADDR_SELECTOR: [4]u8 = keccak.comptimeSelector("addr(bytes32)");
+const ADDR_SELECTOR: [4]u8 = keccak.selector("addr(bytes32)");
 
 /// Function selector for text(bytes32,string): 0x59d1d43c
-const TEXT_SELECTOR: [4]u8 = keccak.comptimeSelector("text(bytes32,string)");
+const TEXT_SELECTOR: [4]u8 = keccak.selector("text(bytes32,string)");
 
 /// Errors that can occur during ENS resolution.
 pub const ResolveError = error{

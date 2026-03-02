@@ -5,7 +5,7 @@ const Chain = chain.Chain;
 const NativeCurrency = chain.NativeCurrency;
 const Contract = chain.Contract;
 const BlockExplorer = chain.BlockExplorer;
-const comptime_address = chain.comptime_address;
+const addressFromHex = chain.addressFromHex;
 
 const eth_currency = NativeCurrency{
     .name = "Ether",
@@ -22,7 +22,7 @@ pub const mainnet: Chain = .{
         .{ .name = "Etherscan", .url = "https://optimistic.etherscan.io" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 4286263,
     },
 };
@@ -36,7 +36,7 @@ pub const sepolia: Chain = .{
         .{ .name = "Etherscan", .url = "https://sepolia-optimism.etherscan.io" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 1620204,
     },
     .testnet = true,
@@ -57,7 +57,7 @@ test "optimism mainnet native currency is ETH" {
 }
 
 test "optimism mainnet multicall3 address" {
-    const expected = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11");
+    const expected = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11");
     try std.testing.expect(mainnet.multicall3 != null);
     try std.testing.expect(std.mem.eql(u8, &mainnet.multicall3.?.address, &expected));
 }

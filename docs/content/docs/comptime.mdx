@@ -1,26 +1,31 @@
 ---
 title: Comptime Selectors
-description: Compile-time function selectors and event topics -- a key differentiator of eth.zig.
+description: Function selectors and event topics that work at both compile time and runtime.
 ---
 
-One of eth.zig's most powerful features is **comptime-first design**. Function selectors and event topics are computed at compile time, eliminating runtime hashing entirely.
+eth.zig provides unified `keccak.selector()` and `keccak.hash()` functions that work at both compile time and runtime. The **caller** decides when to evaluate -- the library never restricts you.
 
 ## Function Selectors
 
-A Solidity function selector is the first 4 bytes of the Keccak-256 hash of the function signature. In eth.zig, this is done at compile time:
+A Solidity function selector is the first 4 bytes of the Keccak-256 hash of the function signature. Use `comptime` for zero runtime cost:
 
 ```zig
 const eth = @import("eth");
 
-// Computed at compile time -- zero runtime cost
-const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+// Evaluated at compile time -- zero runtime cost
+const transfer_sel = comptime eth.keccak.selector("transfer(address,uint256)");
 // transfer_sel == [4]u8{ 0xa9, 0x05, 0x9c, 0xbb }
 
-const approve_sel = eth.abi_comptime.comptimeSelector("approve(address,uint256)");
+const approve_sel = comptime eth.keccak.selector("approve(address,uint256)");
 // approve_sel == [4]u8{ 0x09, 0x5e, 0xa7, 0xb3 }
 ```
 
-The Zig compiler evaluates `comptimeSelector` during compilation. The resulting binary contains only the precomputed 4-byte selectors -- no hashing at runtime.
+The same function also works at runtime with dynamic strings:
+
+```zig
+// Runtime -- useful when the signature is only known at runtime
+const runtime_sel = eth.keccak.selector(some_signature);
+```
 
 ## Event Topics
 
@@ -29,21 +34,18 @@ Event topics (used for log filtering) work the same way:
 ```zig
 const eth = @import("eth");
 
-const transfer_topic = eth.abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
+const transfer_topic = comptime eth.keccak.hash("Transfer(address,address,uint256)");
 // transfer_topic == keccak256("Transfer(address,address,uint256)")
 
-const approval_topic = eth.abi_comptime.comptimeTopic("Approval(address,address,uint256)");
+const approval_topic = comptime eth.keccak.hash("Approval(address,address,uint256)");
 ```
 
 ## Why This Matters
 
-In other Ethereum libraries, function selectors are typically computed at runtime:
-
 | Approach | When It Runs | Cost |
 |----------|-------------|------|
-| eth.zig `comptimeSelector` | Compile time | 0 ns at runtime |
-| Runtime `keccak256(signature)` | Every call | ~128 ns per hash |
-| Cached/lazy hash | First call | ~128 ns once, then lookup |
+| `comptime eth.keccak.selector(...)` | Compile time | 0 ns at runtime |
+| `eth.keccak.selector(runtime_str)` | Runtime | ~128 ns per hash |
 
 For hot paths (MEV bots, indexers, high-frequency DeFi), eliminating per-call hashing overhead adds up.
 
@@ -73,17 +75,17 @@ Define selectors for any contract function:
 const eth = @import("eth");
 
 // UniswapV2 Router
-const swap_sel = eth.abi_comptime.comptimeSelector(
+const swap_sel = comptime eth.keccak.selector(
     "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"
 );
 
 // Aave V3 Pool
-const supply_sel = eth.abi_comptime.comptimeSelector(
+const supply_sel = comptime eth.keccak.selector(
     "supply(address,uint256,address,uint16)"
 );
 
 // Any custom function
-const my_sel = eth.abi_comptime.comptimeSelector(
+const my_sel = comptime eth.keccak.selector(
     "myFunction(uint256,bytes32,bool)"
 );
 ```

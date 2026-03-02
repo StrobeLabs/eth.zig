@@ -5,7 +5,7 @@ const Chain = chain.Chain;
 const NativeCurrency = chain.NativeCurrency;
 const Contract = chain.Contract;
 const BlockExplorer = chain.BlockExplorer;
-const comptime_address = chain.comptime_address;
+const addressFromHex = chain.addressFromHex;
 
 const eth_currency = NativeCurrency{
     .name = "Ether",
@@ -14,7 +14,7 @@ const eth_currency = NativeCurrency{
 };
 
 const multicall3 = Contract{
-    .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+    .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
     .block_created = 7654707,
 };
 
@@ -38,7 +38,7 @@ pub const nova: Chain = .{
         .{ .name = "Arbiscan Nova", .url = "https://nova.arbiscan.io" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 1746963,
     },
 };
@@ -52,7 +52,7 @@ pub const sepolia: Chain = .{
         .{ .name = "Arbiscan Sepolia", .url = "https://sepolia.arbiscan.io" },
     },
     .multicall3 = .{
-        .address = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11"),
+        .address = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11"),
         .block_created = 81930,
     },
     .testnet = true,
@@ -73,7 +73,7 @@ test "arbitrum one native currency is ETH" {
 }
 
 test "arbitrum one multicall3 address" {
-    const expected = comptime_address("0xcA11bde05977b3631167028862bE2a173976CA11");
+    const expected = addressFromHex("0xcA11bde05977b3631167028862bE2a173976CA11");
     try std.testing.expect(one.multicall3 != null);
     try std.testing.expect(std.mem.eql(u8, &one.multicall3.?.address, &expected));
 }

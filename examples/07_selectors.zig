@@ -1,8 +1,8 @@
-// Example 07: Unified comptime/runtime selectors and event topics
+// Example 07: Function selectors and event topics
 //
 // Pure compute -- no RPC connection needed.
-// Showcases eth.zig's unified API: keccak.selector() and keccak.hash()
-// work at both comptime and runtime. The caller decides.
+// keccak.selector() and keccak.hash() work at both comptime and runtime.
+// The caller decides by using the `comptime` keyword or not.
 
 const std = @import("std");
 const eth = @import("eth");

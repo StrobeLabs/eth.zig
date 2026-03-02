@@ -26,19 +26,21 @@ RLP and ABI encoding/decoding with comptime support.
 | `abi_encode` | `encode`, `encodePacked` | ABI encoding for function calls and data |
 | `abi_decode` | `decode`, `decodeOutput` | ABI decoding of return values and calldata |
 | `abi_types` | `AbiType`, `Function`, `Event` | ABI type definitions |
-| `abi_comptime` | `comptimeSelector`, `comptimeTopic` | Compile-time function selectors and event topics |
 | `abi_json` | `parseAbi` | Parse Solidity JSON ABI files |
 
-### Comptime Selectors
+### Function Selectors
 
 ```zig
 const eth = @import("eth");
 
 // Computed at compile time -- zero runtime cost
-const transfer_sel = eth.abi_comptime.comptimeSelector("transfer(address,uint256)");
+const transfer_sel = comptime eth.keccak.selector("transfer(address,uint256)");
 // transfer_sel == [4]u8{ 0xa9, 0x05, 0x9c, 0xbb }
 
-const transfer_topic = eth.abi_comptime.comptimeTopic("Transfer(address,address,uint256)");
+// Same function works at runtime with dynamic strings
+const runtime_sel = eth.keccak.selector(some_signature);
+
+const transfer_topic = comptime eth.keccak.hash("Transfer(address,address,uint256)");
 // transfer_topic == keccak256("Transfer(address,address,uint256)")
 ```
 

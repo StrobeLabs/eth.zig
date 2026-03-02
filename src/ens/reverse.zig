@@ -13,7 +13,7 @@ const AbiType = abi_types.AbiType;
 const Address = primitives.Address;
 
 /// Function selector for name(bytes32): 0x691f3431
-const NAME_SELECTOR: [4]u8 = keccak.comptimeSelector("name(bytes32)");
+const NAME_SELECTOR: [4]u8 = keccak.selector("name(bytes32)");
 
 /// The suffix used for reverse resolution.
 const REVERSE_SUFFIX = ".addr.reverse";
@@ -123,7 +123,7 @@ pub fn lookupAddress(allocator: std.mem.Allocator, provider: anytype, address: A
 
 /// Build the ABI-encoded calldata for resolver(bytes32 node).
 fn buildResolverCalldata(allocator: std.mem.Allocator, node: [32]u8) ![]u8 {
-    const resolver_selector: [4]u8 = keccak.comptimeSelector("resolver(bytes32)");
+    const resolver_selector: [4]u8 = keccak.selector("resolver(bytes32)");
     var fb = AbiValue.FixedBytes{ .len = 32 };
     @memcpy(&fb.data, &node);
 
@@ -223,7 +223,7 @@ test "buildResolverCalldata for reverse name" {
     try std.testing.expectEqual(@as(usize, 36), calldata.len);
 
     // Verify the resolver selector
-    const resolver_selector: [4]u8 = keccak.comptimeSelector("resolver(bytes32)");
+    const resolver_selector: [4]u8 = keccak.selector("resolver(bytes32)");
     try std.testing.expectEqualSlices(u8, &resolver_selector, calldata[0..4]);
 }
 

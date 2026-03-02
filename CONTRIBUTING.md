@@ -35,7 +35,7 @@ Layer 1:  Primitives     (zero deps, no allocator needed)
           primitives.zig, uint256.zig, hex.zig
 
 Layer 2:  Encoding       (-> primitives)
-          rlp.zig, abi_encode.zig, abi_decode.zig, abi_types.zig, abi_comptime.zig
+          rlp.zig, abi_encode.zig, abi_decode.zig, abi_types.zig
 
 Layer 3:  Crypto         (-> primitives)
           keccak.zig, secp256k1.zig, signature.zig

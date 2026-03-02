@@ -323,16 +323,6 @@ pub fn topicFromSignature(signature: []const u8) [32]u8 {
     return keccak.hash(signature);
 }
 
-/// Compute the 4-byte function selector at compile time.
-pub fn comptimeSelector(comptime signature: []const u8) [4]u8 {
-    return keccak.comptimeSelector(signature);
-}
-
-/// Compute the 32-byte event topic at compile time.
-pub fn comptimeTopic(comptime signature: []const u8) [32]u8 {
-    return keccak.comptimeHash(signature);
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -405,18 +395,6 @@ test "selectorFromSignature - approve" {
 test "topicFromSignature - Transfer event" {
     const topic = topicFromSignature("Transfer(address,address,uint256)");
     // keccak256("Transfer(address,address,uint256)") is the well-known ERC20 Transfer topic
-    const hex_mod = @import("hex.zig");
-    const expected = try hex_mod.hexToBytesFixed(32, "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
-    try std.testing.expectEqualSlices(u8, &expected, &topic);
-}
-
-test "comptimeSelector - transfer" {
-    const sel = comptime comptimeSelector("transfer(address,uint256)");
-    try std.testing.expectEqualSlices(u8, &.{ 0xa9, 0x05, 0x9c, 0xbb }, &sel);
-}
-
-test "comptimeTopic - Transfer event" {
-    const topic = comptime comptimeTopic("Transfer(address,address,uint256)");
     const hex_mod = @import("hex.zig");
     const expected = try hex_mod.hexToBytesFixed(32, "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
     try std.testing.expectEqualSlices(u8, &expected, &topic);

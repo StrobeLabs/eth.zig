@@ -12,7 +12,6 @@ pub const keccak = @import("keccak.zig");
 pub const abi_types = @import("abi_types.zig");
 pub const abi_encode = @import("abi_encode.zig");
 pub const abi_decode = @import("abi_decode.zig");
-pub const abi_comptime = @import("abi_comptime.zig");
 
 // -- Layer 3: Crypto --
 pub const signature = @import("signature.zig");
@@ -80,7 +79,6 @@ test {
     _ = @import("abi_types.zig");
     _ = @import("abi_encode.zig");
     _ = @import("abi_decode.zig");
-    _ = @import("abi_comptime.zig");
     // Layer 3
     _ = @import("signature.zig");
     _ = @import("secp256k1.zig");
