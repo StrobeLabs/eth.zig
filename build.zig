@@ -131,14 +131,15 @@ fn addXkcp(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedT
         const avx512f = @intFromEnum(std.Target.x86.Feature.avx512f);
         const avx2 = @intFromEnum(std.Target.x86.Feature.avx2);
 
-        // AVX512 and AVX2 need plain64 headers for the state type
-        module.addIncludePath(b.path("src/crypto/xkcp/plain64"));
-
         if (features.isEnabled(avx512f)) {
+            // AVX512 SnP header must come before plain64 to shadow KeccakP-1600-SnP.h
             module.addIncludePath(b.path("src/crypto/xkcp/avx512"));
+            module.addIncludePath(b.path("src/crypto/xkcp/plain64"));
             module.addAssemblyFile(b.path("src/crypto/xkcp/avx512/KeccakP-1600-AVX512.s"));
         } else if (features.isEnabled(avx2)) {
+            // AVX2 SnP header must come before plain64 to shadow KeccakP-1600-SnP.h
             module.addIncludePath(b.path("src/crypto/xkcp/avx2"));
+            module.addIncludePath(b.path("src/crypto/xkcp/plain64"));
             module.addAssemblyFile(b.path("src/crypto/xkcp/avx2/KeccakP-1600-AVX2.s"));
         } else {
             module.addCSourceFile(.{
