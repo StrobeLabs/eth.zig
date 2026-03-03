@@ -115,7 +115,6 @@ fn benchDivFull() void {
 }
 
 // UniswapV2 getAmountOut -- step-by-step on [4]u64 limbs (apples-to-apples with Rust's [u64; 4])
-// Uses fp256 hand-optimized aarch64 assembly for mul/add, u128 fast path for division.
 fn benchUniswapV2Naive() void {
     var amount_in = eth.uint256.u256ToLimbs(ONE_ETH);
     var reserve_in = eth.uint256.u256ToLimbs(RESERVE_IN);
