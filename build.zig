@@ -70,6 +70,23 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run benchmarks (ReleaseFast)");
     bench_step.dependOn(&run_bench.step);
 
+    // u256-only benchmark (custom harness, no zbench dependency)
+    const u256_bench_exe = b.addExecutable(.{
+        .name = "u256-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/u256_bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "eth", .module = bench_module },
+            },
+        }),
+    });
+
+    const run_u256_bench = b.addRunArtifact(u256_bench_exe);
+    const u256_bench_step = b.step("bench-u256", "Run u256-only benchmarks (ReleaseFast)");
+    u256_bench_step.dependOn(&run_u256_bench.step);
+
     // Keccak comparison benchmark (eth.zig vs stdlib)
     const keccak_compare_exe = b.addExecutable(.{
         .name = "keccak-compare",
