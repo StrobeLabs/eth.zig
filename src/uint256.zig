@@ -80,7 +80,7 @@ pub fn safeDiv(a: u256, b: u256) ?u256 {
 /// Fast u256 division using u64-limb schoolbook algorithm.
 /// Avoids LLVM's slow generic u256 runtime library calls (~280ns)
 /// by using native u64/u128 operations (~10-30ns).
-pub fn fastDiv(a: u256, b: u256) u256 {
+pub inline fn fastDiv(a: u256, b: u256) u256 {
     if (b == 0) {
         @branchHint(.cold);
         @panic("division by zero");
@@ -94,22 +94,14 @@ pub fn fastDiv(a: u256, b: u256) u256 {
     return divLimbs(a, b);
 }
 
-// ---- u64-limb division (Knuth Algorithm D) ----
+// ---- u64-limb arithmetic ----
 
-fn u256ToLimbs(v: u256) [4]u64 {
-    return .{
-        @truncate(v),
-        @truncate(v >> 64),
-        @truncate(v >> 128),
-        @truncate(v >> 192),
-    };
+pub fn u256ToLimbs(v: u256) [4]u64 {
+    return @bitCast(v);
 }
 
-fn limbsToU256(l: [4]u64) u256 {
-    return @as(u256, l[3]) << 192 |
-        @as(u256, l[2]) << 128 |
-        @as(u256, l[1]) << 64 |
-        @as(u256, l[0]);
+pub fn limbsToU256(l: [4]u64) u256 {
+    return @bitCast(l);
 }
 
 fn countLimbs(limbs: [4]u64) usize {
@@ -121,7 +113,7 @@ fn countLimbs(limbs: [4]u64) usize {
 /// Schoolbook 4x4 wrapping multiply on u64 limbs.
 /// Only computes the lower 4 limbs (256-bit result).
 /// Uses inline for so LLVM sees comptime-known loop bounds and fully unrolls.
-fn mulLimbs(a: [4]u64, b: [4]u64) [4]u64 {
+pub inline fn mulLimbs(a: [4]u64, b: [4]u64) [4]u64 {
     var r: [4]u64 = .{ 0, 0, 0, 0 };
     // Accumulate partial products a[i]*b[j] into r[i+j] (only where i+j < 4)
     inline for (0..4) |i| {
@@ -138,8 +130,21 @@ fn mulLimbs(a: [4]u64, b: [4]u64) [4]u64 {
     return r;
 }
 
+/// Multiply [4]u64 limbs by a single u64 scalar (wrapping to 256 bits).
+/// Only 4 mul/umulh pairs vs 10 for full 4x4 schoolbook -- 2.5x fewer multiplies.
+pub inline fn mulLimbScalar(a: [4]u64, b: u64) [4]u64 {
+    var r: [4]u64 = undefined;
+    var carry: u64 = 0;
+    inline for (0..4) |i| {
+        const prod: u128 = @as(u128, a[i]) * @as(u128, b) + @as(u128, carry);
+        r[i] = @truncate(prod);
+        carry = @truncate(prod >> 64);
+    }
+    return r;
+}
+
 /// Carry-propagated addition on u64 limbs (wrapping).
-fn addLimbs(a: [4]u64, b: [4]u64) [4]u64 {
+pub inline fn addLimbs(a: [4]u64, b: [4]u64) [4]u64 {
     var r: [4]u64 = undefined;
     var carry: u1 = 0;
     inline for (0..4) |i| {
@@ -196,6 +201,65 @@ fn div128by64(n_hi: u64, n_lo: u64, d: u64) struct { q: u64, r: u64 } {
         .q = q1 * b + q0,
         .r = (un21 *% b +% un0 -% q0 *% v) >> s,
     };
+}
+
+/// Specialized 128-by-128 division (2-limb / 2-limb). Quotient fits in u64.
+/// Avoids Knuth D's runtime-loop array overhead by operating on registers directly.
+inline fn div2by2(n0: u64, n1: u64, d0: u64, d1: u64) u64 {
+    const s: u6 = @intCast(@clz(d1));
+
+    // Normalized divisor
+    var nv1: u64 = d1;
+    var nv0: u64 = d0;
+    // Normalized numerator (3 limbs)
+    var nu2: u64 = 0;
+    var nu1: u64 = n1;
+    var nu0: u64 = n0;
+
+    if (s > 0) {
+        const rs: u6 = @intCast(@as(u7, 64) - s);
+        nv1 = (d1 << s) | (d0 >> rs);
+        nv0 = d0 << s;
+        nu2 = n1 >> rs;
+        nu1 = (n1 << s) | (n0 >> rs);
+        nu0 = n0 << s;
+    }
+
+    // Trial quotient via div128by64
+    const result = div128by64(nu2, nu1, nv1);
+    var qhat: u128 = result.q;
+    var rhat: u128 = result.r;
+
+    // Refine with second divisor limb
+    while (qhat >= (@as(u128, 1) << 64) or
+        qhat * @as(u128, nv0) > (rhat << 64) | @as(u128, nu0))
+    {
+        qhat -= 1;
+        rhat += nv1;
+        if (rhat >= (@as(u128, 1) << 64)) break;
+    }
+
+    // Multiply-back check: qhat * [nv1,nv0] must not exceed [nu2,nu1,nu0]
+    // After refinement, correction probability is ~2/2^64, but include for correctness.
+    const p_lo: u128 = qhat * @as(u128, nv0);
+    const p_mid: u128 = qhat * @as(u128, nv1) + (p_lo >> 64);
+    const prod0: u64 = @truncate(p_lo);
+    const prod1: u64 = @truncate(p_mid);
+    const prod2: u64 = @truncate(p_mid >> 64);
+
+    // Subtract product from normalized numerator
+    const sb1 = @subWithOverflow(nu0, prod0);
+    const sb2 = @subWithOverflow(nu1, prod1);
+    const sb3 = @subWithOverflow(sb2[0], @as(u64, sb1[1]));
+    const borrow = sb2[1] | sb3[1];
+    const diff2 = nu2 -% prod2 -% @as(u64, borrow);
+
+    // If underflow, qhat was 1 too large (extremely rare)
+    if (diff2 != 0) {
+        @branchHint(.cold);
+        return @truncate(qhat - 1);
+    }
+    return @truncate(qhat);
 }
 
 /// Knuth Algorithm D core: multi-limb division using div128by64 for trial quotients.
@@ -289,11 +353,12 @@ fn knuthDivCore(num: [4]u64, nn: usize, div: [4]u64, dd: usize) [4]u64 {
 }
 
 /// Division on limbs, returning [4]u64 directly (avoids u256 round-trip).
-/// Uses div128by64 for single-limb divisors and knuthDivCore for multi-limb.
-fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
+/// Uses div128by64 (hardware UDIV) for single-limb divisors and knuthDivCore for multi-limb.
+pub fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
     const nn = countLimbs(numerator);
     const dd = countLimbs(divisor);
     if (dd == 0) @panic("division by zero");
+
     // Compare: if numerator < divisor, return 0
     {
         var i: usize = 4;
@@ -317,6 +382,11 @@ fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
             rem = result.r;
         }
         return q;
+    }
+
+    // Fast path: 2-limb / 2-limb -- inline specialized division (no array overhead)
+    if (dd == 2 and nn <= 2) {
+        return .{ div2by2(numerator[0], numerator[1], divisor[0], divisor[1]), 0, 0, 0 };
     }
 
     return knuthDivCore(numerator, nn, divisor, dd);
@@ -348,7 +418,7 @@ fn divLimbs(numerator: u256, divisor: u256) u256 {
 
 /// Fast u256 multiplication that uses narrower operations when values fit.
 /// This avoids LLVM's slow generic 256-bit multiplication for common cases.
-pub fn fastMul(a: u256, b: u256) u256 {
+pub inline fn fastMul(a: u256, b: u256) u256 {
     // Both fit in u128 - use LLVM's faster 128-bit multiplication
     if ((a >> 128) == 0 and (b >> 128) == 0) {
         return @as(u256, @as(u128, @truncate(a))) *% @as(u256, @as(u128, @truncate(b)));
@@ -445,12 +515,9 @@ pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) u256 {
     const ri = u256ToLimbs(reserve_in);
     const ro = u256ToLimbs(reserve_out);
 
-    const fee_997: [4]u64 = .{ 997, 0, 0, 0 };
-    const fee_1000: [4]u64 = .{ 1000, 0, 0, 0 };
-
-    const amount_in_with_fee = mulLimbs(ai, fee_997);
+    const amount_in_with_fee = mulLimbScalar(ai, 997);
     const numerator = mulLimbs(amount_in_with_fee, ro);
-    const denominator = addLimbs(mulLimbs(ri, fee_1000), amount_in_with_fee);
+    const denominator = addLimbs(mulLimbScalar(ri, 1000), amount_in_with_fee);
 
     if (denominator[0] == 0 and denominator[1] == 0 and denominator[2] == 0 and denominator[3] == 0) {
         @panic("getAmountOut: denominator is zero (invalid reserves)");

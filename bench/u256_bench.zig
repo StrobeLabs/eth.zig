@@ -114,19 +114,20 @@ fn benchDivFull() void {
     std.mem.doNotOptimizeAway(&result);
 }
 
-// UniswapV2 getAmountOut -- naive step-by-step (mirrors alloy.rs exactly)
+// UniswapV2 getAmountOut -- step-by-step on [4]u64 limbs (apples-to-apples with Rust's [u64; 4])
+// Uses fp256 hand-optimized aarch64 assembly for mul/add, u128 fast path for division.
 fn benchUniswapV2Naive() void {
-    var amount_in: u256 = ONE_ETH;
-    var reserve_in: u256 = RESERVE_IN;
-    var reserve_out: u256 = RESERVE_OUT;
+    var amount_in = eth.uint256.u256ToLimbs(ONE_ETH);
+    var reserve_in = eth.uint256.u256ToLimbs(RESERVE_IN);
+    var reserve_out = eth.uint256.u256ToLimbs(RESERVE_OUT);
     std.mem.doNotOptimizeAway(&amount_in);
     std.mem.doNotOptimizeAway(&reserve_in);
     std.mem.doNotOptimizeAway(&reserve_out);
 
-    const amount_in_with_fee = eth.uint256.fastMul(amount_in, 997);
-    const numerator = eth.uint256.fastMul(amount_in_with_fee, reserve_out);
-    const denominator = eth.uint256.fastMul(reserve_in, 1000) +% amount_in_with_fee;
-    const amount_out = eth.uint256.fastDiv(numerator, denominator);
+    const amount_in_with_fee = eth.uint256.mulLimbScalar(amount_in, 997);
+    const numerator = eth.uint256.mulLimbs(amount_in_with_fee, reserve_out);
+    const denominator = eth.uint256.addLimbs(eth.uint256.mulLimbScalar(reserve_in, 1000), amount_in_with_fee);
+    const amount_out = eth.uint256.divLimbsDirect(numerator, denominator);
     std.mem.doNotOptimizeAway(&amount_out);
 }
 

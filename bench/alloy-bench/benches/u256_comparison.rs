@@ -78,14 +78,14 @@ fn bench_u256(c: &mut Criterion) {
     group.bench_function("div_small", |b| {
         let large = U256::from(997_000_000_000_000_000_000u128);
         b.iter(|| {
-            let result = black_box(large).checked_div(black_box(ONE_ETH));
+            let result = black_box(large) / black_box(ONE_ETH);
             black_box(result);
         })
     });
 
     group.bench_function("div_full", |b| {
         b.iter(|| {
-            let result = black_box(FULL_A).checked_div(black_box(FULL_C));
+            let result = black_box(FULL_A) / black_box(FULL_C);
             black_box(result);
         })
     });

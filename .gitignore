@@ -5,6 +5,11 @@ zig-pkg/
 .env*
 !.env.example
 
+# Build artifacts
+*.a
+*.o
+*.s
+
 # Docs site build artifacts
 docs/node_modules/
 docs/.next/
