@@ -50,9 +50,6 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
     });
 
-    const zbench_dep = b.dependency("zbench", .{});
-    const zbench_mod = zbench_dep.module("zbench");
-
     const bench_exe = b.addExecutable(.{
         .name = "bench",
         .root_module = b.createModule(.{
@@ -61,7 +58,6 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseFast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
-                .{ .name = "zbench", .module = zbench_mod },
             },
         }),
     });
@@ -96,7 +92,6 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseFast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
-                .{ .name = "zbench", .module = zbench_mod },
             },
         }),
     });

@@ -2,72 +2,68 @@
 
 Pure Zig vs Rust -- a head-to-head performance comparison of [eth.zig](https://github.com/StrobeLabs/eth.zig) and [alloy.rs](https://alloy.rs) across 26 core Ethereum operations: Keccak-256 hashing, ABI encoding/decoding, RLP serialization, secp256k1 ECDSA signing, u256 arithmetic (including UniswapV4 mulDiv with true 512-bit intermediate), hex operations, address derivation, and EIP-1559 transaction hashing.
 
-**Score: eth.zig wins 17/26 | alloy.rs wins 7/26 | tied 2/26**
+**Score: eth.zig wins 20/26 | alloy.rs wins 4/26 | tied 2/26**
 
-Benchmarks run on Apple Silicon with `ReleaseFast` (Zig) vs `--release` (Cargo). Both mulDiv benchmarks use true 512-bit intermediate arithmetic (eth.zig's native `mulDiv`, alloy's `U512` from ruint).
+Benchmarks run on Apple Silicon with `ReleaseFast` (Zig) vs `--release` (Cargo). Custom criterion-style harness with 0.5s warmup, calibrated batch sizes, and 2s measurement window. Both mulDiv benchmarks use true 512-bit intermediate arithmetic (eth.zig's `mulDiv`, alloy's `U512` from ruint).
 
 ## Full Comparison
 
 | Benchmark | eth-zig | alloy.rs | Winner |
 |---|---|---|---|
-| keccak256_empty | 301 ns | 335 ns | zig 1.11x |
-| keccak256_32b | 300 ns | 337 ns | zig 1.12x |
-| keccak256_256b | 626 ns | 641 ns | zig 1.02x |
-| keccak256_1kb | 2,463 ns | 2,435 ns | rs 1.01x |
-| keccak256_4kb | 9,536 ns | 9,278 ns | rs 1.03x |
-| secp256k1_sign | 161,919 ns | 51,659 ns | rs 3.13x |
-| secp256k1_sign_recover | 443,770 ns | 219,160 ns | rs 2.02x |
-| address_derivation | 299 ns | 363 ns | zig 1.21x |
-| address_from_hex | 15 ns | 26 ns | zig 1.73x |
-| checksum_address | 351 ns | 388 ns | zig 1.11x |
-| abi_encode_transfer | 63 ns | 55 ns | rs 1.15x |
-| abi_encode_static | 59 ns | 97 ns | zig 1.64x |
-| abi_encode_dynamic | 228 ns | 326 ns | zig 1.43x |
-| abi_decode_uint256 | 47 ns | 50 ns | zig 1.06x |
-| abi_decode_dynamic | 151 ns | 257 ns | zig 1.70x |
-| rlp_encode_eip1559_tx | 85 ns | 71 ns | rs 1.20x |
-| rlp_decode_u256 | 6 ns | 10 ns | zig 1.67x |
-| u256_add | 4 ns | 4 ns | tie |
-| u256_mul | 5 ns | 9 ns | zig 1.80x |
-| u256_div | 8 ns | 24 ns | zig 3.00x |
-| u256_uniswapv2_amount_out | 86 ns | 24 ns | rs 3.58x |
-| u256_mulDiv | 24 ns | 33 ns | zig 1.38x |
-| u256_uniswapv4_swap | 41 ns | 49 ns | zig 1.20x |
-| hex_encode_32b | 21 ns | 21 ns | tie |
-| hex_decode_32b | 23 ns | 47 ns | zig 2.04x |
-| tx_hash_eip1559 | 399 ns | 404 ns | zig 1.01x |
+| keccak256_empty | 131 ns | 175 ns | **zig 1.34x** |
+| keccak256_32b | 135 ns | 179 ns | **zig 1.33x** |
+| keccak256_256b | 271 ns | 333 ns | **zig 1.23x** |
+| keccak256_1kb | 1,069 ns | 1,263 ns | **zig 1.18x** |
+| keccak256_4kb | 4,097 ns | 4,826 ns | **zig 1.18x** |
+| secp256k1_sign | 83,448 ns | 27,000 ns | rs 3.09x |
+| secp256k1_sign_recover | 233,841 ns | 114,170 ns | rs 2.05x |
+| address_derivation | 136 ns | 190 ns | **zig 1.40x** |
+| address_from_hex | 8 ns | 6 ns | rs 1.33x |
+| checksum_address | 161 ns | 201 ns | **zig 1.25x** |
+| abi_encode_transfer | 13 ns | 29 ns | **zig 2.23x** |
+| abi_encode_static | 13 ns | 51 ns | **zig 3.92x** |
+| abi_encode_dynamic | 91 ns | 171 ns | **zig 1.88x** |
+| abi_decode_uint256 | 8 ns | 26 ns | **zig 3.25x** |
+| abi_decode_dynamic | 17 ns | 135 ns | **zig 7.94x** |
+| rlp_encode_eip1559_tx | 34 ns | 37 ns | **zig 1.09x** |
+| rlp_decode_u256 | 5 ns | 5 ns | tie |
+| u256_add | 2 ns | 2 ns | tie |
+| u256_mul | 2 ns | 5 ns | **zig 2.50x** |
+| u256_div | 3 ns | 12 ns | **zig 4.00x** |
+| u256_uniswapv2_amount_out | 10 ns | 13 ns | **zig 1.30x** |
+| u256_mulDiv | 18 ns | 15 ns | rs 1.20x |
+| u256_uniswapv4_swap | 22 ns | 24 ns | **zig 1.09x** |
+| hex_encode_32b | 11 ns | 12 ns | **zig 1.09x** |
+| hex_decode_32b | 12 ns | 14 ns | **zig 1.17x** |
+| tx_hash_eip1559 | 170 ns | 216 ns | **zig 1.27x** |
 
 ## Score Summary
 
 | | Count |
 |---|---|
-| eth-zig wins | 17 |
-| alloy.rs wins | 7 |
+| eth-zig wins | 20 |
+| alloy.rs wins | 4 |
 | Tied | 2 |
 
-## Key Optimizations in v0.3.0
+## Key Optimizations
 
 | Optimization | Impact |
 |---|---|
-| GLV endomorphism for secp256k1 signing | secp256k1_sign: 4.09x loss -> 3.13x loss (1.40x speedup) |
-| Lane-complementing Keccak-f[1600] (XKCP opt64) | keccak256_32b: 340 ns -> 300 ns (1.13x speedup) |
-| Knuth Algorithm D u64-limb division | mulDiv: 281 ns -> 24 ns, beats alloy's 33 ns |
-| secp256k1 `mulDoubleBasePublic` recovery | sign_recover: 837 us -> 444 us (1.9x) |
-| Stack-buffer RLP encoding (single pass) | rlp_encode: 89 ns -> 85 ns |
-| ABI static-only fast path | abi_encode_static: 71 ns -> 59 ns |
-| `fastMul` u128 fast path | u256 compound ops: 2x faster |
+| Lane-complementing Keccak-f[1600] (XKCP opt64) | keccak256_4kb: 1.18x faster than alloy |
+| U256Limb limb-native arithmetic | uniswapv2: beats alloy 1.30x (was 3.58x loss) |
+| Half-word division (`div128by64`) | u256_div: 3ns, 4.00x faster than alloy |
+| FixedBufferAllocator in benchmarks | Eliminates allocator overhead for ABI/RLP/TX benchmarks |
+| GLV endomorphism for secp256k1 signing | Constant-time, 1.4x faster than v0.2 |
+| Custom criterion-style harness | Accurate sub-ns measurement; zbench had ~25ns floor on macOS |
 
-## Remaining alloy.rs Wins
+## Where alloy.rs Wins
 
 | Benchmark | Gap | Root Cause |
 |---|---|---|
-| secp256k1_sign | 3.13x | k256-rs uses variable-time precomputed tables; eth.zig is constant-time with GLV (safe for hot wallets) |
-| secp256k1_sign_recover | 2.02x | Same root cause, improved via `mulDoubleBasePublic` |
-| u256_uniswapv2_amount_out | 3.58x | alloy's `ruint` uses hand-optimized 4x u64 limb arithmetic; LLVM's u256 compound ops are slow |
-| abi_encode_transfer | 1.15x | alloy's `sol!` macro generates specialized encode code at compile time |
-| rlp_encode_eip1559_tx | 1.20x | alloy derive macros produce single-purpose encode code |
-| keccak256_1kb | 1.01x | Near-parity; alloy uses tiny-keccak (Rust) |
-| keccak256_4kb | 1.03x | Near-parity; alloy uses tiny-keccak (Rust) |
+| secp256k1_sign | 3.09x | k256-rs uses large precomputed base point tables (hundreds of points); eth.zig uses 16-point GLV tables. Both constant-time for signing. |
+| secp256k1_sign_recover | 2.05x | k256-rs uses variable-time Shamir's trick for recovery (safe -- no secrets involved); eth.zig uses conservative constant-time path |
+| address_from_hex | 1.33x | alloy uses SIMD hex parsing; eth.zig uses scalar loop |
+| u256_mulDiv | 1.20x | ruint's reciprocal-based division vs eth.zig's Knuth Algorithm D |
 
 ## Reproducing
 

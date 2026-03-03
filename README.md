@@ -5,47 +5,43 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.15.2-orange)](https://ziglang.org/)
 
-**The fastest Ethereum library. Pure Zig. Zero dependencies.**
+**The fastest Ethereum library.** Beats Rust's alloy.rs on 20 out of 26 benchmarks.
 
-A complete Ethereum client library written in pure Zig -- ABI encoding, RLP serialization, secp256k1 signing, Keccak-256 hashing, HD wallets, ERC-20/721 tokens, JSON-RPC, ENS, and more. No C bindings. No system libraries. Just `zig build`.
+A complete Ethereum client library written in Zig -- ABI encoding, RLP serialization, secp256k1 signing, Keccak-256 hashing, HD wallets, ERC-20/721 tokens, JSON-RPC, ENS, and more. Just `zig build`.
 
 **[Read the docs at ethzig.org](https://ethzig.org)**
 
 ## Why eth.zig?
 
-**Faster than Rust** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **19 out of 26 benchmarks**, including UniswapV4 mulDiv. ABI encoding, hashing, hex operations, address parsing, u256 arithmetic, transaction serialization -- eth.zig is faster on the majority of operations.
-
-**Zero dependencies** -- Built entirely on Zig's standard library. No C bindings, no vendored C code, no system libraries.
+**Fastest Ethereum library** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **20 out of 26 benchmarks**. ABI decoding up to 7.94x faster, Keccak hashing up to 1.34x, u256 division 4x, UniswapV2 getAmountOut 1.30x, transaction hashing 1.27x. See the [full results](bench/RESULTS.md).
 
 **Comptime-first** -- Function selectors and event topics are computed at compile time with zero runtime cost. The compiler does the hashing so your program doesn't have to.
 
-**Pure Zig crypto** -- secp256k1 ECDSA, Keccak-256, BIP-32/39/44 HD wallets -- all implemented in pure Zig. No OpenSSL, no libsecp256k1, no FFI.
+**Complete** -- ABI, RLP, secp256k1, Keccak-256, BIP-32/39/44 HD wallets, EIP-712, JSON-RPC, WebSocket, ENS, ERC-20/721 -- everything you need for Ethereum in one package.
 
 ## Performance vs alloy.rs
 
-eth.zig wins **19/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
+eth.zig wins **20/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust). Criterion-style harness with 0.5s warmup and 2s measurement.
 
 | Operation | eth.zig | alloy.rs | Winner |
 |-----------|---------|----------|--------|
-| Keccak-256 (32B) | 128 ns | 175 ns | **zig 1.37x** |
-| Keccak-256 (4KB) | 4,008 ns | 4,772 ns | **zig 1.19x** |
-| ABI encode (static) | 26 ns | 50 ns | **zig 1.92x** |
-| ABI encode (dynamic) | 114 ns | 175 ns | **zig 1.54x** |
-| ABI decode (uint256) | 22 ns | 26 ns | **zig 1.18x** |
-| ABI decode (dynamic) | 75 ns | 133 ns | **zig 1.77x** |
-| Address derivation | 135 ns | 190 ns | **zig 1.41x** |
-| Address from hex | 8 ns | 13 ns | **zig 1.62x** |
-| Address checksum | 159 ns | 201 ns | **zig 1.26x** |
+| Keccak-256 (32B) | 135 ns | 179 ns | **zig 1.33x** |
+| Keccak-256 (4KB) | 4,097 ns | 4,826 ns | **zig 1.18x** |
+| ABI encode (static) | 13 ns | 51 ns | **zig 3.92x** |
+| ABI encode (dynamic) | 91 ns | 171 ns | **zig 1.88x** |
+| ABI decode (uint256) | 8 ns | 26 ns | **zig 3.25x** |
+| ABI decode (dynamic) | 17 ns | 135 ns | **zig 7.94x** |
+| Address derivation | 136 ns | 190 ns | **zig 1.40x** |
+| Checksum address | 161 ns | 201 ns | **zig 1.25x** |
 | u256 multiply | 2 ns | 5 ns | **zig 2.50x** |
 | u256 division | 3 ns | 12 ns | **zig 4.00x** |
-| u256 mulDiv (V4) | 11 ns | 14 ns | **zig 1.27x** |
-| UniswapV4 swap | 21 ns | 24 ns | **zig 1.14x** |
-| Hex encode (32B) | 11 ns | 11 ns | tie |
-| Hex decode (32B) | 12 ns | 24 ns | **zig 2.00x** |
-| RLP decode u256 | 3 ns | 6 ns | **zig 2.00x** |
-| TX hash (EIP-1559) | 184 ns | 210 ns | **zig 1.14x** |
+| UniswapV2 getAmountOut | 10 ns | 13 ns | **zig 1.30x** |
+| UniswapV4 swap | 22 ns | 24 ns | **zig 1.09x** |
+| Hex encode (32B) | 11 ns | 12 ns | **zig 1.09x** |
+| Hex decode (32B) | 12 ns | 14 ns | **zig 1.17x** |
+| TX hash (EIP-1559) | 170 ns | 216 ns | **zig 1.27x** |
 
-alloy.rs wins on secp256k1 signing (precomputed EC tables), u256 compound arithmetic (hand-tuned limb ops), and two encode paths where Rust's `sol!` macro generates specialized code at compile time. See [full results](bench/RESULTS.md).
+alloy.rs wins on secp256k1 signing (3.09x -- large precomputed EC tables), address hex parsing (1.33x -- SIMD), and u256 mulDiv (1.20x). See [full results](bench/RESULTS.md).
 
 ## Quick Start
 
@@ -225,21 +221,19 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 
 | Category | eth.zig | alloy.rs |
 |----------|---------|----------|
-| Benchmarks won | **19/26** | 5/26 |
-| ABI encoding | Faster (1.18-1.92x) | Faster on 1 specialized path |
-| Hashing (Keccak) | Faster (1.19-1.45x) | -- |
-| Hex operations | Faster (1.00-2.00x) | -- |
-| u256 arithmetic | Faster on div/mul/mulDiv | Faster on compound ops |
-| UniswapV4 mulDiv | Faster (1.27x) | -- |
-| secp256k1 signing | -- | Faster (precomputed tables) |
+| Benchmarks won | **20/26** | 4/26 |
+| ABI encoding/decoding | Faster (2.23-7.94x) | -- |
+| Hashing (Keccak) | Faster (1.18-1.34x) | -- |
+| u256 arithmetic | Faster on add/mul/div/V2/V4 | Faster on mulDiv (1.20x) |
+| Hex operations | Faster (1.09-1.17x) | -- |
+| secp256k1 signing | -- | Faster (3.09x, larger precomputed tables) |
 
 ### Features vs Zabi (Zig)
 
 | Feature | eth.zig | Zabi |
 |---------|---------|------|
-| Dependencies | 0 | 0 |
 | Comptime selectors | Yes | No |
-| Pure Zig crypto (secp256k1) | Yes | No (C binding) |
+| Pure Zig secp256k1 | Yes | No (C binding) |
 | ABI encode/decode | Yes | Yes |
 | HD wallets (BIP-32/39/44) | Yes | Yes |
 | ERC-20/721 wrappers | Yes | No |
@@ -281,7 +275,7 @@ Contributions are welcome. Please open an issue or pull request on [GitHub](http
 Before submitting:
 
 1. Run `zig build test` and ensure all tests pass.
-2. Follow the existing code style -- no external dependencies, comptime where possible.
+2. Follow the existing code style -- comptime where possible.
 3. Add tests for any new functionality.
 
 ## License

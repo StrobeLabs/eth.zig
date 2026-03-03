@@ -19,7 +19,7 @@ echo ""
 # -- Step 1: Run eth-zig benchmarks --
 echo "[1/3] Running eth-zig benchmarks (ReleaseFast)..."
 ZIG_OUTPUT=$(cd "$ROOT_DIR" && zig build bench 2>&1)
-echo "$ZIG_OUTPUT" | grep -v "^BENCH_JSON"
+echo "$ZIG_OUTPUT"
 echo ""
 
 # -- Step 2: Run alloy.rs benchmarks --
@@ -44,12 +44,12 @@ import re
 zig_output = sys.argv[1]
 rust_output = sys.argv[2]
 
-# Parse eth-zig BENCH_JSON lines
+# Parse custom harness output: "name                   NNN ns       NNNN"
 zig_ns = {}
 for line in zig_output.split('\n'):
-    if line.startswith('BENCH_JSON|'):
-        data = json.loads(line[len('BENCH_JSON|'):])
-        zig_ns[data['name']] = data['ns_per_op']
+    m = re.match(r'^(\S+)\s+(\d+)\s+ns', line)
+    if m:
+        zig_ns[m.group(1)] = int(m.group(2))
 
 # Parse criterion output
 alloy_ns = {}
