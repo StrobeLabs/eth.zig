@@ -81,7 +81,10 @@ pub fn safeDiv(a: u256, b: u256) ?u256 {
 /// Avoids LLVM's slow generic u256 runtime library calls (~280ns)
 /// by using native u64/u128 operations (~10-30ns).
 pub fn fastDiv(a: u256, b: u256) u256 {
-    if (b == 0) @panic("division by zero");
+    if (b == 0) {
+        @branchHint(.cold);
+        @panic("division by zero");
+    }
     // Both fit in u128 - use LLVM's native 128-bit division
     if ((a >> 128) == 0 and (b >> 128) == 0) {
         return @as(u128, @truncate(a)) / @as(u128, @truncate(b));
@@ -113,6 +116,207 @@ fn countLimbs(limbs: [4]u64) usize {
     var n: usize = 4;
     while (n > 0 and limbs[n - 1] == 0) n -= 1;
     return n;
+}
+
+/// Schoolbook 4x4 wrapping multiply on u64 limbs.
+/// Only computes the lower 4 limbs (256-bit result).
+/// Uses inline for so LLVM sees comptime-known loop bounds and fully unrolls.
+fn mulLimbs(a: [4]u64, b: [4]u64) [4]u64 {
+    var r: [4]u64 = .{ 0, 0, 0, 0 };
+    // Accumulate partial products a[i]*b[j] into r[i+j] (only where i+j < 4)
+    inline for (0..4) |i| {
+        var carry: u64 = 0;
+        inline for (0..4) |j| {
+            if (i + j < 4) {
+                const prod: u128 = @as(u128, a[i]) * @as(u128, b[j]) +
+                    @as(u128, r[i + j]) + @as(u128, carry);
+                r[i + j] = @truncate(prod);
+                carry = @truncate(prod >> 64);
+            }
+        }
+    }
+    return r;
+}
+
+/// Carry-propagated addition on u64 limbs (wrapping).
+fn addLimbs(a: [4]u64, b: [4]u64) [4]u64 {
+    var r: [4]u64 = undefined;
+    var carry: u1 = 0;
+    inline for (0..4) |i| {
+        const s1 = @addWithOverflow(a[i], b[i]);
+        const s2 = @addWithOverflow(s1[0], @as(u64, carry));
+        r[i] = s2[0];
+        carry = s1[1] | s2[1];
+    }
+    return r;
+}
+
+/// 128-bit / 64-bit division using half-word approach (Hacker's Delight divlu).
+/// Uses 2 hardware 64-bit UDIV instructions instead of __udivti3 software routine.
+/// Requires: u1 < d (quotient fits in u64).
+/// Returns: quotient and remainder.
+fn div128by64(n_hi: u64, n_lo: u64, d: u64) struct { q: u64, r: u64 } {
+    const b: u64 = 1 << 32;
+
+    // Normalize: shift so top bit of divisor is set
+    const s: u6 = @intCast(@clz(d));
+    const v = d << s;
+    const vn1 = v >> 32;
+    const vn0 = v & 0xFFFF_FFFF;
+
+    // Shift numerator by same amount
+    const un32 = if (s > 0) (n_hi << s) | (n_lo >> @intCast(@as(u7, 64) - s)) else n_hi;
+    const un10 = n_lo << s;
+    const un1 = un10 >> 32;
+    const un0 = un10 & 0xFFFF_FFFF;
+
+    // First quotient digit (high 32 bits)
+    var q1 = un32 / vn1;
+    var rhat = un32 % vn1;
+
+    while (q1 >= b or q1 * vn0 > (rhat << 32) + un1) {
+        q1 -= 1;
+        rhat += vn1;
+        if (rhat >= b) break;
+    }
+
+    const un21 = un32 *% b +% un1 -% q1 *% v;
+
+    // Second quotient digit (low 32 bits)
+    var q0 = un21 / vn1;
+    rhat = un21 % vn1;
+
+    while (q0 >= b or q0 * vn0 > (rhat << 32) + un0) {
+        q0 -= 1;
+        rhat += vn1;
+        if (rhat >= b) break;
+    }
+
+    return .{
+        .q = q1 * b + q0,
+        .r = (un21 *% b +% un0 -% q0 *% v) >> s,
+    };
+}
+
+/// Division on limbs, returning [4]u64 directly (avoids u256 round-trip).
+/// Uses div128by64 for the trial quotient to avoid __udivti3.
+fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
+    const nn = countLimbs(numerator);
+    const dd = countLimbs(divisor);
+    if (dd == 0) @panic("division by zero");
+    // Compare: if numerator < divisor, return 0
+    {
+        var i: usize = 4;
+        while (i > 0) {
+            i -= 1;
+            if (numerator[i] != divisor[i]) {
+                if (numerator[i] < divisor[i]) return .{ 0, 0, 0, 0 };
+                break;
+            }
+        }
+    }
+    if (dd == 1) {
+        // Single-limb divisor: use div128by64 for each quotient digit
+        var q: [4]u64 = .{ 0, 0, 0, 0 };
+        var rem: u64 = 0;
+        var i: usize = nn;
+        while (i > 0) {
+            i -= 1;
+            const result = div128by64(rem, numerator[i], divisor[0]);
+            q[i] = result.q;
+            rem = result.r;
+        }
+        return q;
+    }
+
+    // Multi-limb Knuth Algorithm D directly on limb arrays
+    const num = numerator;
+    const div = divisor;
+
+    // Normalize so top bit of divisor's top limb is set
+    const s: u6 = @intCast(@clz(div[dd - 1]));
+
+    var v: [4]u64 = .{ 0, 0, 0, 0 };
+    var u_arr: [5]u64 = .{ 0, 0, 0, 0, 0 };
+
+    if (s > 0) {
+        const rs: u6 = @intCast(@as(u7, 64) - s);
+        var i: usize = dd;
+        while (i > 1) {
+            i -= 1;
+            v[i] = (div[i] << s) | (div[i - 1] >> rs);
+        }
+        v[0] = div[0] << s;
+        u_arr[nn] = num[nn - 1] >> rs;
+        i = nn;
+        while (i > 1) {
+            i -= 1;
+            u_arr[i] = (num[i] << s) | (num[i - 1] >> rs);
+        }
+        u_arr[0] = num[0] << s;
+    } else {
+        for (0..dd) |i| v[i] = div[i];
+        for (0..nn) |i| u_arr[i] = num[i];
+    }
+
+    // Main loop: produce quotient digits
+    var q: [4]u64 = .{ 0, 0, 0, 0 };
+    var j: usize = nn - dd + 1;
+    while (j > 0) {
+        j -= 1;
+
+        // Trial quotient using div128by64 (avoids __udivti3)
+        const result = div128by64(u_arr[j + dd], u_arr[j + dd - 1], v[dd - 1]);
+        var qhat: u128 = result.q;
+        var rhat: u128 = result.r;
+
+        // Refine with second divisor limb
+        while (true) {
+            if (qhat >= (@as(u128, 1) << 64) or
+                qhat * v[dd - 2] > (rhat << 64) | u_arr[j + dd - 2])
+            {
+                qhat -= 1;
+                rhat += v[dd - 1];
+                if (rhat >= (@as(u128, 1) << 64)) break;
+            } else break;
+        }
+
+        // Multiply qhat * v and subtract from u_arr[j..j+dd]
+        var prod: [5]u64 = .{ 0, 0, 0, 0, 0 };
+        var carry: u128 = 0;
+        for (0..dd) |i| {
+            carry += qhat * v[i];
+            prod[i] = @truncate(carry);
+            carry >>= 64;
+        }
+        prod[dd] = @truncate(carry);
+
+        var borrow: u1 = 0;
+        for (0..dd + 1) |i| {
+            const s1 = @subWithOverflow(u_arr[j + i], prod[i]);
+            const s2 = @subWithOverflow(s1[0], @as(u64, borrow));
+            u_arr[j + i] = s2[0];
+            borrow = s1[1] | s2[1];
+        }
+
+        // Add back if qhat was 1 too large (probability ~2/2^64)
+        if (borrow != 0) {
+            @branchHint(.cold);
+            qhat -= 1;
+            var c: u1 = 0;
+            for (0..dd) |i| {
+                const a1 = @addWithOverflow(u_arr[j + i], v[i]);
+                const a2 = @addWithOverflow(a1[0], @as(u64, c));
+                u_arr[j + i] = a2[0];
+                c = a1[1] | a2[1];
+            }
+            u_arr[j + dd] +%= @as(u64, c);
+        }
+
+        q[j] = @truncate(qhat);
+    }
+
+    return q;
 }
 
 fn divSingleLimb(num: [4]u64, nn: usize, d: u64) u256 {
@@ -204,8 +408,9 @@ fn divLimbs(numerator: u256, divisor: u256) u256 {
             borrow = s1[1] | s2[1];
         }
 
-        // Add back if qhat was 1 too large (rare)
+        // Add back if qhat was 1 too large (probability ~2/2^64)
         if (borrow != 0) {
+            @branchHint(.cold);
             qhat -= 1;
             var c: u1 = 0;
             for (0..dd) |i| {
@@ -230,8 +435,8 @@ pub fn fastMul(a: u256, b: u256) u256 {
     if ((a >> 128) == 0 and (b >> 128) == 0) {
         return @as(u256, @as(u128, @truncate(a))) *% @as(u256, @as(u128, @truncate(b)));
     }
-    // Full u256 multiplication for large values
-    return a *% b;
+    // Full u256 multiplication via schoolbook 4x4 on limbs (avoids __multi3)
+    return limbsToU256(mulLimbs(u256ToLimbs(a), u256ToLimbs(b)));
 }
 
 /// Full-precision multiply-then-divide: (a * b) / denominator.
@@ -310,6 +515,24 @@ pub fn mulDiv(a: u256, b: u256, denominator: u256) ?u256 {
     }
 
     return quotient;
+}
+
+/// Compute UniswapV2 getAmountOut entirely in u64-limb space.
+/// Formula: (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+/// Uses limb arithmetic + div128by64 to avoid __udivti3 (u128/u128 software division).
+pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) u256 {
+    const ai = u256ToLimbs(amount_in);
+    const ri = u256ToLimbs(reserve_in);
+    const ro = u256ToLimbs(reserve_out);
+
+    const fee_997: [4]u64 = .{ 997, 0, 0, 0 };
+    const fee_1000: [4]u64 = .{ 1000, 0, 0, 0 };
+
+    const amount_in_with_fee = mulLimbs(ai, fee_997);
+    const numerator = mulLimbs(amount_in_with_fee, ro);
+    const denominator = addLimbs(mulLimbs(ri, fee_1000), amount_in_with_fee);
+
+    return limbsToU256(divLimbsDirect(numerator, denominator));
 }
 
 /// Q96 constant (2^96) used in UniswapV3/V4 fixed-point arithmetic.
@@ -528,4 +751,83 @@ test "fastMul small values" {
     try std.testing.expectEqual(@as(u256, 20000), fastMul(100, 200));
     try std.testing.expectEqual(@as(u256, 0), fastMul(0, MAX));
     try std.testing.expectEqual(MAX, fastMul(1, MAX));
+}
+
+test "mulLimbs correctness" {
+    // Small values
+    const a = u256ToLimbs(100);
+    const b = u256ToLimbs(200);
+    try std.testing.expectEqual(@as(u256, 20000), limbsToU256(mulLimbs(a, b)));
+
+    // Values from UniswapV2 benchmark
+    const eth_1 = u256ToLimbs(1_000_000_000_000_000_000);
+    const fee = [4]u64{ 997, 0, 0, 0 };
+    const result = limbsToU256(mulLimbs(eth_1, fee));
+    try std.testing.expectEqual(@as(u256, 997_000_000_000_000_000_000), result);
+
+    // Large values - verify wrapping matches native
+    const x: u256 = (@as(u256, 1) << 200) + 12345;
+    const y: u256 = (@as(u256, 1) << 130) + 999;
+    try std.testing.expectEqual(x *% y, limbsToU256(mulLimbs(u256ToLimbs(x), u256ToLimbs(y))));
+
+    // MAX * MAX wrapping
+    try std.testing.expectEqual(MAX *% MAX, limbsToU256(mulLimbs(u256ToLimbs(MAX), u256ToLimbs(MAX))));
+
+    // MAX * 2 wrapping
+    try std.testing.expectEqual(MAX *% 2, limbsToU256(mulLimbs(u256ToLimbs(MAX), u256ToLimbs(2))));
+}
+
+test "addLimbs correctness" {
+    // Simple addition
+    const a = u256ToLimbs(100);
+    const b = u256ToLimbs(200);
+    try std.testing.expectEqual(@as(u256, 300), limbsToU256(addLimbs(a, b)));
+
+    // Carry propagation across limbs
+    const max_u64 = u256ToLimbs(std.math.maxInt(u64));
+    const one = u256ToLimbs(1);
+    const expected: u256 = @as(u256, std.math.maxInt(u64)) + 1;
+    try std.testing.expectEqual(expected, limbsToU256(addLimbs(max_u64, one)));
+
+    // Full carry chain
+    const max_val = u256ToLimbs(MAX);
+    try std.testing.expectEqual(MAX +% 1, limbsToU256(addLimbs(max_val, one)));
+}
+
+test "getAmountOut correctness" {
+    const amount_in: u256 = 1_000_000_000_000_000_000; // 1 ETH
+    const reserve_in: u256 = 100_000_000_000_000_000_000; // 100 ETH
+    const reserve_out: u256 = 200_000_000_000; // 200k USDC (6 decimals)
+
+    // Compute expected via standard u256 arithmetic
+    const amount_in_with_fee = fastMul(amount_in, 997);
+    const numerator = fastMul(amount_in_with_fee, reserve_out);
+    const denominator = fastMul(reserve_in, 1000) +% amount_in_with_fee;
+    const expected = fastDiv(numerator, denominator);
+
+    const result = getAmountOut(amount_in, reserve_in, reserve_out);
+    try std.testing.expectEqual(expected, result);
+    try std.testing.expect(result > 0);
+    try std.testing.expect(result < reserve_out);
+}
+
+test "getAmountOut edge cases" {
+    // Small amount in
+    const r1 = getAmountOut(1, 1_000_000, 1_000_000);
+    try std.testing.expect(r1 < 1_000_000);
+
+    // Equal reserves
+    const r2 = getAmountOut(1_000_000, 1_000_000_000, 1_000_000_000);
+    try std.testing.expect(r2 > 0);
+    try std.testing.expect(r2 < 1_000_000);
+}
+
+test "fastMul large values via schoolbook" {
+    // Values that exceed u128, exercising the schoolbook path
+    const a: u256 = (@as(u256, 1) << 200) + 12345;
+    const b: u256 = (@as(u256, 1) << 130) + 999;
+    try std.testing.expectEqual(a *% b, fastMul(a, b));
+
+    // Both MAX
+    try std.testing.expectEqual(MAX *% MAX, fastMul(MAX, MAX));
 }

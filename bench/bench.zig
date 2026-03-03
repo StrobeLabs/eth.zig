@@ -381,10 +381,8 @@ fn benchU256UniswapV2AmountOut() void {
           [c] "r" (&reserve_out),
         : .{ .memory = true });
 
-    const amount_in_with_fee = eth.uint256.fastMul(amount_in, 997);
-    const numerator = eth.uint256.fastMul(amount_in_with_fee, reserve_out);
-    const denominator = eth.uint256.fastMul(reserve_in, 1000) +% amount_in_with_fee;
-    const amount_out = eth.uint256.fastDiv(numerator, denominator);
+    // Use limb-based compound function that avoids __udivti3
+    const amount_out = eth.uint256.getAmountOut(amount_in, reserve_in, reserve_out);
     std.mem.doNotOptimizeAway(&amount_out);
 }
 
