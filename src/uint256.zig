@@ -198,41 +198,10 @@ fn div128by64(n_hi: u64, n_lo: u64, d: u64) struct { q: u64, r: u64 } {
     };
 }
 
-/// Division on limbs, returning [4]u64 directly (avoids u256 round-trip).
-/// Uses div128by64 for the trial quotient to avoid __udivti3.
-fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
-    const nn = countLimbs(numerator);
-    const dd = countLimbs(divisor);
-    if (dd == 0) @panic("division by zero");
-    // Compare: if numerator < divisor, return 0
-    {
-        var i: usize = 4;
-        while (i > 0) {
-            i -= 1;
-            if (numerator[i] != divisor[i]) {
-                if (numerator[i] < divisor[i]) return .{ 0, 0, 0, 0 };
-                break;
-            }
-        }
-    }
-    if (dd == 1) {
-        // Single-limb divisor: use div128by64 for each quotient digit
-        var q: [4]u64 = .{ 0, 0, 0, 0 };
-        var rem: u64 = 0;
-        var i: usize = nn;
-        while (i > 0) {
-            i -= 1;
-            const result = div128by64(rem, numerator[i], divisor[0]);
-            q[i] = result.q;
-            rem = result.r;
-        }
-        return q;
-    }
-
-    // Multi-limb Knuth Algorithm D directly on limb arrays
-    const num = numerator;
-    const div = divisor;
-
+/// Knuth Algorithm D core: multi-limb division using div128by64 for trial quotients.
+/// Shared by both divLimbsDirect and divLimbs.
+/// Requires dd >= 2 and nn >= dd. Returns quotient as [4]u64.
+fn knuthDivCore(num: [4]u64, nn: usize, div: [4]u64, dd: usize) [4]u64 {
     // Normalize so top bit of divisor's top limb is set
     const s: u6 = @intCast(@clz(div[dd - 1]));
 
@@ -259,7 +228,7 @@ fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
         for (0..nn) |i| u_arr[i] = num[i];
     }
 
-    // Main loop: produce quotient digits
+    // Main loop: produce quotient digits from MSB to LSB
     var q: [4]u64 = .{ 0, 0, 0, 0 };
     var j: usize = nn - dd + 1;
     while (j > 0) {
@@ -319,15 +288,49 @@ fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
     return q;
 }
 
+/// Division on limbs, returning [4]u64 directly (avoids u256 round-trip).
+/// Uses div128by64 for single-limb divisors and knuthDivCore for multi-limb.
+fn divLimbsDirect(numerator: [4]u64, divisor: [4]u64) [4]u64 {
+    const nn = countLimbs(numerator);
+    const dd = countLimbs(divisor);
+    if (dd == 0) @panic("division by zero");
+    // Compare: if numerator < divisor, return 0
+    {
+        var i: usize = 4;
+        while (i > 0) {
+            i -= 1;
+            if (numerator[i] != divisor[i]) {
+                if (numerator[i] < divisor[i]) return .{ 0, 0, 0, 0 };
+                break;
+            }
+        }
+    }
+    if (dd == 1) {
+        // Single-limb divisor: use div128by64 for each quotient digit
+        var q: [4]u64 = .{ 0, 0, 0, 0 };
+        var rem: u64 = 0;
+        var i: usize = nn;
+        while (i > 0) {
+            i -= 1;
+            const result = div128by64(rem, numerator[i], divisor[0]);
+            q[i] = result.q;
+            rem = result.r;
+        }
+        return q;
+    }
+
+    return knuthDivCore(numerator, nn, divisor, dd);
+}
+
 fn divSingleLimb(num: [4]u64, nn: usize, d: u64) u256 {
     var q: [4]u64 = .{ 0, 0, 0, 0 };
-    var rem: u128 = 0;
+    var rem: u64 = 0;
     var i: usize = nn;
     while (i > 0) {
         i -= 1;
-        rem = (rem << 64) | num[i];
-        q[i] = @truncate(rem / d);
-        rem %= d;
+        const result = div128by64(rem, num[i], d);
+        q[i] = result.q;
+        rem = result.r;
     }
     return limbsToU256(q);
 }
@@ -340,92 +343,7 @@ fn divLimbs(numerator: u256, divisor: u256) u256 {
 
     if (dd == 1) return divSingleLimb(num, nn, div[0]);
 
-    // Knuth Algorithm D: normalize so top bit of divisor's top limb is set
-    const s: u6 = @intCast(@clz(div[dd - 1]));
-
-    var v: [4]u64 = .{ 0, 0, 0, 0 };
-    var u_arr: [5]u64 = .{ 0, 0, 0, 0, 0 };
-
-    if (s > 0) {
-        const rs: u6 = @intCast(@as(u7, 64) - s);
-        // Shift divisor
-        var i: usize = dd;
-        while (i > 1) {
-            i -= 1;
-            v[i] = (div[i] << s) | (div[i - 1] >> rs);
-        }
-        v[0] = div[0] << s;
-        // Shift numerator (may produce extra limb)
-        u_arr[nn] = num[nn - 1] >> rs;
-        i = nn;
-        while (i > 1) {
-            i -= 1;
-            u_arr[i] = (num[i] << s) | (num[i - 1] >> rs);
-        }
-        u_arr[0] = num[0] << s;
-    } else {
-        for (0..dd) |i| v[i] = div[i];
-        for (0..nn) |i| u_arr[i] = num[i];
-    }
-
-    // Main loop: produce quotient digits from MSB to LSB
-    var q: [4]u64 = .{ 0, 0, 0, 0 };
-    var j: usize = nn - dd + 1;
-    while (j > 0) {
-        j -= 1;
-
-        // Trial quotient from top two limbs of current remainder
-        const hi2: u128 = (@as(u128, u_arr[j + dd]) << 64) | u_arr[j + dd - 1];
-        var qhat: u128 = hi2 / v[dd - 1];
-        var rhat: u128 = hi2 % v[dd - 1];
-
-        // Refine: ensures qhat is exact or at most 1 too large
-        while (true) {
-            if (qhat >= (@as(u128, 1) << 64) or
-                qhat * v[dd - 2] > (rhat << 64) | u_arr[j + dd - 2])
-            {
-                qhat -= 1;
-                rhat += v[dd - 1];
-                if (rhat >= (@as(u128, 1) << 64)) break;
-            } else break;
-        }
-
-        // Multiply qhat * v and subtract from u_arr[j..j+dd]
-        var prod: [5]u64 = .{ 0, 0, 0, 0, 0 };
-        var carry: u128 = 0;
-        for (0..dd) |i| {
-            carry += qhat * v[i];
-            prod[i] = @truncate(carry);
-            carry >>= 64;
-        }
-        prod[dd] = @truncate(carry);
-
-        var borrow: u1 = 0;
-        for (0..dd + 1) |i| {
-            const s1 = @subWithOverflow(u_arr[j + i], prod[i]);
-            const s2 = @subWithOverflow(s1[0], @as(u64, borrow));
-            u_arr[j + i] = s2[0];
-            borrow = s1[1] | s2[1];
-        }
-
-        // Add back if qhat was 1 too large (probability ~2/2^64)
-        if (borrow != 0) {
-            @branchHint(.cold);
-            qhat -= 1;
-            var c: u1 = 0;
-            for (0..dd) |i| {
-                const a1 = @addWithOverflow(u_arr[j + i], v[i]);
-                const a2 = @addWithOverflow(a1[0], @as(u64, c));
-                u_arr[j + i] = a2[0];
-                c = a1[1] | a2[1];
-            }
-            u_arr[j + dd] +%= @as(u64, c);
-        }
-
-        q[j] = @truncate(qhat);
-    }
-
-    return limbsToU256(q);
+    return limbsToU256(knuthDivCore(num, nn, div, dd));
 }
 
 /// Fast u256 multiplication that uses narrower operations when values fit.
@@ -521,6 +439,8 @@ pub fn mulDiv(a: u256, b: u256, denominator: u256) ?u256 {
 /// Formula: (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
 /// Uses limb arithmetic + div128by64 to avoid __udivti3 (u128/u128 software division).
 pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) u256 {
+    if (amount_in == 0) return 0;
+
     const ai = u256ToLimbs(amount_in);
     const ri = u256ToLimbs(reserve_in);
     const ro = u256ToLimbs(reserve_out);
@@ -531,6 +451,10 @@ pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) u256 {
     const amount_in_with_fee = mulLimbs(ai, fee_997);
     const numerator = mulLimbs(amount_in_with_fee, ro);
     const denominator = addLimbs(mulLimbs(ri, fee_1000), amount_in_with_fee);
+
+    if (denominator[0] == 0 and denominator[1] == 0 and denominator[2] == 0 and denominator[3] == 0) {
+        @panic("getAmountOut: denominator is zero (invalid reserves)");
+    }
 
     return limbsToU256(divLimbsDirect(numerator, denominator));
 }
