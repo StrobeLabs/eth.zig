@@ -1,0 +1,20 @@
+[package]
+name = "keccak-bench"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "keccak-bench"
+path = "src/main.rs"
+
+[lib]
+name = "keccak_bench"
+crate-type = ["staticlib"]
+
+[dependencies]
+keccak-asm = "0.1.4"
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+
+[profile.release]
+opt-level = 3
+lto = true

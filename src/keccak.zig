@@ -1,32 +1,36 @@
 const std = @import("std");
 
-/// Ethereum-compatible Keccak-256 hash (0x01 padding, NOT SHA3's 0x06).
-/// Zig's stdlib provides this as a distinct type from Sha3_256.
-pub const Keccak256 = std.crypto.hash.sha3.Keccak256;
+/// XKCP-accelerated backend for runtime hashing.
+const xkcp = @import("keccak_xkcp.zig");
+
+/// Zig stdlib Keccak-256 (used for comptime evaluation where C FFI is unavailable).
+const StdlibKeccak256 = std.crypto.hash.sha3.Keccak256;
 
 /// 32-byte hash output type.
 pub const Hash = [32]u8;
+
+/// For API compatibility: expose the stdlib type for code that uses the hasher directly.
+pub const Keccak256 = StdlibKeccak256;
 
 /// Compute the Keccak-256 hash of the given data.
 /// Works at both comptime and runtime.
 pub fn hash(data: []const u8) Hash {
     if (@inComptime()) {
         @setEvalBranchQuota(10000);
+        var result: Hash = undefined;
+        StdlibKeccak256.hash(data, &result, .{});
+        return result;
     }
-    var result: Hash = undefined;
-    Keccak256.hash(data, &result, .{});
-    return result;
+    return xkcp.hash(data);
 }
 
 /// Compute the Keccak-256 hash of multiple concatenated slices.
 pub fn hashConcat(slices: []const []const u8) Hash {
-    var hasher = Keccak256.init(.{});
+    var hasher = xkcp.Hasher.init();
     for (slices) |slice| {
         hasher.update(slice);
     }
-    var result: Hash = undefined;
-    hasher.final(&result);
-    return result;
+    return hasher.final();
 }
 
 /// Compute the first 4 bytes of the Keccak-256 hash (function selector).
