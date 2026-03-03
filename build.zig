@@ -142,6 +142,7 @@ fn addXkcp(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedT
             module.addIncludePath(b.path("src/crypto/xkcp/plain64"));
             module.addAssemblyFile(b.path("src/crypto/xkcp/avx2/KeccakP-1600-AVX2.s"));
         } else {
+            module.addIncludePath(b.path("src/crypto/xkcp/plain64"));
             module.addCSourceFile(.{
                 .file = b.path("src/crypto/xkcp/plain64/KeccakP-1600-opt64.c"),
                 .flags = c_flags,
