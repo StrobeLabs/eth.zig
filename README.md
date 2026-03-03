@@ -13,7 +13,7 @@ A complete Ethereum client library written in pure Zig -- ABI encoding, RLP seri
 
 ## Why eth.zig?
 
-**Faster than Rust** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **19 out of 26 benchmarks**, including UniswapV4 mulDiv. ABI encoding, hashing, hex operations, address parsing, u256 arithmetic, transaction serialization -- eth.zig is faster on the majority of operations.
+**Faster than Rust** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **15 out of 26 benchmarks**, including ABI encoding/decoding (up to 6.45x), Keccak hashing (up to 1.67x), UniswapV4 swap math, address derivation, hex encoding, and transaction serialization.
 
 **Zero dependencies** -- Built entirely on Zig's standard library. No C bindings, no vendored C code, no system libraries.
 
@@ -23,29 +23,24 @@ A complete Ethereum client library written in pure Zig -- ABI encoding, RLP seri
 
 ## Performance vs alloy.rs
 
-eth.zig wins **19/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
+eth.zig wins **15/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
 
 | Operation | eth.zig | alloy.rs | Winner |
 |-----------|---------|----------|--------|
-| Keccak-256 (32B) | 128 ns | 175 ns | **zig 1.37x** |
-| Keccak-256 (4KB) | 4,008 ns | 4,772 ns | **zig 1.19x** |
-| ABI encode (static) | 26 ns | 50 ns | **zig 1.92x** |
-| ABI encode (dynamic) | 114 ns | 175 ns | **zig 1.54x** |
-| ABI decode (uint256) | 22 ns | 26 ns | **zig 1.18x** |
-| ABI decode (dynamic) | 75 ns | 133 ns | **zig 1.77x** |
-| Address derivation | 135 ns | 190 ns | **zig 1.41x** |
-| Address from hex | 8 ns | 13 ns | **zig 1.62x** |
-| Address checksum | 159 ns | 201 ns | **zig 1.26x** |
-| u256 multiply | 2 ns | 5 ns | **zig 2.50x** |
-| u256 division | 3 ns | 12 ns | **zig 4.00x** |
-| u256 mulDiv (V4) | 11 ns | 14 ns | **zig 1.27x** |
-| UniswapV4 swap | 21 ns | 24 ns | **zig 1.14x** |
-| Hex encode (32B) | 11 ns | 11 ns | tie |
-| Hex decode (32B) | 12 ns | 24 ns | **zig 2.00x** |
-| RLP decode u256 | 3 ns | 6 ns | **zig 2.00x** |
-| TX hash (EIP-1559) | 184 ns | 210 ns | **zig 1.14x** |
+| Keccak-256 (32B) | 264 ns | 337 ns | **zig 1.28x** |
+| Keccak-256 (4KB) | 7,820 ns | 13,094 ns | **zig 1.67x** |
+| ABI encode (static) | 36 ns | 96 ns | **zig 2.67x** |
+| ABI encode (dynamic) | 192 ns | 342 ns | **zig 1.78x** |
+| ABI decode (uint256) | 29 ns | 55 ns | **zig 1.90x** |
+| ABI decode (dynamic) | 40 ns | 258 ns | **zig 6.45x** |
+| Address derivation | 275 ns | 366 ns | **zig 1.33x** |
+| Checksum address | 329 ns | 392 ns | **zig 1.19x** |
+| UniswapV4 swap | 36 ns | 48 ns | **zig 1.33x** |
+| Hex encode (32B) | 37 ns | 47 ns | **zig 1.27x** |
+| RLP encode (EIP-1559) | 70 ns | 73 ns | **zig 1.04x** |
+| TX hash (EIP-1559) | 348 ns | 406 ns | **zig 1.17x** |
 
-alloy.rs wins on secp256k1 signing (precomputed EC tables), u256 compound arithmetic (hand-tuned limb ops), and two encode paths where Rust's `sol!` macro generates specialized code at compile time. See [full results](bench/RESULTS.md).
+alloy.rs wins on secp256k1 signing (3.13x -- variable-time precomputed tables vs eth.zig's constant-time GLV), u256 scalar arithmetic (ruint's hand-tuned limb ops), address hex parsing (SIMD), and hex/RLP decoding. See [full results](bench/RESULTS.md).
 
 ## Quick Start
 
@@ -222,13 +217,12 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 
 | Category | eth.zig | alloy.rs |
 |----------|---------|----------|
-| Benchmarks won | **19/26** | 5/26 |
-| ABI encoding | Faster (1.18-1.92x) | Faster on 1 specialized path |
-| Hashing (Keccak) | Faster (1.19-1.45x) | -- |
-| Hex operations | Faster (1.00-2.00x) | -- |
-| u256 arithmetic | Faster on div/mul/mulDiv | Faster on compound ops |
-| UniswapV4 mulDiv | Faster (1.27x) | -- |
-| secp256k1 signing | -- | Faster (precomputed tables) |
+| Benchmarks won | **15/26** | 10/26 |
+| ABI encoding/decoding | Faster (1.53-6.45x) | -- |
+| Hashing (Keccak) | Faster (1.16-1.67x) | Near-parity on 256B |
+| UniswapV4 swap | Faster (1.33x) | -- |
+| u256 scalar arithmetic | -- | Faster (ruint limb ops) |
+| secp256k1 signing | -- | Faster (3.13x, variable-time) |
 
 ### Features vs Zabi (Zig)
 

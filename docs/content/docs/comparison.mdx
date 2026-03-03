@@ -9,13 +9,12 @@ description: How eth.zig compares to alloy.rs, Zabi, and other Ethereum librarie
 
 | Category | eth.zig | alloy.rs |
 |----------|---------|----------|
-| Benchmarks won | **19/26** | 5/26 |
-| ABI encoding | Faster (1.18-1.72x) | Faster on 1 specialized path |
-| Hashing (Keccak) | Faster (1.19-1.45x) | -- |
-| Hex operations | Faster (1.00-2.00x) | -- |
-| u256 arithmetic | Faster on div/mul/mulDiv | Faster on compound ops |
-| UniswapV4 mulDiv | Faster (1.42x) | -- |
-| secp256k1 signing | -- | Faster (precomputed tables) |
+| Benchmarks won | **15/26** | 10/26 |
+| ABI encoding/decoding | Faster (1.53-6.45x) | -- |
+| Hashing (Keccak) | Faster (1.16-1.67x) | Near-parity on 256B |
+| UniswapV4 swap | Faster (1.33x) | -- |
+| u256 scalar arithmetic | -- | Faster (ruint limb ops) |
+| secp256k1 signing | -- | Faster (3.13x, variable-time) |
 
 See [full benchmark results](/benchmarks) for details.
 

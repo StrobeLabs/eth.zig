@@ -19,7 +19,7 @@ echo ""
 # -- Step 1: Run eth-zig benchmarks --
 echo "[1/3] Running eth-zig benchmarks (ReleaseFast)..."
 ZIG_OUTPUT=$(cd "$ROOT_DIR" && zig build bench 2>&1)
-echo "$ZIG_OUTPUT" | grep -v "^BENCH_JSON"
+echo "$ZIG_OUTPUT"
 echo ""
 
 # -- Step 2: Run alloy.rs benchmarks --
@@ -44,12 +44,42 @@ import re
 zig_output = sys.argv[1]
 rust_output = sys.argv[2]
 
-# Parse eth-zig BENCH_JSON lines
-zig_ns = {}
+# Parse zbench output: "name   runs   total   Xns/us/ms ± Y"
+zig_ns_raw = {}
 for line in zig_output.split('\n'):
-    if line.startswith('BENCH_JSON|'):
-        data = json.loads(line[len('BENCH_JSON|'):])
-        zig_ns[data['name']] = data['ns_per_op']
+    m = re.match(r'^(\S+)\s+\d+\s+[\d.]+\w+\s+([\d.]+)(ns|us|ms)\s', line)
+    if m:
+        name = m.group(1)
+        value = float(m.group(2))
+        unit = m.group(3)
+        if unit == 'ns':
+            zig_ns_raw[name] = round(value)
+        elif unit == 'us':
+            zig_ns_raw[name] = round(value * 1000)
+        elif unit == 'ms':
+            zig_ns_raw[name] = round(value * 1000000)
+
+# zbench may truncate long benchmark names -- resolve via prefix matching
+all_bench_names = [
+    'keccak256_empty', 'keccak256_32b', 'keccak256_256b', 'keccak256_1kb', 'keccak256_4kb',
+    'secp256k1_sign', 'secp256k1_sign_recover',
+    'address_derivation', 'address_from_hex', 'checksum_address',
+    'abi_encode_transfer', 'abi_encode_static', 'abi_encode_dynamic',
+    'abi_decode_uint256', 'abi_decode_dynamic',
+    'rlp_encode_eip1559_tx', 'rlp_decode_u256',
+    'u256_add', 'u256_mul', 'u256_div', 'u256_uniswapv2_amount_out', 'u256_mulDiv', 'u256_uniswapv4_swap',
+    'hex_encode_32b', 'hex_decode_32b', 'tx_hash_eip1559',
+    'hd_wallet_derive_10', 'eip712_hash_typed_data',
+]
+zig_ns = {}
+for raw_name, ns_val in zig_ns_raw.items():
+    if raw_name in all_bench_names:
+        zig_ns[raw_name] = ns_val
+    else:
+        for full_name in all_bench_names:
+            if full_name.startswith(raw_name) and len(raw_name) >= 10:
+                zig_ns[full_name] = ns_val
+                break
 
 # Parse criterion output
 alloy_ns = {}

@@ -121,27 +121,34 @@ fn benchChecksumAddress(_: std.mem.Allocator) void {
 // Benchmark functions -- ABI encoding
 // ============================================================================
 
-fn benchAbiEncodeTransfer(allocator: std.mem.Allocator) void {
+fn benchAbiEncodeTransfer(_: std.mem.Allocator) void {
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const alloc = fba.allocator();
     const args = [_]eth.abi_encode.AbiValue{
         .{ .address = TEST_ADDR },
         .{ .uint256 = 1_000_000_000_000_000_000 },
     };
-    const result = eth.abi_encode.encodeFunctionCall(allocator, TRANSFER_SELECTOR, &args) catch unreachable;
-    defer allocator.free(result);
+    const result = eth.abi_encode.encodeFunctionCall(alloc, TRANSFER_SELECTOR, &args) catch unreachable;
     std.mem.doNotOptimizeAway(result.ptr);
 }
 
-fn benchAbiEncodeStatic(allocator: std.mem.Allocator) void {
+fn benchAbiEncodeStatic(_: std.mem.Allocator) void {
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const alloc = fba.allocator();
     const args = [_]eth.abi_encode.AbiValue{
         .{ .address = TEST_ADDR },
         .{ .uint256 = 1_000_000_000_000_000_000 },
     };
-    const result = eth.abi_encode.encodeValues(allocator, &args) catch unreachable;
-    defer allocator.free(result);
+    const result = eth.abi_encode.encodeValues(alloc, &args) catch unreachable;
     std.mem.doNotOptimizeAway(result.ptr);
 }
 
-fn benchAbiEncodeDynamic(allocator: std.mem.Allocator) void {
+fn benchAbiEncodeDynamic(_: std.mem.Allocator) void {
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const alloc = fba.allocator();
     const array_items = [_]eth.abi_encode.AbiValue{
         .{ .uint256 = 1 },
         .{ .uint256 = 2 },
@@ -154,8 +161,7 @@ fn benchAbiEncodeDynamic(allocator: std.mem.Allocator) void {
         .{ .bytes = "hello world, this is a dynamic bytes benchmark test payload" },
         .{ .array = &array_items },
     };
-    const result = eth.abi_encode.encodeValues(allocator, &args) catch unreachable;
-    defer allocator.free(result);
+    const result = eth.abi_encode.encodeValues(alloc, &args) catch unreachable;
     std.mem.doNotOptimizeAway(result.ptr);
 }
 
@@ -163,7 +169,10 @@ fn benchAbiEncodeDynamic(allocator: std.mem.Allocator) void {
 // Benchmark functions -- ABI decoding
 // ============================================================================
 
-fn benchAbiDecodeUint256(allocator: std.mem.Allocator) void {
+fn benchAbiDecodeUint256(_: std.mem.Allocator) void {
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const alloc = fba.allocator();
     const encoded: [32]u8 = .{
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -171,15 +180,16 @@ fn benchAbiDecodeUint256(allocator: std.mem.Allocator) void {
         0x0D, 0xE0, 0xB6, 0xB3, 0xA7, 0x64, 0x00, 0x00,
     };
     const types = [_]eth.abi_types.AbiType{.uint256};
-    const values = eth.abi_decode.decodeValues(&encoded, &types, allocator) catch unreachable;
-    defer eth.abi_decode.freeValues(values, allocator);
+    const values = eth.abi_decode.decodeValues(&encoded, &types, alloc) catch unreachable;
     std.mem.doNotOptimizeAway(values.ptr);
 }
 
-fn benchAbiDecodeDynamic(allocator: std.mem.Allocator) void {
+fn benchAbiDecodeDynamic(_: std.mem.Allocator) void {
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const alloc = fba.allocator();
     const types = [_]eth.abi_types.AbiType{ .string, .bytes };
-    const values = eth.abi_decode.decodeValues(precomputed_abi_dynamic, &types, allocator) catch unreachable;
-    defer eth.abi_decode.freeValues(values, allocator);
+    const values = eth.abi_decode.decodeValues(precomputed_abi_dynamic, &types, alloc) catch unreachable;
     std.mem.doNotOptimizeAway(values.ptr);
 }
 
@@ -187,7 +197,10 @@ fn benchAbiDecodeDynamic(allocator: std.mem.Allocator) void {
 // Benchmark functions -- RLP
 // ============================================================================
 
-fn benchRlpEncodeTx(allocator: std.mem.Allocator) void {
+fn benchRlpEncodeTx(_: std.mem.Allocator) void {
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const alloc = fba.allocator();
     const tx = eth.transaction.Transaction{
         .eip1559 = .{
             .chain_id = 1,
@@ -201,8 +214,7 @@ fn benchRlpEncodeTx(allocator: std.mem.Allocator) void {
             .access_list = &.{},
         },
     };
-    const serialized = eth.transaction.serializeForSigning(allocator, tx) catch unreachable;
-    defer allocator.free(serialized);
+    const serialized = eth.transaction.serializeForSigning(alloc, tx) catch unreachable;
     std.mem.doNotOptimizeAway(serialized.ptr);
 }
 
@@ -322,7 +334,10 @@ fn benchHexDecode32(_: std.mem.Allocator) void {
 // Benchmark functions -- Transaction
 // ============================================================================
 
-fn benchTxHashEip1559(allocator: std.mem.Allocator) void {
+fn benchTxHashEip1559(_: std.mem.Allocator) void {
+    var buf: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const alloc = fba.allocator();
     const tx = eth.transaction.Transaction{
         .eip1559 = .{
             .chain_id = 1,
@@ -336,7 +351,7 @@ fn benchTxHashEip1559(allocator: std.mem.Allocator) void {
             .access_list = &.{},
         },
     };
-    const hash = eth.transaction.hashForSigning(allocator, tx) catch unreachable;
+    const hash = eth.transaction.hashForSigning(alloc, tx) catch unreachable;
     std.mem.doNotOptimizeAway(&hash);
 }
 
