@@ -54,9 +54,6 @@ pub fn build(b: *std.Build) void {
     });
     addXkcp(b, bench_module, target);
 
-    const zbench_dep = b.dependency("zbench", .{});
-    const zbench_mod = zbench_dep.module("zbench");
-
     const bench_exe = b.addExecutable(.{
         .name = "bench",
         .root_module = b.createModule(.{
@@ -65,7 +62,6 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseFast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
-                .{ .name = "zbench", .module = zbench_mod },
             },
         }),
     });
@@ -73,6 +69,23 @@ pub fn build(b: *std.Build) void {
     const run_bench = b.addRunArtifact(bench_exe);
     const bench_step = b.step("bench", "Run benchmarks (ReleaseFast)");
     bench_step.dependOn(&run_bench.step);
+
+    // u256-only benchmark (custom harness, no zbench dependency)
+    const u256_bench_exe = b.addExecutable(.{
+        .name = "u256-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/u256_bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "eth", .module = bench_module },
+            },
+        }),
+    });
+
+    const run_u256_bench = b.addRunArtifact(u256_bench_exe);
+    const u256_bench_step = b.step("bench-u256", "Run u256-only benchmarks (ReleaseFast)");
+    u256_bench_step.dependOn(&run_u256_bench.step);
 
     // Keccak comparison benchmark (eth.zig vs stdlib)
     const keccak_compare_exe = b.addExecutable(.{
@@ -83,7 +96,6 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseFast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
-                .{ .name = "zbench", .module = zbench_mod },
             },
         }),
     });

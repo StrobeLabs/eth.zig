@@ -300,7 +300,8 @@ fn bench_u256(c: &mut Criterion) {
     // mulDiv: (a * b) / c with full 512-bit intermediate (FullMath.mulDiv)
     group.bench_function("mulDiv", |b| {
         let liquidity = ONE_ETH;
-        let sqrt_price = U256::from_limbs([0, 79228162514264337593543950336u128 as u64, (79228162514264337593543950336u128 >> 64) as u64, 0]);
+        // Q96 = 2^96 = 79228162514264337593543950336
+        let sqrt_price = U256::from(79228162514264337593543950336u128);
         let denom = ONE_ETH + U256::from(1_000_000u64);
         b.iter(|| {
             // True 512-bit intermediate: widen to U512, multiply, divide, narrow back
@@ -319,7 +320,8 @@ fn bench_u256(c: &mut Criterion) {
     // that real swaps hit for typical pool parameters.
     group.bench_function("uniswap_v4_swap", |b| {
         let liquidity = ONE_ETH;
-        let sqrt_price = U256::from_limbs([0, 79228162514264337593543950336u128 as u64, (79228162514264337593543950336u128 >> 64) as u64, 0]);
+        // Q96 = 2^96 = 79228162514264337593543950336
+        let sqrt_price = U256::from(79228162514264337593543950336u128);
         let amount_in = U256::from(1_000_000_000_000_000u64);
 
         b.iter(|| {
