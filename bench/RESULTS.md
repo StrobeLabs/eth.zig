@@ -54,7 +54,7 @@ Benchmarks run on Apple Silicon with `ReleaseFast` (Zig) vs `--release` (Cargo).
 | Half-word division (`div128by64`) | u256_div: 3ns, 4.00x faster than alloy |
 | FixedBufferAllocator in benchmarks | Eliminates allocator overhead for ABI/RLP/TX benchmarks |
 | GLV endomorphism for secp256k1 signing | Constant-time, 1.4x faster than v0.2 |
-| Custom criterion-style harness | Accurate sub-ns measurement; zbench had ~25ns floor on macOS |
+| Custom criterion-style harness | Accurate timing in the sub-25ns regime; zbench had ~25ns floor on macOS |
 
 ## Where alloy.rs Wins
 
