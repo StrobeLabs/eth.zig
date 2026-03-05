@@ -1,9 +1,9 @@
 ---
 title: HD Wallets
-description: BIP-32/39/44 hierarchical deterministic wallets in pure Zig.
+description: BIP-32/39/44 hierarchical deterministic wallets.
 ---
 
-eth.zig implements the full HD wallet stack -- BIP-39 mnemonic phrases, BIP-32 key derivation, and BIP-44 Ethereum account paths -- in pure Zig with no external dependencies.
+eth.zig implements the full HD wallet stack -- BIP-39 mnemonic phrases, BIP-32 key derivation, and BIP-44 Ethereum account paths.
 
 ## From Mnemonic to Address
 
@@ -77,4 +77,4 @@ The same mnemonic with a different passphrase produces a completely different se
 | BIP-32 | Hierarchical key derivation | HMAC-SHA512 with secp256k1 |
 | BIP-44 | Standard derivation paths | `m/44'/60'/0'/0/{index}` for Ethereum |
 
-All cryptographic operations (HMAC-SHA512, PBKDF2, secp256k1) are implemented in pure Zig.
+Cryptographic operations use HMAC-SHA512 and PBKDF2 from Zig's standard library, with secp256k1 for key derivation.

@@ -5,15 +5,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.15.2-orange)](https://ziglang.org/)
 
-**The fastest Ethereum library.** Beats Rust's alloy.rs on 20 out of 26 benchmarks.
+**The fastest Ethereum library.** Beats Rust's alloy.rs on 23 out of 26 benchmarks.
 
-A complete Ethereum client library written in Zig -- ABI encoding, RLP serialization, secp256k1 signing, Keccak-256 hashing, HD wallets, ERC-20/721 tokens, JSON-RPC, ENS, and more. Just `zig build`.
+A complete Ethereum client library written in Zig -- ABI encoding, RLP serialization, secp256k1 signing, Keccak-256 hashing, HD wallets, ERC-20/721 tokens, JSON-RPC, ENS, and more.
 
 **[Read the docs at ethzig.org](https://ethzig.org)**
 
 ## Why eth.zig?
 
-**Fastest Ethereum library** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **20 out of 26 benchmarks**. ABI decoding up to 7.94x faster, Keccak hashing up to 1.34x, u256 division 4x, UniswapV2 getAmountOut 1.30x, transaction hashing 1.27x. See the [full results](bench/RESULTS.md).
+**Fastest Ethereum library** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **23 out of 26 benchmarks**. ECDSA signing 2.10x faster, ABI decoding up to 8.00x, secp256k1 recovery 4.04x, mulDiv 1.71x, u256 division 3.43x, Keccak hashing up to 1.30x. See the [full results](bench/RESULTS.md).
 
 **Comptime-first** -- Function selectors and event topics are computed at compile time with zero runtime cost. The compiler does the hashing so your program doesn't have to.
 
@@ -21,27 +21,26 @@ A complete Ethereum client library written in Zig -- ABI encoding, RLP serializa
 
 ## Performance vs alloy.rs
 
-eth.zig wins **20/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust). Criterion-style harness with 0.5s warmup and 2s measurement.
+eth.zig wins **23/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust). Criterion-style harness with 0.5s warmup and 2s measurement.
 
 | Operation | eth.zig | alloy.rs | Winner |
 |-----------|---------|----------|--------|
-| Keccak-256 (32B) | 135 ns | 179 ns | **zig 1.33x** |
-| Keccak-256 (4KB) | 4,097 ns | 4,826 ns | **zig 1.18x** |
-| ABI encode (static) | 13 ns | 51 ns | **zig 3.92x** |
-| ABI encode (dynamic) | 91 ns | 171 ns | **zig 1.88x** |
-| ABI decode (uint256) | 8 ns | 26 ns | **zig 3.25x** |
-| ABI decode (dynamic) | 17 ns | 135 ns | **zig 7.94x** |
-| Address derivation | 136 ns | 190 ns | **zig 1.40x** |
-| Checksum address | 161 ns | 201 ns | **zig 1.25x** |
-| u256 multiply | 2 ns | 5 ns | **zig 2.50x** |
-| u256 division | 3 ns | 12 ns | **zig 4.00x** |
-| UniswapV2 getAmountOut | 10 ns | 13 ns | **zig 1.30x** |
-| UniswapV4 swap | 22 ns | 24 ns | **zig 1.09x** |
-| Hex encode (32B) | 11 ns | 12 ns | **zig 1.09x** |
-| Hex decode (32B) | 12 ns | 14 ns | **zig 1.17x** |
-| TX hash (EIP-1559) | 170 ns | 216 ns | **zig 1.27x** |
+| secp256k1 sign | 24,609 ns | 51,738 ns | **zig 2.10x** |
+| secp256k1 sign+recover | 54,221 ns | 218,790 ns | **zig 4.04x** |
+| Keccak-256 (32B) | 259 ns | 336 ns | **zig 1.30x** |
+| Keccak-256 (4KB) | 7,673 ns | 9,292 ns | **zig 1.21x** |
+| ABI encode (static) | 24 ns | 97 ns | **zig 4.04x** |
+| ABI encode (dynamic) | 171 ns | 324 ns | **zig 1.89x** |
+| ABI decode (uint256) | 16 ns | 50 ns | **zig 3.12x** |
+| ABI decode (dynamic) | 32 ns | 256 ns | **zig 8.00x** |
+| u256 mulDiv (512-bit) | 17 ns | 29 ns | **zig 1.71x** |
+| u256 division | 7 ns | 24 ns | **zig 3.43x** |
+| u256 multiply | 4 ns | 10 ns | **zig 2.50x** |
+| UniswapV2 getAmountOut | 21 ns | 24 ns | **zig 1.14x** |
+| UniswapV4 swap | 41 ns | 45 ns | **zig 1.10x** |
+| TX hash (EIP-1559) | 328 ns | 402 ns | **zig 1.23x** |
 
-alloy.rs wins on secp256k1 signing (3.09x -- large precomputed EC tables), address hex parsing (1.33x -- SIMD), and u256 mulDiv (1.20x). See [full results](bench/RESULTS.md).
+alloy.rs wins only on address hex parsing (1.36x -- SIMD). See [full results](bench/RESULTS.md).
 
 ## Quick Start
 
@@ -221,19 +220,19 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 
 | Category | eth.zig | alloy.rs |
 |----------|---------|----------|
-| Benchmarks won | **20/26** | 4/26 |
-| ABI encoding/decoding | Faster (2.23-7.94x) | -- |
-| Hashing (Keccak) | Faster (1.18-1.34x) | -- |
-| u256 arithmetic | Faster on add/mul/div/V2/V4 | Faster on mulDiv (1.20x) |
-| Hex operations | Faster (1.09-1.17x) | -- |
-| secp256k1 signing | -- | Faster (3.09x, larger precomputed tables) |
+| Benchmarks won | **23/26** | 1/26 |
+| secp256k1 signing | Faster (2.10-4.04x) | -- |
+| ABI encoding/decoding | Faster (1.89-8.00x) | -- |
+| Hashing (Keccak) | Faster (1.21-1.30x) | -- |
+| u256 arithmetic | Faster on all ops (1.10-3.43x) | -- |
+| Hex operations | Faster (1.22x) | Faster on hex parsing (1.36x, SIMD) |
 
 ### Features vs Zabi (Zig)
 
 | Feature | eth.zig | Zabi |
 |---------|---------|------|
 | Comptime selectors | Yes | No |
-| Pure Zig secp256k1 | Yes | No (C binding) |
+| secp256k1 ECDSA | Yes (libsecp256k1 + Zig fallback) | Yes (C binding) |
 | ABI encode/decode | Yes | Yes |
 | HD wallets (BIP-32/39/44) | Yes | Yes |
 | ERC-20/721 wrappers | Yes | No |

@@ -11,19 +11,11 @@ eth.zig is at v0.2.2. All listed features are complete and tested, but the libra
 
 Zig >= 0.15.2. The library tracks Zig stable releases and is also tested against nightly builds in CI.
 
-## Why pure Zig instead of C bindings?
-
-Three reasons:
-
-1. **Zero supply chain risk** -- No vendored C code means no hidden vulnerabilities in dependencies you didn't write.
-2. **Cross-compilation** -- Pure Zig compiles to any target Zig supports without needing platform-specific C libraries.
-3. **Auditability** -- Every line of crypto code (secp256k1, Keccak-256, BIP-32/39/44) is readable Zig.
-
 ## How does secp256k1 signing compare to alloy.rs?
 
-alloy.rs wins on secp256k1 signing (4.09x faster) because it uses precomputed EC tables with variable-time operations. eth.zig uses Zig's standard library constant-time elliptic curve implementation, which is safer against timing side-channels but slower.
+eth.zig wins on secp256k1 signing -- 2.10x faster than alloy.rs for signing and 4.04x faster for sign+recover.
 
-eth.zig wins on nearly everything else: ABI encoding, hashing, hex ops, u256 arithmetic, address parsing, and transaction serialization.
+eth.zig wins 23 of 26 benchmarks overall. alloy.rs wins only on address hex parsing (1.36x, SIMD).
 
 ## Does eth.zig support all Ethereum transaction types?
 
@@ -48,7 +40,7 @@ Any EVM-compatible chain works -- these are just convenience configurations.
 
 ## Can I use eth.zig for MEV / HFT?
 
-Yes, that's a primary use case. eth.zig's performance advantages over alloy.rs are most relevant in latency-sensitive scenarios: ABI encoding (1.72x faster), u256 arithmetic (up to 4x faster), and comptime selectors (zero-cost at runtime).
+Yes, that's a primary use case. eth.zig beats alloy.rs on 23/26 benchmarks, with the biggest wins in secp256k1 signing (2.10x), ABI decoding (8.00x), u256 arithmetic (up to 3.43x), mulDiv (1.71x), and comptime selectors (zero-cost at runtime).
 
 ## How do I report a security vulnerability?
 
