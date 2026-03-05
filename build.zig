@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     addXkcp(b, eth_module, target);
+    addSecp256k1(b, eth_module);
 
     // Unit tests
     const unit_tests = b.addTest(.{
@@ -53,6 +54,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     addXkcp(b, bench_module, target);
+    addSecp256k1(b, bench_module);
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
@@ -178,4 +180,36 @@ fn addXkcp(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedT
         .file = b.path("src/crypto/xkcp/high/KeccakHash.c"),
         .flags = c_flags,
     });
+}
+
+/// Add libsecp256k1 (Bitcoin Core) C sources for high-performance EC operations.
+fn addSecp256k1(b: *std.Build, module: *std.Build.Module) void {
+    const c_flags = &.{
+        "-DENABLE_MODULE_RECOVERY=1", // ecrecover -- essential for Ethereum
+        "-DENABLE_MODULE_ECDH=1",
+        "-DENABLE_MODULE_EXTRAKEYS=1",
+        "-DENABLE_MODULE_SCHNORRSIG=1",
+        "-DENABLE_MODULE_ELLSWIFT=1",
+        "-DECMULT_WINDOW_SIZE=15",
+        "-DCOMB_BLOCKS=43",
+        "-DCOMB_TEETH=6",
+        "-O2",
+        "-Wno-unused-function",
+    };
+
+    module.addIncludePath(b.path("src/crypto/secp256k1/include"));
+    module.addIncludePath(b.path("src/crypto/secp256k1/src"));
+
+    // Unity build: 3 C files
+    const src_files = [_][]const u8{
+        "src/crypto/secp256k1/src/secp256k1.c",
+        "src/crypto/secp256k1/src/precomputed_ecmult.c",
+        "src/crypto/secp256k1/src/precomputed_ecmult_gen.c",
+    };
+    for (src_files) |src| {
+        module.addCSourceFile(.{
+            .file = b.path(src),
+            .flags = c_flags,
+        });
+    }
 }
