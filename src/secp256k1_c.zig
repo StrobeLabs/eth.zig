@@ -88,10 +88,10 @@ extern fn secp256k1_ec_seckey_verify(
 var global_ctx: ?*secp256k1_context = null;
 
 fn getContext() *secp256k1_context {
-    if (global_ctx) |ctx| return ctx;
+    if (@atomicLoad(?*secp256k1_context, &global_ctx, .acquire)) |ctx| return ctx;
     const ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE) orelse
         @panic("secp256k1_context_create failed");
-    global_ctx = ctx;
+    @atomicStore(?*secp256k1_context, &global_ctx, ctx, .release);
     return ctx;
 }
 
