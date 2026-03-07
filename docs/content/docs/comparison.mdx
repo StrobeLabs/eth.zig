@@ -5,17 +5,17 @@ description: How eth.zig compares to alloy.rs, Zabi, and other Ethereum librarie
 
 ## Performance vs alloy.rs (Rust)
 
-[alloy.rs](https://alloy.rs) is the leading Rust Ethereum library, backed by Paradigm. eth.zig outperforms it on the majority of benchmarks.
+[alloy.rs](https://alloy.rs) is the leading Rust Ethereum library, backed by Paradigm. eth.zig outperforms it on 23 of 26 benchmarks.
 
 | Category | eth.zig | alloy.rs |
 |----------|---------|----------|
-| Benchmarks won | **19/26** | 5/26 |
-| ABI encoding | Faster (1.18-1.72x) | Faster on 1 specialized path |
-| Hashing (Keccak) | Faster (1.19-1.45x) | -- |
-| Hex operations | Faster (1.00-2.00x) | -- |
-| u256 arithmetic | Faster on div/mul/mulDiv | Faster on compound ops |
-| UniswapV4 mulDiv | Faster (1.42x) | -- |
-| secp256k1 signing | -- | Faster (precomputed tables) |
+| Benchmarks won | **23/26** | 1/26 |
+| secp256k1 signing | Faster (2.10-4.04x) | -- |
+| ABI encoding/decoding | Faster (1.89-8.00x) | -- |
+| Hashing (Keccak) | Faster (1.21-1.30x) | -- |
+| u256 arithmetic | Faster on all ops (1.10-3.43x) | -- |
+| UniswapV4 mulDiv | Faster (1.71x) | -- |
+| Hex operations | Faster (1.22x) | Faster on hex parsing (1.36x, SIMD) |
 
 See [full benchmark results](/benchmarks) for details.
 
@@ -25,9 +25,9 @@ See [full benchmark results](/benchmarks) for details.
 
 | Feature | eth.zig | Zabi |
 |---------|---------|------|
-| Dependencies | 0 | 0 |
+| Dependencies | Vendored C (secp256k1, XKCP) | C binding (secp256k1) |
 | Comptime selectors | Yes | No |
-| Pure Zig crypto (secp256k1) | Yes | No (C binding) |
+| secp256k1 ECDSA | Yes (libsecp256k1 + Zig fallback) | Yes (C binding) |
 | ABI encode/decode | Yes | Yes |
 | HD wallets (BIP-32/39/44) | Yes | Yes |
 | ERC-20/721 wrappers | Yes | No |
@@ -39,7 +39,7 @@ See [full benchmark results](/benchmarks) for details.
 
 ### Key Differences
 
-**Pure Zig crypto**: eth.zig implements secp256k1 entirely in Zig. Zabi uses a C binding to libsecp256k1. This means eth.zig has zero C dependencies -- no cross-compilation issues, no linking headaches, and full auditability.
+**Performance**: eth.zig beats alloy.rs (Rust) on 23 of 26 benchmarks, including secp256k1 signing (2.10x faster), ABI decoding (8.00x), and u256 mulDiv (1.71x).
 
 **Comptime selectors**: eth.zig computes function selectors and event topics at compile time. This is unique to eth.zig and eliminates runtime hashing overhead. See [Comptime Selectors](/comptime).
 
@@ -51,7 +51,7 @@ See [full benchmark results](/benchmarks) for details.
 |--------|---------|-----------------|
 | Language | Zig | JavaScript/TypeScript |
 | Performance | Nanoseconds | Microseconds-milliseconds |
-| Dependencies | 0 | Many (npm packages) |
+| Dependencies | Vendored C (compiled by `zig build`) | Many (npm packages) |
 | Use case | Backend, infra, bots | Frontend, scripts, dApps |
 | Binary size | Single static binary | Node.js runtime required |
 

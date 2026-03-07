@@ -23,7 +23,7 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 
 ## Scope
 
-eth.zig includes cryptographic primitives (secp256k1 ECDSA, Keccak-256, BIP-32/39/44) implemented in pure Zig. Security issues in these components are treated as critical.
+eth.zig includes cryptographic primitives (secp256k1 ECDSA, Keccak-256, BIP-32/39/44). Security issues in these components are treated as critical.
 
 Areas of particular concern:
 

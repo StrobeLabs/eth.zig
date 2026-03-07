@@ -3,6 +3,9 @@ const keccak = @import("keccak.zig");
 const primitives = @import("primitives.zig");
 const Signature = @import("signature.zig").Signature;
 
+/// libsecp256k1 C backend for runtime operations.
+const secp256k1_c = @import("secp256k1_c.zig");
+
 const Secp256k1 = std.crypto.ecc.Secp256k1;
 const Scalar = Secp256k1.scalar.Scalar;
 const CompressedScalar = Secp256k1.scalar.CompressedScalar;
@@ -129,7 +132,15 @@ const HALF_ORDER_BYTES: [32]u8 = .{
 /// ECDSA signing with RFC 6979 deterministic nonces and recovery ID.
 /// The message_hash must already be the 32-byte Keccak-256 hash.
 /// Returns a Signature with low-S enforced per EIP-2.
+/// At runtime, uses libsecp256k1 for performance. Falls back to pure Zig at comptime.
 pub fn sign(private_key: [32]u8, message_hash: [32]u8) SignError!Signature {
+    if (@inComptime()) {
+        return builtinSign(private_key, message_hash);
+    }
+    return secp256k1_c.sign(private_key, message_hash);
+}
+
+fn builtinSign(private_key: [32]u8, message_hash: [32]u8) SignError!Signature {
     // Validate private key: must be non-zero and less than curve order
     const sk = Scalar.fromBytes(private_key, .big) catch return error.InvalidPrivateKey;
     if (sk.isZero()) return error.InvalidPrivateKey;
@@ -176,7 +187,15 @@ pub fn sign(private_key: [32]u8, message_hash: [32]u8) SignError!Signature {
 
 /// Recover the uncompressed public key (65 bytes: 0x04 || x || y) from a
 /// signature and message hash.
+/// At runtime, uses libsecp256k1. Falls back to pure Zig at comptime.
 pub fn recover(sig: Signature, message_hash: [32]u8) RecoverError![65]u8 {
+    if (@inComptime()) {
+        return builtinRecover(sig, message_hash);
+    }
+    return secp256k1_c.recover(sig, message_hash);
+}
+
+fn builtinRecover(sig: Signature, message_hash: [32]u8) RecoverError![65]u8 {
     if (sig.v > 1) return error.InvalidRecoveryId;
 
     // r and s must be valid non-zero scalars
@@ -229,7 +248,15 @@ pub fn pubkeyToAddress(pubkey: [65]u8) primitives.Address {
 }
 
 /// Derive the public key from a private key.
+/// At runtime, uses libsecp256k1. Falls back to pure Zig at comptime.
 pub fn derivePublicKey(private_key: [32]u8) SignError![65]u8 {
+    if (@inComptime()) {
+        return builtinDerivePublicKey(private_key);
+    }
+    return secp256k1_c.derivePublicKey(private_key);
+}
+
+fn builtinDerivePublicKey(private_key: [32]u8) SignError![65]u8 {
     // Validate private key: must be non-zero and less than curve order
     const sk = Scalar.fromBytes(private_key, .big) catch return error.InvalidPrivateKey;
     if (sk.isZero()) return error.InvalidPrivateKey;
