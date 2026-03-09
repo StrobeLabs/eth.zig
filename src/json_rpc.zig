@@ -83,6 +83,12 @@ pub const Method = struct {
 
     // Web3
     pub const web3_clientVersion = "web3_clientVersion";
+
+    // Flashbots / MEV
+    pub const eth_sendBundle = "eth_sendBundle";
+    pub const eth_callBundle = "eth_callBundle";
+    pub const eth_cancelBundle = "eth_cancelBundle";
+    pub const mev_sendBundle = "mev_sendBundle";
 };
 
 /// Standard JSON-RPC error codes.
