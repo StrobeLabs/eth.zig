@@ -316,6 +316,29 @@ pub const Relay = struct {
 // JSON params builders
 // ============================================================================
 
+/// Append a JSON-escaped string to buf (without surrounding quotes).
+/// Escapes quotes, backslashes, and control characters per RFC 8259.
+fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(allocator, "\\\""),
+            '\\' => try buf.appendSlice(allocator, "\\\\"),
+            '\n' => try buf.appendSlice(allocator, "\\n"),
+            '\r' => try buf.appendSlice(allocator, "\\r"),
+            '\t' => try buf.appendSlice(allocator, "\\t"),
+            else => if (c < 0x20) {
+                // Control character: \u00XX
+                const hex_chars = "0123456789abcdef";
+                try buf.appendSlice(allocator, "\\u00");
+                try buf.append(allocator, hex_chars[c >> 4]);
+                try buf.append(allocator, hex_chars[c & 0xf]);
+            } else {
+                try buf.append(allocator, c);
+            },
+        }
+    }
+}
+
 fn formatHexU64(buf: *[18]u8, value: u64) []const u8 {
     buf[0] = '0';
     buf[1] = 'x';
@@ -388,7 +411,7 @@ fn buildSendBundleParams(allocator: std.mem.Allocator, opts: SendBundleOpts) ![]
 
     if (opts.replacement_uuid) |uuid| {
         try buf.appendSlice(allocator, ",\"replacementUuid\":\"");
-        try buf.appendSlice(allocator, uuid);
+        try appendJsonEscaped(allocator, &buf, uuid);
         try buf.append(allocator, '"');
     }
 
@@ -528,7 +551,7 @@ fn buildMevSendBundleParams(allocator: std.mem.Allocator, opts: MevSendBundleOpt
             for (hints, 0..) |h, i| {
                 if (i > 0) try buf.append(allocator, ',');
                 try buf.append(allocator, '"');
-                try buf.appendSlice(allocator, h);
+                try appendJsonEscaped(allocator, &buf, h);
                 try buf.append(allocator, '"');
             }
             try buf.append(allocator, ']');
@@ -541,7 +564,7 @@ fn buildMevSendBundleParams(allocator: std.mem.Allocator, opts: MevSendBundleOpt
             for (builders, 0..) |b, i| {
                 if (i > 0) try buf.append(allocator, ',');
                 try buf.append(allocator, '"');
-                try buf.appendSlice(allocator, b);
+                try appendJsonEscaped(allocator, &buf, b);
                 try buf.append(allocator, '"');
             }
             try buf.append(allocator, ']');
@@ -559,7 +582,7 @@ fn buildCancelBundleParams(allocator: std.mem.Allocator, opts: CancelBundleOpts)
     errdefer buf.deinit(allocator);
 
     try buf.appendSlice(allocator, "[{\"replacementUuid\":\"");
-    try buf.appendSlice(allocator, opts.replacement_uuid);
+    try appendJsonEscaped(allocator, &buf, opts.replacement_uuid);
     try buf.appendSlice(allocator, "\"}]");
 
     return buf.toOwnedSlice(allocator);
@@ -660,12 +683,15 @@ fn jsonGetString(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
 /// Parse a decimal string into u256.
 fn parseDecimalU256(s: []const u8) !u256 {
     if (s.len == 0) return error.InvalidResponse;
+    const max_div_10 = std.math.maxInt(u256) / 10;
+    const max_rem: u8 = @intCast(std.math.maxInt(u256) % 10);
     var result: u256 = 0;
     for (s) |c| {
         if (c < '0' or c > '9') return error.InvalidResponse;
-        const prev = result;
-        result = result *% 10 +% (c - '0');
-        if (result < prev) return error.InvalidResponse; // overflow
+        const digit: u8 = c - '0';
+        if (result > max_div_10 or (result == max_div_10 and digit > max_rem))
+            return error.InvalidResponse;
+        result = result * 10 + digit;
     }
     return result;
 }
@@ -964,6 +990,35 @@ test "parseDecimalU256 - basic values" {
     try std.testing.expectEqual(@as(u256, 20000000000126000), try parseDecimalU256("20000000000126000"));
     try std.testing.expectError(error.InvalidResponse, parseDecimalU256(""));
     try std.testing.expectError(error.InvalidResponse, parseDecimalU256("0xabc"));
+    // max u256 should parse ok
+    try std.testing.expectEqual(std.math.maxInt(u256), try parseDecimalU256("115792089237316195423570985008687907853269984665640564039457584007913129639935"));
+    // max u256 + 1 should overflow
+    try std.testing.expectError(error.InvalidResponse, parseDecimalU256("115792089237316195423570985008687907853269984665640564039457584007913129639936"));
+}
+
+test "appendJsonEscaped - special characters" {
+    const allocator = std.testing.allocator;
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    try appendJsonEscaped(allocator, &buf, "hello\"world\\test\nnewline");
+    try std.testing.expectEqualStrings("hello\\\"world\\\\test\\nnewline", buf.items);
+}
+
+test "buildSendBundleParams - replacement_uuid with special chars" {
+    const allocator = std.testing.allocator;
+    const tx = &[_]u8{0xff};
+    const txs = [_][]const u8{tx};
+
+    const params = try buildSendBundleParams(allocator, .{
+        .transactions = &txs,
+        .block_number = 1,
+        .replacement_uuid = "uuid\"with\\quotes",
+    });
+    defer allocator.free(params);
+
+    // Verify the JSON is valid - special chars are escaped
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"replacementUuid\":\"uuid\\\"with\\\\quotes\"") != null);
 }
 
 test "SendBundleOpts defaults" {
