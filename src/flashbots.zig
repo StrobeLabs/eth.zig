@@ -5,6 +5,7 @@ const signer_mod = @import("signer.zig");
 const secp256k1 = @import("secp256k1.zig");
 const primitives = @import("primitives.zig");
 const uint256_mod = @import("uint256.zig");
+const json_rpc = @import("json_rpc.zig");
 const HttpTransport = @import("http_transport.zig").HttpTransport;
 
 // ============================================================================
@@ -38,8 +39,8 @@ pub const CallBundleOpts = struct {
     transactions: []const []const u8,
     /// Block number to simulate at.
     block_number: u64,
-    /// State block number (defaults to block_number if null).
-    state_block_number: ?u64 = null,
+    /// State block number or tag (e.g. "latest"). Defaults to block_number if null.
+    state_block_number: ?json_rpc.BlockParam = null,
     /// Timestamp to use for simulation.
     timestamp: ?u64 = null,
 };
@@ -416,8 +417,12 @@ fn buildCallBundleParams(allocator: std.mem.Allocator, opts: CallBundleOpts) ![]
     try buf.append(allocator, '"');
 
     try buf.appendSlice(allocator, ",\"stateBlockNumber\":\"");
-    const state_block = opts.state_block_number orelse opts.block_number;
-    try buf.appendSlice(allocator, formatHexU64(&hex_buf, state_block));
+    if (opts.state_block_number) |sbp| {
+        var sbp_buf: [20]u8 = undefined;
+        try buf.appendSlice(allocator, sbp.toString(&sbp_buf));
+    } else {
+        try buf.appendSlice(allocator, formatHexU64(&hex_buf, opts.block_number));
+    }
     try buf.append(allocator, '"');
 
     if (opts.timestamp) |ts| {
@@ -652,11 +657,28 @@ fn jsonGetString(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
-/// Parse a value that may be a hex string or an integer.
+/// Parse a decimal string into u256.
+fn parseDecimalU256(s: []const u8) !u256 {
+    if (s.len == 0) return error.InvalidResponse;
+    var result: u256 = 0;
+    for (s) |c| {
+        if (c < '0' or c > '9') return error.InvalidResponse;
+        const prev = result;
+        result = result *% 10 +% (c - '0');
+        if (result < prev) return error.InvalidResponse; // overflow
+    }
+    return result;
+}
+
+/// Parse a value that may be a hex string, decimal string, or integer.
+/// Flashbots returns decimal strings for bundleGasPrice, coinbaseDiff, etc.
 fn parseHexOrIntU256(obj: std.json.ObjectMap, key: []const u8) !u256 {
     const val = obj.get(key) orelse return error.InvalidResponse;
     return switch (val) {
-        .string => |s| uint256_mod.fromHex(s) catch return error.InvalidResponse,
+        .string => |s| if (s.len >= 2 and s[0] == '0' and (s[1] == 'x' or s[1] == 'X'))
+            uint256_mod.fromHex(s) catch return error.InvalidResponse
+        else
+            parseDecimalU256(s) catch return error.InvalidResponse,
         .integer => |i| if (i < 0) error.InvalidResponse else @intCast(@as(u128, @intCast(i))),
         else => error.InvalidResponse,
     };
@@ -666,7 +688,10 @@ fn parseHexOrIntU64(obj: std.json.ObjectMap, key: []const u8) !u64 {
     const val = obj.get(key) orelse return error.InvalidResponse;
     return switch (val) {
         .string => |s| blk: {
-            const v = uint256_mod.fromHex(s) catch return error.InvalidResponse;
+            const v = if (s.len >= 2 and s[0] == '0' and (s[1] == 'x' or s[1] == 'X'))
+                uint256_mod.fromHex(s) catch return error.InvalidResponse
+            else
+                parseDecimalU256(s) catch return error.InvalidResponse;
             if (v > std.math.maxInt(u64)) return error.InvalidResponse;
             break :blk @intCast(v);
         },
@@ -787,6 +812,21 @@ test "buildCallBundleParams - basic" {
     try std.testing.expect(std.mem.indexOf(u8, params, "\"stateBlockNumber\":\"0xff\"") != null);
 }
 
+test "buildCallBundleParams - with latest tag" {
+    const allocator = std.testing.allocator;
+    const tx = &[_]u8{ 0xab, 0xcd };
+    const txs = [_][]const u8{tx};
+
+    const params = try buildCallBundleParams(allocator, .{
+        .transactions = &txs,
+        .block_number = 0xff,
+        .state_block_number = .{ .tag = .latest },
+    });
+    defer allocator.free(params);
+
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"stateBlockNumber\":\"latest\"") != null);
+}
+
 test "buildMevSendBundleParams - basic" {
     const allocator = std.testing.allocator;
     const tx_data = &[_]u8{ 0xde, 0xad };
@@ -871,14 +911,15 @@ test "parseBundleHashResult - rpc error" {
     try std.testing.expectError(error.RpcError, parseBundleHashResult(std.testing.allocator, raw));
 }
 
-test "parseCallBundleResult - success" {
+test "parseCallBundleResult - success with decimal strings" {
+    // Flashbots returns decimal strings for gas/value fields
     const raw =
         \\{"jsonrpc":"2.0","id":1,"result":{
         \\"bundleHash":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        \\"bundleGasPrice":"0x1",
-        \\"coinbaseDiff":"0x2",
-        \\"ethSentToCoinbase":"0x3",
-        \\"gasFees":"0x4",
+        \\"bundleGasPrice":"476190476193",
+        \\"coinbaseDiff":"20000000000126000",
+        \\"ethSentToCoinbase":"20000000000000000",
+        \\"gasFees":"126000",
         \\"totalGasUsed":42000
         \\}}
     ;
@@ -886,10 +927,10 @@ test "parseCallBundleResult - success" {
     const result = try parseCallBundleResult(std.testing.allocator, raw);
     const expected_hash = [_]u8{0xbb} ** 32;
     try std.testing.expectEqualSlices(u8, &expected_hash, &result.bundle_hash);
-    try std.testing.expectEqual(@as(u256, 1), result.bundle_gas_price);
-    try std.testing.expectEqual(@as(u256, 2), result.coinbase_diff);
-    try std.testing.expectEqual(@as(u256, 3), result.eth_sent_to_coinbase);
-    try std.testing.expectEqual(@as(u256, 4), result.gas_fees);
+    try std.testing.expectEqual(@as(u256, 476190476193), result.bundle_gas_price);
+    try std.testing.expectEqual(@as(u256, 20000000000126000), result.coinbase_diff);
+    try std.testing.expectEqual(@as(u256, 20000000000000000), result.eth_sent_to_coinbase);
+    try std.testing.expectEqual(@as(u256, 126000), result.gas_fees);
     try std.testing.expectEqual(@as(u64, 42000), result.total_gas_used);
 }
 
@@ -914,6 +955,15 @@ test "formatHexU64 - various values" {
     try std.testing.expectEqualStrings("0xff", formatHexU64(&buf, 255));
     try std.testing.expectEqualStrings("0x100", formatHexU64(&buf, 256));
     try std.testing.expectEqualStrings("0x1036640", formatHexU64(&buf, 17000000));
+}
+
+test "parseDecimalU256 - basic values" {
+    try std.testing.expectEqual(@as(u256, 0), try parseDecimalU256("0"));
+    try std.testing.expectEqual(@as(u256, 42000), try parseDecimalU256("42000"));
+    try std.testing.expectEqual(@as(u256, 476190476193), try parseDecimalU256("476190476193"));
+    try std.testing.expectEqual(@as(u256, 20000000000126000), try parseDecimalU256("20000000000126000"));
+    try std.testing.expectError(error.InvalidResponse, parseDecimalU256(""));
+    try std.testing.expectError(error.InvalidResponse, parseDecimalU256("0xabc"));
 }
 
 test "SendBundleOpts defaults" {
