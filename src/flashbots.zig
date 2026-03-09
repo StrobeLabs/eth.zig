@@ -106,6 +106,8 @@ pub const MevSendBundleResult = struct {
 // ============================================================================
 
 /// Convenience builder for collecting signed transactions into a bundle.
+/// Stores borrowed slices -- callers must keep transaction data alive
+/// for the lifetime of the Bundle.
 pub const Bundle = struct {
     txs: std.ArrayList([]const u8),
     allocator: std.mem.Allocator,
@@ -122,11 +124,12 @@ pub const Bundle = struct {
     }
 
     /// Add a raw signed transaction (bytes, not hex).
+    /// The slice is borrowed, not copied -- caller retains ownership.
     pub fn addTransaction(self: *Bundle, signed_tx: []const u8) !void {
         try self.txs.append(self.allocator, signed_tx);
     }
 
-    /// Return the collected transactions.
+    /// Return the collected transactions as borrowed slices.
     pub fn transactions(self: *const Bundle) []const []const u8 {
         return self.txs.items;
     }
@@ -223,7 +226,7 @@ pub const Relay = struct {
         const raw = try self.authenticatedRequest("eth_sendBundle", params);
         defer self.allocator.free(raw);
 
-        return parseBundleHashResult(raw);
+        return parseBundleHashResult(self.allocator, raw);
     }
 
     /// Simulate a bundle via eth_callBundle.
@@ -234,7 +237,7 @@ pub const Relay = struct {
         const raw = try self.authenticatedRequest("eth_callBundle", params);
         defer self.allocator.free(raw);
 
-        return parseCallBundleResult(raw);
+        return parseCallBundleResult(self.allocator, raw);
     }
 
     /// Submit a bundle via mev_sendBundle (MEV-Share).
@@ -245,7 +248,7 @@ pub const Relay = struct {
         const raw = try self.authenticatedRequest("mev_sendBundle", params);
         defer self.allocator.free(raw);
 
-        const result = try parseBundleHashResult(raw);
+        const result = try parseBundleHashResult(self.allocator, raw);
         return MevSendBundleResult{ .bundle_hash = result.bundle_hash };
     }
 
@@ -258,7 +261,7 @@ pub const Relay = struct {
         defer self.allocator.free(raw);
 
         // Just verify no RPC error in response
-        try checkRpcError(raw);
+        try checkRpcError(self.allocator, raw);
     }
 
     /// Return the Ethereum address of the auth signer.
@@ -561,8 +564,8 @@ fn buildCancelBundleParams(allocator: std.mem.Allocator, opts: CancelBundleOpts)
 // Response parsing
 // ============================================================================
 
-fn checkRpcError(raw: []const u8) !void {
-    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, raw, .{}) catch {
+fn checkRpcError(allocator: std.mem.Allocator, raw: []const u8) !void {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
         return error.InvalidResponse;
     };
     defer parsed.deinit();
@@ -575,8 +578,8 @@ fn checkRpcError(raw: []const u8) !void {
     }
 }
 
-fn parseBundleHashResult(raw: []const u8) !SendBundleResult {
-    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, raw, .{}) catch {
+fn parseBundleHashResult(allocator: std.mem.Allocator, raw: []const u8) !SendBundleResult {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
         return error.InvalidResponse;
     };
     defer parsed.deinit();
@@ -602,8 +605,8 @@ fn parseBundleHashResult(raw: []const u8) !SendBundleResult {
     return SendBundleResult{ .bundle_hash = bundle_hash };
 }
 
-fn parseCallBundleResult(raw: []const u8) !CallBundleResult {
-    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, raw, .{}) catch {
+fn parseCallBundleResult(allocator: std.mem.Allocator, raw: []const u8) !CallBundleResult {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
         return error.InvalidResponse;
     };
     defer parsed.deinit();
@@ -856,7 +859,7 @@ test "parseBundleHashResult - success" {
         \\{"jsonrpc":"2.0","id":1,"result":{"bundleHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
     ;
 
-    const result = try parseBundleHashResult(raw);
+    const result = try parseBundleHashResult(std.testing.allocator, raw);
     const expected = [_]u8{0xaa} ** 32;
     try std.testing.expectEqualSlices(u8, &expected, &result.bundle_hash);
 }
@@ -865,7 +868,7 @@ test "parseBundleHashResult - rpc error" {
     const raw =
         \\{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"bundle failed"}}
     ;
-    try std.testing.expectError(error.RpcError, parseBundleHashResult(raw));
+    try std.testing.expectError(error.RpcError, parseBundleHashResult(std.testing.allocator, raw));
 }
 
 test "parseCallBundleResult - success" {
@@ -880,7 +883,7 @@ test "parseCallBundleResult - success" {
         \\}}
     ;
 
-    const result = try parseCallBundleResult(raw);
+    const result = try parseCallBundleResult(std.testing.allocator, raw);
     const expected_hash = [_]u8{0xbb} ** 32;
     try std.testing.expectEqualSlices(u8, &expected_hash, &result.bundle_hash);
     try std.testing.expectEqual(@as(u256, 1), result.bundle_gas_price);
