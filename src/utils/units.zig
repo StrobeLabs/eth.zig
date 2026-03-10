@@ -15,8 +15,11 @@ const ETHER_F64: f64 = @as(f64, @floatFromInt(ETHER));
 const GWEI_F64: f64 = @as(f64, @floatFromInt(GWEI));
 const TWO_POW_128_F64: f64 = 2.0 * @as(f64, @floatFromInt(@as(u128, 1) << 127));
 
+const MAX_U128_F64: f64 = @as(f64, @floatFromInt(std.math.maxInt(u128)));
+
 inline fn f64ToU256(value: f64) ?u256 {
     if (value < 0.0 or !std.math.isFinite(value)) return null;
+    if (value > MAX_U128_F64) return null;
     return @as(u256, @as(u128, @intFromFloat(value)));
 }
 
@@ -80,6 +83,11 @@ test "parseEther negative returns null" {
 test "parseEther non-finite returns null" {
     try std.testing.expectEqual(@as(?u256, null), parseEther(std.math.inf(f64)));
     try std.testing.expectEqual(@as(?u256, null), parseEther(std.math.nan(f64)));
+}
+
+test "parseEther overflow returns null" {
+    // 1e30 ether = 1e48 wei exceeds u128 max
+    try std.testing.expectEqual(@as(?u256, null), parseEther(1e30));
 }
 
 test "parseEther large value" {

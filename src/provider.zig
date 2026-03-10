@@ -651,7 +651,7 @@ fn parseTransactionReceipt(allocator: std.mem.Allocator, raw: []const u8) !?rece
     const logs = try parseLogsArray(allocator, obj);
     errdefer {
         for (logs) |log| {
-            if (log.data.len > 0) allocator.free(log.data);
+            allocator.free(log.data);
             if (log.topics.len > 0) allocator.free(log.topics);
         }
         if (logs.len > 0) allocator.free(logs);
@@ -700,7 +700,7 @@ fn parseLogsArray(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ![]cons
     var parsed_count: usize = 0;
     errdefer {
         for (logs[0..parsed_count]) |log| {
-            if (log.data.len > 0) allocator.free(log.data);
+            allocator.free(log.data);
             if (log.topics.len > 0) allocator.free(log.topics);
         }
         allocator.free(logs);
@@ -798,7 +798,7 @@ fn parseLogsResponse(allocator: std.mem.Allocator, raw: []const u8) ![]receipt_m
     var parsed_count: usize = 0;
     errdefer {
         for (logs[0..parsed_count]) |log| {
-            if (log.data.len > 0) allocator.free(log.data);
+            allocator.free(log.data);
             if (log.topics.len > 0) allocator.free(log.topics);
         }
         allocator.free(logs);
@@ -861,7 +861,7 @@ fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_mod.B
     // Parse extraData
     const extra_data_str = jsonGetString(obj, "extraData") orelse "0x";
     const extra_data = try parseHexBytes(allocator, extra_data_str);
-    errdefer if (extra_data.len > 0) allocator.free(extra_data);
+    errdefer allocator.free(extra_data);
 
     // Optional EIP-1559 / EIP-4844 fields
     const base_fee: ?u256 = if (jsonGetString(obj, "baseFeePerGas")) |s|
