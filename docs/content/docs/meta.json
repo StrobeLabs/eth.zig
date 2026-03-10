@@ -12,6 +12,8 @@
     "comptime",
     "ens",
     "websockets",
+    "batch-calls",
+    "dex-math",
     "---Reference---",
     "modules",
     "benchmarks",

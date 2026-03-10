@@ -631,25 +631,39 @@ pub inline fn mulDiv(a: u256, b: u256, denominator: u256) ?u256 {
     return if (divWide(wide, d_limbs)) |q| limbsToU256(q) else null;
 }
 
+/// mulDiv with rounding up: ceil(a * b / denominator)
+pub fn mulDivRoundingUp(a: u256, b: u256, denominator: u256) ?u256 {
+    const result = mulDiv(a, b, denominator) orelse return null;
+    if (denominator == 0) return null;
+    // Check remainder: if result * denominator != a * b, round up
+    const a_limbs = u256ToLimbs(a);
+    const b_limbs = u256ToLimbs(b);
+    const wide_ab = mulWide(a_limbs, b_limbs);
+    const result_limbs = u256ToLimbs(result);
+    const d_limbs = u256ToLimbs(denominator);
+    const wide_rd = mulWide(result_limbs, d_limbs);
+    var has_remainder = false;
+    var i: usize = 7;
+    while (true) : (i -= 1) {
+        if (wide_ab[i] != wide_rd[i]) {
+            has_remainder = wide_ab[i] > wide_rd[i];
+            break;
+        }
+        if (i == 0) break;
+    }
+    if (has_remainder) {
+        if (result == MAX) return null;
+        return result + 1;
+    }
+    return result;
+}
+
 /// Compute UniswapV2 getAmountOut entirely in u64-limb space.
 /// Formula: (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
-/// Uses limb arithmetic + div128by64 to avoid __udivti3 (u128/u128 software division).
+/// Delegates to dex/v2.zig with the standard Uniswap V2 fee (997/1000).
 pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) u256 {
-    if (amount_in == 0) return 0;
-
-    const ai = u256ToLimbs(amount_in);
-    const ri = u256ToLimbs(reserve_in);
-    const ro = u256ToLimbs(reserve_out);
-
-    const amount_in_with_fee = mulLimbScalar(ai, 997);
-    const numerator = mulLimbs(amount_in_with_fee, ro);
-    const denominator = addLimbs(mulLimbScalar(ri, 1000), amount_in_with_fee);
-
-    if (denominator[0] == 0 and denominator[1] == 0 and denominator[2] == 0 and denominator[3] == 0) {
-        @panic("getAmountOut: denominator is zero (invalid reserves)");
-    }
-
-    return limbsToU256(divLimbsDirect(numerator, denominator));
+    const dex_v2 = @import("dex/v2.zig");
+    return dex_v2.getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000);
 }
 
 /// Q96 constant (2^96) used in UniswapV3/V4 fixed-point arithmetic.

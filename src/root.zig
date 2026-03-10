@@ -51,6 +51,11 @@ pub const event = @import("event.zig");
 pub const erc20 = @import("erc20.zig");
 pub const erc721 = @import("erc721.zig");
 
+// -- DEX Math --
+pub const dex_v2 = @import("dex/v2.zig");
+pub const dex_v3 = @import("dex/v3.zig");
+pub const dex_router = @import("dex/router.zig");
+
 // -- Layer 9: Standards --
 pub const eip712 = @import("eip712.zig");
 pub const abi_json = @import("abi_json.zig");
@@ -124,4 +129,8 @@ test {
     _ = @import("ens/reverse.zig");
     // Utils
     _ = @import("utils/units.zig");
+    // DEX Math
+    _ = @import("dex/v2.zig");
+    _ = @import("dex/v3.zig");
+    _ = @import("dex/router.zig");
 }
