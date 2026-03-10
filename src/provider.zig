@@ -422,7 +422,7 @@ fn parseBatchResponse(allocator: std.mem.Allocator, raw: []const u8, ids: []cons
         // Get id
         const id_val = obj.get("id") orelse continue;
         const id: u64 = switch (id_val) {
-            .integer => |i| @intCast(i),
+            .integer => |i| if (i >= 0) @as(u64, @intCast(i)) else continue,
             else => continue,
         };
 
@@ -471,7 +471,7 @@ fn parseBatchResponse(allocator: std.mem.Allocator, raw: []const u8, ids: []cons
 pub fn freeBatchResults(allocator: std.mem.Allocator, results: []BatchCallResult) void {
     for (results) |r| {
         switch (r) {
-            .success => |data| if (data.len > 0) allocator.free(data),
+            .success => |data| allocator.free(data),
             .rpc_error => |e| if (e.message.len > 0) allocator.free(@constCast(e.message)),
         }
     }
