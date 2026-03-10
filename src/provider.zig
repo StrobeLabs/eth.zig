@@ -341,6 +341,8 @@ pub const BatchCaller = struct {
         self.calldata.deinit(self.allocator);
     }
 
+    /// Add an eth_call to the batch. Returns the index for result retrieval.
+    /// `data` is borrowed (not copied) -- caller must keep it valid until `execute()` returns.
     pub fn addCall(self: *BatchCaller, to: [20]u8, data: []const u8) !usize {
         const index = self.targets.items.len;
         try self.targets.append(self.allocator, to);
@@ -391,10 +393,12 @@ pub const BatchCaller = struct {
     }
 };
 
+/// Parse a JSON-RPC batch response, matching results to request IDs.
+/// Unmatched IDs are left as sentinel values: `.rpc_error = .{ .code = -1, .message = "" }`.
+/// Callers can detect missing responses by checking for `code == -1` and `message.len == 0`.
 fn parseBatchResponse(allocator: std.mem.Allocator, raw: []const u8, ids: []const u64) ![]BatchCallResult {
     const n = ids.len;
     var results = try allocator.alloc(BatchCallResult, n);
-    // Initialize all to a sentinel so we can detect missing responses
     for (results) |*r| r.* = .{ .rpc_error = .{ .code = -1, .message = "" } };
 
     // Parse JSON array

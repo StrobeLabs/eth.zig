@@ -45,8 +45,8 @@ const required_input = eth.dex_v2.getAmountIn(
 
 ```zig
 const path = [_]eth.dex_v2.Pair{
-    .{ .reserve_in = 100e18, .reserve_out = 200_000e6 },   // ETH -> USDC
-    .{ .reserve_in = 300_000e6, .reserve_out = 50e18 },    // USDC -> DAI
+    .{ .reserve_in = 100e18, .reserve_out = 200_000e6 },   // ETH (18 dec) -> USDC (6 dec)
+    .{ .reserve_in = 300_000e6, .reserve_out = 50e18 },    // USDC (6 dec) -> DAI (18 dec)
 };
 
 // Forward: how much DAI for 1 ETH?
@@ -82,6 +82,9 @@ const sqrt_price_0 = eth.dex_v3.getSqrtRatioAtTick(0).?;     // tick 0 = price 1
 // Convert sqrtPriceX96 back to tick
 const tick = eth.dex_v3.getTickAtSqrtRatio(sqrt_price).?;     // = 100
 ```
+
+> These functions return `null` for out-of-range ticks (outside `MIN_TICK`..`MAX_TICK`)
+> or invalid sqrt prices. Always check the result before unwrapping with `.?`.
 
 ### Token Amount Deltas
 

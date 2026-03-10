@@ -257,6 +257,7 @@ pub fn getAmount1Delta(sqrt_ratio_a_x96: u256, sqrt_ratio_b_x96: u256, liquidity
 /// When add=true (input token0), price goes down.
 /// When add=false (output token0), price goes up.
 pub fn getNextSqrtPriceFromAmount0RoundingUp(sqrt_price_x96: u256, liquidity: u128, amount: u256, add: bool) ?u256 {
+    if (liquidity == 0 or sqrt_price_x96 == 0) return null;
     if (amount == 0) return sqrt_price_x96;
     const numerator1: u256 = @as(u256, liquidity) << 96;
 
@@ -295,6 +296,7 @@ pub fn getNextSqrtPriceFromAmount0RoundingUp(sqrt_price_x96: u256, liquidity: u1
 /// When add=true (input token1), price goes up.
 /// When add=false (output token1), price goes down.
 pub fn getNextSqrtPriceFromAmount1RoundingDown(sqrt_price_x96: u256, liquidity: u128, amount: u256, add: bool) ?u256 {
+    if (liquidity == 0 or sqrt_price_x96 == 0) return null;
     if (add) {
         // quotient = amount * Q96 / liquidity (or amount << 96 / liquidity if fits)
         const quotient: u256 = if (amount <= (@as(u256, 1) << 160) - 1)
@@ -359,6 +361,12 @@ pub fn computeSwapStep(
     amount_remaining: i256,
     fee_pips: u24, // e.g. 3000 = 0.3%
 ) SwapStepResult {
+    if (fee_pips > 1_000_000) return .{
+        .sqrt_ratio_next_x96 = sqrt_ratio_current_x96,
+        .amount_in = 0,
+        .amount_out = 0,
+        .fee_amount = 0,
+    };
     const zero_for_one = sqrt_ratio_current_x96 >= sqrt_ratio_target_x96;
     const exact_in = amount_remaining >= 0;
 
@@ -533,7 +541,28 @@ pub fn simulateSwap(
                 }
             }
             ticks_crossed += 1;
+            if (current_liquidity == 0) break;
         }
+    }
+
+    // Terminal step: consume remaining input in unbounded range if liquidity available
+    if (amount_remaining > 0 and current_liquidity > 0) {
+        const terminal_sqrt: u256 = if (zero_for_one) MIN_SQRT_RATIO + 1 else MAX_SQRT_RATIO - 1;
+        const step = computeSwapStep(
+            current_sqrt_price,
+            terminal_sqrt,
+            current_liquidity,
+            @as(i256, @intCast(amount_remaining)),
+            fee_pips,
+        );
+        const consumed = step.amount_in + step.fee_amount;
+        if (consumed >= amount_remaining) {
+            amount_remaining = 0;
+        } else {
+            amount_remaining -= consumed;
+        }
+        total_amount_out += step.amount_out;
+        current_sqrt_price = step.sqrt_ratio_next_x96;
     }
 
     return .{

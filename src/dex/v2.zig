@@ -27,6 +27,8 @@ pub const Pair = struct {
 /// Formula: (amountIn * feeNum * reserveOut) / (reserveIn * feeDenom + amountIn * feeNum)
 pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256, fee_numerator: u64, fee_denominator: u64) u256 {
     if (amount_in == 0) return 0;
+    if (reserve_in == 0 or reserve_out == 0) return 0;
+    if (fee_denominator == 0) return 0;
 
     const ai = u256ToLimbs(amount_in);
     const ri = u256ToLimbs(reserve_in);
@@ -47,7 +49,10 @@ pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256, fee_nu
 /// Formula: (reserveIn * amountOut * feeDenom) / ((reserveOut - amountOut) * feeNum) + 1
 /// Returns null if amount_out >= reserve_out (insufficient liquidity).
 pub fn getAmountIn(amount_out: u256, reserve_in: u256, reserve_out: u256, fee_numerator: u64, fee_denominator: u64) ?u256 {
-    if (amount_out == 0) return 0;
+    if (amount_out == 0) return @as(u256, 0);
+    if (reserve_in == 0 or reserve_out == 0) return null;
+    if (fee_denominator == 0) return null;
+    if (fee_numerator == 0) return null;
     if (amount_out >= reserve_out) return null;
 
     const reserve_diff = reserve_out - amount_out;
@@ -116,14 +121,17 @@ pub fn calculateProfit(amount_in: u256, path: []const Pair) ?u256 {
 // Tests
 // ============================================================================
 
-test "getAmountOut matches legacy" {
-    const amount_in: u256 = 1_000_000_000_000_000_000; // 1 ETH
-    const reserve_in: u256 = 100_000_000_000_000_000_000; // 100 ETH
-    const reserve_out: u256 = 200_000_000_000; // 200k USDC (6 decimals)
+test "getAmountOut known value" {
+    // 1 ETH in, 100 ETH / 200k USDC pool, 0.3% fee
+    // Expected: (1e18 * 997 * 200e9) / (100e18 * 1000 + 1e18 * 997) = 1_974_316_068
+    const v2_result = getAmountOut(1_000_000_000_000_000_000, 100_000_000_000_000_000_000, 200_000_000_000, 997, 1000);
+    try std.testing.expectEqual(@as(u256, 1_974_316_068), v2_result);
+}
 
-    const v2_result = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000);
-    const legacy_result = uint256_mod.getAmountOut(amount_in, reserve_in, reserve_out);
-    try std.testing.expectEqual(legacy_result, v2_result);
+test "getAmountOut zero reserves" {
+    try std.testing.expectEqual(@as(u256, 0), getAmountOut(1000, 0, 200_000, 997, 1000));
+    try std.testing.expectEqual(@as(u256, 0), getAmountOut(1000, 100_000, 0, 997, 1000));
+    try std.testing.expectEqual(@as(u256, 0), getAmountOut(1000, 100_000, 200_000, 997, 0));
 }
 
 test "getAmountOut different fees" {

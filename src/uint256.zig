@@ -634,7 +634,6 @@ pub inline fn mulDiv(a: u256, b: u256, denominator: u256) ?u256 {
 /// mulDiv with rounding up: ceil(a * b / denominator)
 pub fn mulDivRoundingUp(a: u256, b: u256, denominator: u256) ?u256 {
     const result = mulDiv(a, b, denominator) orelse return null;
-    if (denominator == 0) return null;
     // Check remainder: if result * denominator != a * b, round up
     const a_limbs = u256ToLimbs(a);
     const b_limbs = u256ToLimbs(b);

@@ -79,47 +79,45 @@ pub fn quoteExactOutput(amount_out: u256, hops: []const Pool) ?u256 {
 /// Returns null if no profitable opportunity exists.
 pub fn findArbOpportunity(hops: []const Pool, max_input: u256) ?ArbOpportunity {
     if (hops.len == 0) return null;
+    if (max_input == 0) return null;
 
-    // Check if there's any profit at all with a small amount
-    const small_amount: u256 = 1000;
+    // Probe with a small amount to check if arb exists
+    const small_amount = @min(@as(u256, 1000), max_input);
     const small_output = quoteExactInput(small_amount, hops) orelse return null;
     if (small_output <= small_amount) return null;
 
-    // Binary search for optimal input
-    // The profit function is concave, so we search for the peak
+    // Binary search for optimal input (profit is concave for constant-product AMMs)
     var lo: u256 = 1;
     var hi: u256 = max_input;
 
-    // Run binary search for ~100 iterations (enough for u256 precision)
     var iterations: u32 = 0;
-    while (lo < hi and iterations < 128) : (iterations += 1) {
-        // Avoid overflow in midpoint calculation
+    while (lo + 1 < hi and iterations < 128) : (iterations += 1) {
         const mid = lo + (hi - lo) / 2;
-        if (mid == lo) break;
 
         const mid_output = quoteExactInput(mid, hops) orelse break;
         if (mid == std.math.maxInt(u256)) break;
         const mid_plus = quoteExactInput(mid + 1, hops) orelse break;
 
-        // Check marginal profit at mid: is f(mid+1) - f(mid) > 1?
-        // If marginal output > marginal input (1), we can increase input
+        // Check marginal profit: is f(mid+1) - f(mid) > 1?
         if (mid_plus > mid_output and mid_plus - mid_output > 1) {
-            // Still profitable to increase - marginal output > marginal input
             lo = mid;
         } else {
             hi = mid;
         }
     }
 
-    // Evaluate profit at the found optimal point
-    const optimal = lo;
-    const output = quoteExactInput(optimal, hops) orelse return null;
-    if (output <= optimal) return null;
+    // Evaluate both endpoints, pick the better one
+    const lo_output = quoteExactInput(lo, hops);
+    const hi_output = quoteExactInput(hi, hops);
+    const lo_profit: u256 = if (lo_output) |o| (if (o > lo) o - lo else 0) else 0;
+    const hi_profit: u256 = if (hi_output) |o| (if (o > hi) o - hi else 0) else 0;
 
-    return .{
-        .profit = output - optimal,
-        .optimal_input = optimal,
-    };
+    if (lo_profit == 0 and hi_profit == 0) return null;
+
+    return if (hi_profit > lo_profit)
+        .{ .profit = hi_profit, .optimal_input = hi }
+    else
+        .{ .profit = lo_profit, .optimal_input = lo };
 }
 
 // ============================================================================
