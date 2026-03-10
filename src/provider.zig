@@ -401,6 +401,7 @@ fn parseBatchResponse(allocator: std.mem.Allocator, raw: []const u8, ids: []cons
     const n = ids.len;
     var results = try allocator.alloc(BatchCallResult, n);
     for (results) |*r| r.* = .{ .rpc_error = .{ .code = -1, .message = null } };
+    errdefer freeBatchResults(allocator, results);
 
     // Parse JSON array
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
