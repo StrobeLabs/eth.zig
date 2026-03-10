@@ -317,7 +317,7 @@ pub const BatchCallResult = union(enum) {
 
     pub const RpcErrorData = struct {
         code: i64,
-        message: []const u8,
+        message: ?[]u8,
     };
 };
 
@@ -361,8 +361,9 @@ pub const BatchCaller = struct {
 
         // Build individual request bodies
         const bodies = try self.allocator.alloc([]u8, n);
+        @memset(bodies, &.{});
         defer {
-            for (bodies) |b| self.allocator.free(b);
+            for (bodies) |b| if (b.len > 0) self.allocator.free(b);
             self.allocator.free(bodies);
         }
 
@@ -394,12 +395,12 @@ pub const BatchCaller = struct {
 };
 
 /// Parse a JSON-RPC batch response, matching results to request IDs.
-/// Unmatched IDs are left as sentinel values: `.rpc_error = .{ .code = -1, .message = "" }`.
-/// Callers can detect missing responses by checking for `code == -1` and `message.len == 0`.
+/// Unmatched IDs are left as sentinel values: `.rpc_error = .{ .code = -1, .message = null }`.
+/// Callers can detect missing responses by checking for `code == -1` and `message == null`.
 fn parseBatchResponse(allocator: std.mem.Allocator, raw: []const u8, ids: []const u64) ![]BatchCallResult {
     const n = ids.len;
     var results = try allocator.alloc(BatchCallResult, n);
-    for (results) |*r| r.* = .{ .rpc_error = .{ .code = -1, .message = "" } };
+    for (results) |*r| r.* = .{ .rpc_error = .{ .code = -1, .message = null } };
 
     // Parse JSON array
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
@@ -447,8 +448,8 @@ fn parseBatchResponse(allocator: std.mem.Allocator, raw: []const u8, ids: []cons
                     .string => |s| s,
                     else => "unknown error",
                 } else "unknown error";
-                // Dupe message since parsed will be freed
-                const msg_copy = try allocator.dupe(u8, message);
+                // Dupe message since parsed JSON will be freed
+                const msg_copy: []u8 = try allocator.dupe(u8, message);
                 results[index] = .{ .rpc_error = .{ .code = code, .message = msg_copy } };
                 continue;
             }
@@ -472,7 +473,7 @@ pub fn freeBatchResults(allocator: std.mem.Allocator, results: []BatchCallResult
     for (results) |r| {
         switch (r) {
             .success => |data| allocator.free(data),
-            .rpc_error => |e| if (e.message.len > 0) allocator.free(@constCast(e.message)),
+            .rpc_error => |e| if (e.message) |msg| allocator.free(msg),
         }
     }
     allocator.free(results);
