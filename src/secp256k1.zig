@@ -274,12 +274,16 @@ fn builtinDerivePublicKey(private_key: [32]u8) SignError![65]u8 {
 /// RFC 6979 deterministic nonce generation using HMAC-SHA256.
 /// Implements the algorithm from RFC 6979 Section 3.2.
 fn generateRfc6979Nonce(private_key: [32]u8, message_hash: [32]u8) Scalar {
+    const secureZero = @import("utils/constants.zig").secureZero;
+
     // Step a: h1 = message_hash (already provided, 32 bytes)
     // Step b: V = 0x01 0x01 ... 0x01 (32 bytes of 0x01)
     var v: [32]u8 = [_]u8{0x01} ** 32;
+    defer secureZero(&v);
 
     // Step c: K = 0x00 0x00 ... 0x00 (32 bytes of 0x00)
     var k: [32]u8 = [_]u8{0x00} ** 32;
+    defer secureZero(&k);
 
     // Step d: K = HMAC_K(V || 0x00 || int2octets(x) || bits2octets(h1))
     var hmac_d = HmacSha256.init(&k);

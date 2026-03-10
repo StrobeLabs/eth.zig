@@ -57,7 +57,7 @@ pub const ERC721 = struct {
             &.{},
             &.{.string},
         );
-        defer self.contract.allocator.free(result);
+        defer contract_mod.freeReturnValues(result, self.contract.allocator);
         if (result.len == 0) return error.InvalidResponse;
         const s = result[0].string;
         const owned = try self.contract.allocator.alloc(u8, s.len);
@@ -76,7 +76,7 @@ pub const ERC721 = struct {
             &.{},
             &.{.string},
         );
-        defer self.contract.allocator.free(result);
+        defer contract_mod.freeReturnValues(result, self.contract.allocator);
         if (result.len == 0) return error.InvalidResponse;
         const s = result[0].string;
         const owned = try self.contract.allocator.alloc(u8, s.len);
@@ -96,7 +96,7 @@ pub const ERC721 = struct {
             &args,
             &.{.string},
         );
-        defer self.contract.allocator.free(result);
+        defer contract_mod.freeReturnValues(result, self.contract.allocator);
         if (result.len == 0) return error.InvalidResponse;
         const s = result[0].string;
         const owned = try self.contract.allocator.alloc(u8, s.len);

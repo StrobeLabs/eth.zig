@@ -1,6 +1,8 @@
 const std = @import("std");
 const uint256_mod = @import("uint256.zig");
 
+const max_tuple_values = 32;
+
 /// Tagged union representing any ABI-encodable value.
 pub const AbiValue = union(enum) {
     /// Unsigned 256-bit integer (covers uint8 through uint256).
@@ -54,11 +56,13 @@ pub const AbiValue = union(enum) {
 /// Errors during ABI encoding.
 pub const EncodeError = error{
     OutOfMemory,
+    TooManyValues,
 };
 
 /// Encode a slice of ABI values according to the Solidity ABI specification.
 /// Returns the encoded bytes. Caller owns the returned memory.
 pub fn encodeValues(allocator: std.mem.Allocator, values: []const AbiValue) EncodeError![]u8 {
+    if (values.len > max_tuple_values) return error.TooManyValues;
     const total = calcEncodedSize(values);
     const buf = try allocator.alloc(u8, total);
     errdefer allocator.free(buf);
@@ -69,6 +73,7 @@ pub fn encodeValues(allocator: std.mem.Allocator, values: []const AbiValue) Enco
 /// Encode a function call: 4-byte selector followed by ABI-encoded arguments.
 /// Returns the encoded bytes. Caller owns the returned memory.
 pub fn encodeFunctionCall(allocator: std.mem.Allocator, selector: [4]u8, values: []const AbiValue) EncodeError![]u8 {
+    if (values.len > max_tuple_values) return error.TooManyValues;
     const total = 4 + calcEncodedSize(values);
     const buf = try allocator.alloc(u8, total);
     errdefer allocator.free(buf);
@@ -131,7 +136,8 @@ fn encodeValuesInto(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), value
 
     // First pass: calculate tail offsets for dynamic values
     // and pre-compute the offset each dynamic value will be at
-    var offsets: [32]usize = undefined; // max 32 values in a single tuple
+    std.debug.assert(values.len <= max_tuple_values);
+    var offsets: [max_tuple_values]usize = undefined;
     for (values, 0..) |val, i| {
         if (val.isDynamic()) {
             offsets[i] = tail_offset;
@@ -151,7 +157,7 @@ fn encodeValuesInto(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), value
     // Third pass: write tail section directly into buf (no temp allocations)
     for (values) |val| {
         if (val.isDynamic()) {
-            encodeDynamicValueInto(allocator, buf, val);
+            encodeDynamicValueInto(buf, val);
         }
     }
 }
@@ -202,49 +208,8 @@ fn encodeStaticValueNoAlloc(buf: *std.ArrayList(u8), val: AbiValue) void {
     }
 }
 
-/// Encode a static value directly as a 32-byte word (allocating variant for backward compat).
-fn encodeStaticValue(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), val: AbiValue) EncodeError!void {
-    switch (val) {
-        .uint256 => |v| {
-            try writeUint256(allocator, buf, v);
-        },
-        .int256 => |v| {
-            try writeInt256(allocator, buf, v);
-        },
-        .address => |v| {
-            var word: [32]u8 = [_]u8{0} ** 32;
-            @memcpy(word[12..32], &v);
-            try buf.appendSlice(allocator, &word);
-        },
-        .boolean => |v| {
-            var word: [32]u8 = [_]u8{0} ** 32;
-            if (v) word[31] = 1;
-            try buf.appendSlice(allocator, &word);
-        },
-        .fixed_bytes => |v| {
-            var word: [32]u8 = [_]u8{0} ** 32;
-            const size: usize = @intCast(v.len);
-            @memcpy(word[0..size], v.data[0..size]);
-            try buf.appendSlice(allocator, &word);
-        },
-        .fixed_array => |items| {
-            for (items) |item| {
-                try encodeStaticValue(allocator, buf, item);
-            }
-        },
-        .tuple => |items| {
-            for (items) |item| {
-                try encodeStaticValue(allocator, buf, item);
-            }
-        },
-        else => unreachable,
-    }
-}
-
 /// Encode a dynamic value directly into the output buffer (no temp allocation).
-fn encodeDynamicValueInto(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), val: AbiValue) void {
-    _ = allocator;
-
+fn encodeDynamicValueInto(buf: *std.ArrayList(u8), val: AbiValue) void {
     switch (val) {
         .bytes => |data| {
             writeUint256NoAlloc(buf, @intCast(data.len));
@@ -281,7 +246,8 @@ fn encodeValuesIntoNoAlloc(buf: *std.ArrayList(u8), values: []const AbiValue) vo
     var tail_offset: usize = head_size;
 
     // Calculate offsets for dynamic values
-    var offsets: [32]usize = undefined;
+    std.debug.assert(values.len <= max_tuple_values);
+    var offsets: [max_tuple_values]usize = undefined;
     for (values, 0..) |val, i| {
         if (val.isDynamic()) {
             offsets[i] = tail_offset;
@@ -301,7 +267,7 @@ fn encodeValuesIntoNoAlloc(buf: *std.ArrayList(u8), values: []const AbiValue) vo
     // Write tails
     for (values) |val| {
         if (val.isDynamic()) {
-            encodeDynamicValueInto(undefined, buf, val);
+            encodeDynamicValueInto(buf, val);
         }
     }
 }
@@ -336,7 +302,8 @@ fn writeValuesDirect(buf: []u8, values: []const AbiValue) void {
     }
     var tail_offset: usize = head_size;
 
-    var offsets: [32]usize = undefined;
+    std.debug.assert(values.len <= max_tuple_values);
+    var offsets: [max_tuple_values]usize = undefined;
     for (values, 0..) |val, i| {
         if (val.isDynamic()) {
             offsets[i] = tail_offset;
@@ -419,19 +386,6 @@ fn writeDynamicValueDirect(buf: []u8, val: AbiValue) usize {
         },
         else => unreachable,
     }
-}
-
-/// Write a u256 as a big-endian 32-byte word.
-fn writeUint256(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), value: u256) EncodeError!void {
-    const bytes = uint256_mod.toBigEndianBytes(value);
-    try buf.appendSlice(allocator, &bytes);
-}
-
-/// Write an i256 as a big-endian 32-byte two's complement word.
-fn writeInt256(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), value: i256) EncodeError!void {
-    // Two's complement: cast to u256 bit pattern, then write as big-endian.
-    const unsigned: u256 = @bitCast(value);
-    try writeUint256(allocator, buf, unsigned);
 }
 
 // ============================================================================

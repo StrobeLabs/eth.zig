@@ -660,7 +660,7 @@ pub fn mulDivRoundingUp(a: u256, b: u256, denominator: u256) ?u256 {
 /// Compute UniswapV2 getAmountOut entirely in u64-limb space.
 /// Formula: (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
 /// Delegates to dex/v2.zig with the standard Uniswap V2 fee (997/1000).
-pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) u256 {
+pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256) ?u256 {
     const dex_v2 = @import("dex/v2.zig");
     return dex_v2.getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000);
 }
@@ -935,7 +935,7 @@ test "getAmountOut correctness" {
     const denominator = fastMul(reserve_in, 1000) +% amount_in_with_fee;
     const expected = fastDiv(numerator, denominator);
 
-    const result = getAmountOut(amount_in, reserve_in, reserve_out);
+    const result = getAmountOut(amount_in, reserve_in, reserve_out).?;
     try std.testing.expectEqual(expected, result);
     try std.testing.expect(result > 0);
     try std.testing.expect(result < reserve_out);
@@ -943,11 +943,11 @@ test "getAmountOut correctness" {
 
 test "getAmountOut edge cases" {
     // Small amount in
-    const r1 = getAmountOut(1, 1_000_000, 1_000_000);
+    const r1 = getAmountOut(1, 1_000_000, 1_000_000).?;
     try std.testing.expect(r1 < 1_000_000);
 
     // Equal reserves
-    const r2 = getAmountOut(1_000_000, 1_000_000_000, 1_000_000_000);
+    const r2 = getAmountOut(1_000_000, 1_000_000_000, 1_000_000_000).?;
     try std.testing.expect(r2 > 0);
     try std.testing.expect(r2 < 1_000_000);
 }

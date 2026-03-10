@@ -649,6 +649,13 @@ fn parseTransactionReceipt(allocator: std.mem.Allocator, raw: []const u8) !?rece
 
     // Parse logs array
     const logs = try parseLogsArray(allocator, obj);
+    errdefer {
+        for (logs) |log| {
+            if (log.data.len > 0) allocator.free(log.data);
+            if (log.topics.len > 0) allocator.free(log.topics);
+        }
+        if (logs.len > 0) allocator.free(logs);
+    }
 
     // Parse required fields
     const tx_hash = try parseHash(jsonGetString(obj, "transactionHash") orelse return error.InvalidResponse);
@@ -690,11 +697,19 @@ fn parseLogsArray(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ![]cons
     if (arr.items.len == 0) return &.{};
 
     const logs = try allocator.alloc(receipt_mod.Log, arr.items.len);
-    errdefer allocator.free(logs);
+    var parsed_count: usize = 0;
+    errdefer {
+        for (logs[0..parsed_count]) |log| {
+            if (log.data.len > 0) allocator.free(log.data);
+            if (log.topics.len > 0) allocator.free(log.topics);
+        }
+        allocator.free(logs);
+    }
 
     for (arr.items, 0..) |item, i| {
         if (item != .object) return error.InvalidResponse;
         logs[i] = try parseSingleLog(allocator, item.object);
+        parsed_count += 1;
     }
 
     return logs;
@@ -780,11 +795,19 @@ fn parseLogsResponse(allocator: std.mem.Allocator, raw: []const u8) ![]receipt_m
     }
 
     const logs = try allocator.alloc(receipt_mod.Log, arr.items.len);
-    errdefer allocator.free(logs);
+    var parsed_count: usize = 0;
+    errdefer {
+        for (logs[0..parsed_count]) |log| {
+            if (log.data.len > 0) allocator.free(log.data);
+            if (log.topics.len > 0) allocator.free(log.topics);
+        }
+        allocator.free(logs);
+    }
 
     for (arr.items, 0..) |item, i| {
         if (item != .object) return error.InvalidResponse;
         logs[i] = try parseSingleLog(allocator, item.object);
+        parsed_count += 1;
     }
 
     return logs;
@@ -838,6 +861,7 @@ fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_mod.B
     // Parse extraData
     const extra_data_str = jsonGetString(obj, "extraData") orelse "0x";
     const extra_data = try parseHexBytes(allocator, extra_data_str);
+    errdefer if (extra_data.len > 0) allocator.free(extra_data);
 
     // Optional EIP-1559 / EIP-4844 fields
     const base_fee: ?u256 = if (jsonGetString(obj, "baseFeePerGas")) |s|

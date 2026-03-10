@@ -91,8 +91,13 @@ fn getContext() *secp256k1_context {
     if (@atomicLoad(?*secp256k1_context, &global_ctx, .acquire)) |ctx| return ctx;
     const ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE) orelse
         @panic("secp256k1_context_create failed");
-    @atomicStore(?*secp256k1_context, &global_ctx, ctx, .release);
-    return ctx;
+    // Use cmpxchg to avoid TOCTOU race: if another thread won, use their context
+    if (@cmpxchgStrong(?*secp256k1_context, &global_ctx, null, ctx, .release, .acquire)) |existing| {
+        // Another thread already initialized; we leak our context (no destroy in libsecp256k1 static API),
+        // but this is harmless and only happens once.
+        _ = existing;
+    }
+    return @atomicLoad(?*secp256k1_context, &global_ctx, .acquire).?;
 }
 
 // ============================================================================

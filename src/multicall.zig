@@ -167,11 +167,11 @@ pub const Multicall = struct {
 /// Decode the ABI-encoded result of aggregate3: (bool, bytes)[]
 /// Returns a slice of Result structs. Caller owns all returned memory.
 pub fn decodeAggregate3Results(allocator: std.mem.Allocator, data: []const u8) ![]Result {
-    if (data.len < 64) return error.OutOfMemory;
+    if (data.len < 64) return error.InvalidAbiData;
 
     // First word: offset to array data (should be 0x20)
     const array_offset = readWord(data[0..32]);
-    if (array_offset + 32 > data.len) return error.OutOfMemory;
+    if (array_offset + 32 > data.len) return error.InvalidAbiData;
 
     // Array length
     const array_len = readWord(data[array_offset .. array_offset + 32]);
@@ -188,7 +188,7 @@ pub fn decodeAggregate3Results(allocator: std.mem.Allocator, data: []const u8) !
     // Read offsets for each result tuple
     for (0..array_len) |i| {
         const offset_pos = array_data_start + i * 32;
-        if (offset_pos + 32 > data.len) return error.OutOfMemory;
+        if (offset_pos + 32 > data.len) return error.InvalidAbiData;
         const tuple_offset = readWord(data[offset_pos .. offset_pos + 32]);
         const tuple_start = array_data_start + tuple_offset;
 
@@ -196,17 +196,17 @@ pub fn decodeAggregate3Results(allocator: std.mem.Allocator, data: []const u8) !
         // word 0: success (bool)
         // word 1: offset to returnData within the tuple
         // At that offset: length word + data
-        if (tuple_start + 64 > data.len) return error.OutOfMemory;
+        if (tuple_start + 64 > data.len) return error.InvalidAbiData;
 
         const success_word = readWord(data[tuple_start .. tuple_start + 32]);
         const return_data_offset = readWord(data[tuple_start + 32 .. tuple_start + 64]);
         const return_data_abs = tuple_start + return_data_offset;
 
-        if (return_data_abs + 32 > data.len) return error.OutOfMemory;
+        if (return_data_abs + 32 > data.len) return error.InvalidAbiData;
         const return_data_len = readWord(data[return_data_abs .. return_data_abs + 32]);
         const return_data_start = return_data_abs + 32;
 
-        if (return_data_start + return_data_len > data.len) return error.OutOfMemory;
+        if (return_data_start + return_data_len > data.len) return error.InvalidAbiData;
 
         var return_data: []const u8 = &.{};
         if (return_data_len > 0) {

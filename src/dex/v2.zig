@@ -25,10 +25,10 @@ pub const Pair = struct {
 
 /// Compute UniswapV2 getAmountOut with configurable fee, entirely in u64-limb space.
 /// Formula: (amountIn * feeNum * reserveOut) / (reserveIn * feeDenom + amountIn * feeNum)
-pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256, fee_numerator: u64, fee_denominator: u64) u256 {
+pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256, fee_numerator: u64, fee_denominator: u64) ?u256 {
     if (amount_in == 0) return 0;
     if (reserve_in == 0 or reserve_out == 0) return 0;
-    if (fee_denominator == 0) return 0;
+    if (fee_denominator == 0) return null;
 
     const ai = u256ToLimbs(amount_in);
     const ri = u256ToLimbs(reserve_in);
@@ -39,7 +39,7 @@ pub fn getAmountOut(amount_in: u256, reserve_in: u256, reserve_out: u256, fee_nu
     const denominator = addLimbs(mulLimbScalar(ri, fee_denominator), amount_in_with_fee);
 
     if (denominator[0] == 0 and denominator[1] == 0 and denominator[2] == 0 and denominator[3] == 0) {
-        @panic("getAmountOut: denominator is zero (invalid reserves)");
+        return null;
     }
 
     return limbsToU256(divLimbsDirect(numerator, denominator));
@@ -69,7 +69,7 @@ pub fn getAmountIn(amount_out: u256, reserve_in: u256, reserve_out: u256, fee_nu
     const denominator = mulLimbScalar(rd, fee_numerator);
 
     if (denominator[0] == 0 and denominator[1] == 0 and denominator[2] == 0 and denominator[3] == 0) {
-        @panic("getAmountIn: denominator is zero");
+        return null;
     }
 
     // Uniswap V2 always adds 1 (ceiling)
@@ -88,7 +88,7 @@ pub fn getAmountsOut(amount_in: u256, path: []const Pair) ?u256 {
 
     var current = amount_in;
     for (path) |pair| {
-        current = getAmountOut(current, pair.reserve_in, pair.reserve_out, pair.fee_numerator, pair.fee_denominator);
+        current = getAmountOut(current, pair.reserve_in, pair.reserve_out, pair.fee_numerator, pair.fee_denominator) orelse return null;
         if (current == 0) return null;
     }
     return current;
@@ -124,14 +124,14 @@ pub fn calculateProfit(amount_in: u256, path: []const Pair) ?u256 {
 test "getAmountOut known value" {
     // 1 ETH in, 100 ETH / 200k USDC pool, 0.3% fee
     // Expected: (1e18 * 997 * 200e9) / (100e18 * 1000 + 1e18 * 997) = 1_974_316_068
-    const v2_result = getAmountOut(1_000_000_000_000_000_000, 100_000_000_000_000_000_000, 200_000_000_000, 997, 1000);
+    const v2_result = getAmountOut(1_000_000_000_000_000_000, 100_000_000_000_000_000_000, 200_000_000_000, 997, 1000).?;
     try std.testing.expectEqual(@as(u256, 1_974_316_068), v2_result);
 }
 
 test "getAmountOut zero reserves" {
-    try std.testing.expectEqual(@as(u256, 0), getAmountOut(1000, 0, 200_000, 997, 1000));
-    try std.testing.expectEqual(@as(u256, 0), getAmountOut(1000, 100_000, 0, 997, 1000));
-    try std.testing.expectEqual(@as(u256, 0), getAmountOut(1000, 100_000, 200_000, 997, 0));
+    try std.testing.expectEqual(@as(?u256, 0), getAmountOut(1000, 0, 200_000, 997, 1000));
+    try std.testing.expectEqual(@as(?u256, 0), getAmountOut(1000, 100_000, 0, 997, 1000));
+    try std.testing.expectEqual(@as(?u256, null), getAmountOut(1000, 100_000, 200_000, 997, 0));
 }
 
 test "getAmountOut different fees" {
@@ -140,8 +140,8 @@ test "getAmountOut different fees" {
     const reserve_out: u256 = 200_000_000_000;
 
     // PancakeSwap uses 9975/10000 (0.25% fee) vs Uniswap 997/1000 (0.3% fee)
-    const pancake = getAmountOut(amount_in, reserve_in, reserve_out, 9975, 10000);
-    const uniswap = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000);
+    const pancake = getAmountOut(amount_in, reserve_in, reserve_out, 9975, 10000).?;
+    const uniswap = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000).?;
 
     // Lower fee => more output
     try std.testing.expect(pancake > uniswap);
@@ -149,7 +149,7 @@ test "getAmountOut different fees" {
 
 test "getAmountOut zero input" {
     const result = getAmountOut(0, 100_000, 200_000, 997, 1000);
-    try std.testing.expectEqual(@as(u256, 0), result);
+    try std.testing.expectEqual(@as(?u256, 0), result);
 }
 
 test "getAmountOut result less than reserve" {
@@ -158,7 +158,7 @@ test "getAmountOut result less than reserve" {
     const reserve_out: u256 = 200_000_000_000;
 
     for (amounts) |amount_in| {
-        const result = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000);
+        const result = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000).?;
         try std.testing.expect(result < reserve_out);
     }
 }
@@ -168,7 +168,7 @@ test "getAmountIn inverse" {
     const reserve_in: u256 = 100_000_000_000_000_000_000;
     const reserve_out: u256 = 200_000_000_000;
 
-    const output = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000);
+    const output = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000).?;
     const recovered_input = getAmountIn(output, reserve_in, reserve_out, 997, 1000) orelse unreachable;
 
     // Due to ceiling division (+1), recovered_input >= amount_in

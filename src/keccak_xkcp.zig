@@ -40,7 +40,7 @@ extern fn KeccakWidth1600_Sponge(r: c_uint, c: c_uint, input: [*]const u8, input
 pub fn hash(data: []const u8) Hash {
     var result: Hash = undefined;
     const ret = KeccakWidth1600_Sponge(rate, capacity, data.ptr, data.len, delimited_suffix, &result, 32);
-    std.debug.assert(ret == 0);
+    if (ret != 0) @panic("KeccakWidth1600_Sponge failed");
     return result;
 }
 
@@ -51,19 +51,19 @@ pub const Hasher = struct {
     pub fn init() Hasher {
         var self: Hasher = undefined;
         const ret = Keccak_HashInitialize(&self.instance, rate, capacity, hash_bit_len, delimited_suffix);
-        std.debug.assert(ret == .success);
+        if (ret != .success) @panic("Keccak_HashInitialize failed");
         return self;
     }
 
     pub fn update(self: *Hasher, data: []const u8) void {
         const ret = Keccak_HashUpdate(&self.instance, data.ptr, data.len * 8);
-        std.debug.assert(ret == .success);
+        if (ret != .success) @panic("Keccak_HashUpdate failed");
     }
 
     pub fn final(self: *Hasher) Hash {
         var result: Hash = undefined;
         const ret = Keccak_HashFinal(&self.instance, &result);
-        std.debug.assert(ret == .success);
+        if (ret != .success) @panic("Keccak_HashFinal failed");
         return result;
     }
 };
