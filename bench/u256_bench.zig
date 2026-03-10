@@ -156,6 +156,51 @@ fn benchMulDiv() void {
     std.mem.doNotOptimizeAway(&result);
 }
 
+// DEX V2 getAmountOut with configurable fee (dex/v2.zig)
+fn benchDexV2AmountOut() void {
+    var amount_in: u256 = ONE_ETH;
+    var reserve_in: u256 = RESERVE_IN;
+    var reserve_out: u256 = RESERVE_OUT;
+    std.mem.doNotOptimizeAway(&amount_in);
+    std.mem.doNotOptimizeAway(&reserve_in);
+    std.mem.doNotOptimizeAway(&reserve_out);
+
+    const amount_out = eth.dex_v2.getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000);
+    std.mem.doNotOptimizeAway(&amount_out);
+}
+
+// DEX V2 multi-hop: 3-hop path
+fn benchDexV2MultiHop() void {
+    const path = [_]eth.dex_v2.Pair{
+        .{ .reserve_in = RESERVE_IN, .reserve_out = RESERVE_OUT },
+        .{ .reserve_in = 200_000_000_000, .reserve_out = 50_000_000_000_000_000_000 },
+        .{ .reserve_in = 50_000_000_000_000_000_000, .reserve_out = 100_000_000_000 },
+    };
+    var amount_in: u256 = ONE_ETH;
+    std.mem.doNotOptimizeAway(&amount_in);
+
+    const result = eth.dex_v2.getAmountsOut(amount_in, &path);
+    std.mem.doNotOptimizeAway(&result);
+}
+
+// DEX V3 getSqrtRatioAtTick
+fn benchDexV3TickToPrice() void {
+    var tick: i24 = 10000;
+    std.mem.doNotOptimizeAway(&tick);
+    const result = eth.dex_v3.getSqrtRatioAtTick(tick);
+    std.mem.doNotOptimizeAway(&result);
+}
+
+// DEX V3 computeSwapStep
+fn benchDexV3SwapStep() void {
+    var current: u256 = SQRT_PRICE;
+    var target: u256 = eth.dex_v3.getSqrtRatioAtTick(-100).?;
+    std.mem.doNotOptimizeAway(&current);
+    std.mem.doNotOptimizeAway(&target);
+    const result = eth.dex_v3.computeSwapStep(current, target, 1_000_000_000_000_000_000, 1_000_000, 3000);
+    std.mem.doNotOptimizeAway(&result);
+}
+
 // UniswapV4 getNextSqrtPriceFromAmount0RoundingUp
 fn benchUniswapV4Swap() void {
     var liquidity: u256 = ONE_ETH;
@@ -202,6 +247,11 @@ pub fn main() !void {
     try runAndPrint("u256_uniswapv2_optimized", benchUniswapV2Optimized, stdout);
     try runAndPrint("u256_mulDiv", benchMulDiv, stdout);
     try runAndPrint("u256_uniswapv4_swap", benchUniswapV4Swap, stdout);
+    // DEX benchmarks
+    try runAndPrint("dex_v2_amount_out", benchDexV2AmountOut, stdout);
+    try runAndPrint("dex_v2_multi_hop_3", benchDexV2MultiHop, stdout);
+    try runAndPrint("dex_v3_tick_to_price", benchDexV3TickToPrice, stdout);
+    try runAndPrint("dex_v3_swap_step", benchDexV3SwapStep, stdout);
 
     try stdout.print("\n", .{});
 
@@ -215,6 +265,10 @@ pub fn main() !void {
     try runAndJson("u256_uniswapv2_optimized", benchUniswapV2Optimized, stdout);
     try runAndJson("u256_mulDiv", benchMulDiv, stdout);
     try runAndJson("u256_uniswapv4_swap", benchUniswapV4Swap, stdout);
+    try runAndJson("dex_v2_amount_out", benchDexV2AmountOut, stdout);
+    try runAndJson("dex_v2_multi_hop_3", benchDexV2MultiHop, stdout);
+    try runAndJson("dex_v3_tick_to_price", benchDexV3TickToPrice, stdout);
+    try runAndJson("dex_v3_swap_step", benchDexV3SwapStep, stdout);
 
     try stdout.flush();
 }

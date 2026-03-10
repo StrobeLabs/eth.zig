@@ -281,7 +281,7 @@ pub const Provider = struct {
         return buf.toOwnedSlice(self.allocator);
     }
 
-    fn formatCallParams(self: *Provider, to: [20]u8, data: []const u8, from: ?[20]u8) ![]u8 {
+    pub fn formatCallParams(self: *Provider, to: [20]u8, data: []const u8, from: ?[20]u8) ![]u8 {
         const to_hex = primitives.addressToHex(&to);
         const data_hex = try hex_mod.bytesToHex(self.allocator, data);
         defer self.allocator.free(data_hex);
@@ -308,6 +308,179 @@ pub const Provider = struct {
 };
 
 // ============================================================================
+// Batch eth_call support
+// ============================================================================
+
+pub const BatchCallResult = union(enum) {
+    success: []u8,
+    rpc_error: RpcErrorData,
+
+    pub const RpcErrorData = struct {
+        code: i64,
+        message: ?[]u8,
+    };
+};
+
+pub const BatchCaller = struct {
+    provider: *Provider,
+    allocator: std.mem.Allocator,
+    targets: std.ArrayList([20]u8),
+    calldata: std.ArrayList([]const u8),
+
+    pub fn init(allocator: std.mem.Allocator, prov: *Provider) BatchCaller {
+        return .{
+            .provider = prov,
+            .allocator = allocator,
+            .targets = .empty,
+            .calldata = .empty,
+        };
+    }
+
+    pub fn deinit(self: *BatchCaller) void {
+        self.targets.deinit(self.allocator);
+        self.calldata.deinit(self.allocator);
+    }
+
+    /// Add an eth_call to the batch. Returns the index for result retrieval.
+    /// `data` is borrowed (not copied) -- caller must keep it valid until `execute()` returns.
+    pub fn addCall(self: *BatchCaller, to: [20]u8, data: []const u8) !usize {
+        const index = self.targets.items.len;
+        try self.targets.append(self.allocator, to);
+        try self.calldata.append(self.allocator, data);
+        return index;
+    }
+
+    pub fn reset(self: *BatchCaller) void {
+        self.targets.clearRetainingCapacity();
+        self.calldata.clearRetainingCapacity();
+    }
+
+    pub fn execute(self: *BatchCaller) ![]BatchCallResult {
+        const n = self.targets.items.len;
+        if (n == 0) return try self.allocator.alloc(BatchCallResult, 0);
+
+        // Build individual request bodies
+        const bodies = try self.allocator.alloc([]u8, n);
+        @memset(bodies, &.{});
+        defer {
+            for (bodies) |b| if (b.len > 0) self.allocator.free(b);
+            self.allocator.free(bodies);
+        }
+
+        const ids = try self.allocator.alloc(u64, n);
+        defer self.allocator.free(ids);
+
+        const base_id = self.provider.next_id;
+        self.provider.next_id += n;
+
+        for (0..n) |i| {
+            ids[i] = base_id + i;
+            const params = try self.provider.formatCallParams(self.targets.items[i], self.calldata.items[i], null);
+            defer self.allocator.free(params);
+            bodies[i] = try HttpTransport.buildRequestBody(self.allocator, json_rpc.Method.eth_call, params, ids[i]);
+        }
+
+        // Build const slice for requestBatch
+        const const_bodies = try self.allocator.alloc([]const u8, n);
+        defer self.allocator.free(const_bodies);
+        for (bodies, 0..) |b, i| {
+            const_bodies[i] = b;
+        }
+
+        const raw = try self.provider.transport.requestBatch(const_bodies);
+        defer self.allocator.free(raw);
+
+        return try parseBatchResponse(self.allocator, raw, ids);
+    }
+};
+
+/// Parse a JSON-RPC batch response, matching results to request IDs.
+/// Unmatched IDs are left as sentinel values: `.rpc_error = .{ .code = -1, .message = null }`.
+/// Callers can detect missing responses by checking for `code == -1` and `message == null`.
+fn parseBatchResponse(allocator: std.mem.Allocator, raw: []const u8, ids: []const u64) ![]BatchCallResult {
+    const n = ids.len;
+    var results = try allocator.alloc(BatchCallResult, n);
+    for (results) |*r| r.* = .{ .rpc_error = .{ .code = -1, .message = null } };
+    errdefer freeBatchResults(allocator, results);
+
+    // Parse JSON array
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
+        return error.InvalidResponse;
+    };
+    defer parsed.deinit();
+
+    const arr = switch (parsed.value) {
+        .array => |a| a,
+        else => return error.InvalidResponse,
+    };
+
+    // Match each response to its request by id
+    for (arr.items) |item| {
+        const obj = switch (item) {
+            .object => |o| o,
+            else => continue,
+        };
+
+        // Get id
+        const id_val = obj.get("id") orelse continue;
+        const id: u64 = switch (id_val) {
+            .integer => |i| if (i >= 0) @as(u64, @intCast(i)) else continue,
+            else => continue,
+        };
+
+        // Find index for this id
+        var idx: ?usize = null;
+        for (ids, 0..) |expected_id, i| {
+            if (expected_id == id) {
+                idx = i;
+                break;
+            }
+        }
+        const index = idx orelse continue;
+
+        // Check for error
+        if (obj.get("error")) |err_val| {
+            if (err_val == .object) {
+                const code = if (err_val.object.get("code")) |c| switch (c) {
+                    .integer => |ci| @as(i64, @intCast(ci)),
+                    else => @as(i64, 0),
+                } else 0;
+                const message = if (err_val.object.get("message")) |m| switch (m) {
+                    .string => |s| s,
+                    else => "unknown error",
+                } else "unknown error";
+                // Dupe message since parsed JSON will be freed
+                const msg_copy: []u8 = try allocator.dupe(u8, message);
+                results[index] = .{ .rpc_error = .{ .code = code, .message = msg_copy } };
+                continue;
+            }
+        }
+
+        // Get result
+        const result_val = obj.get("result") orelse continue;
+        switch (result_val) {
+            .string => |s| {
+                const decoded = try parseHexBytes(allocator, s);
+                results[index] = .{ .success = decoded };
+            },
+            else => {},
+        }
+    }
+
+    return results;
+}
+
+pub fn freeBatchResults(allocator: std.mem.Allocator, results: []BatchCallResult) void {
+    for (results) |r| {
+        switch (r) {
+            .success => |data| allocator.free(data),
+            .rpc_error => |e| if (e.message) |msg| allocator.free(msg),
+        }
+    }
+    allocator.free(results);
+}
+
+// ============================================================================
 // JSON response parsing
 // ============================================================================
 
@@ -315,7 +488,7 @@ pub const Provider = struct {
 /// Handles both quoted string results and null.
 /// Caller owns the returned memory.
 fn extractResultString(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, raw, .{}) catch {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
         return error.InvalidResponse;
     };
     defer parsed.deinit();
@@ -1047,4 +1220,99 @@ test "Provider.init" {
 
     const provider = Provider.init(allocator, &transport);
     try std.testing.expectEqual(@as(u64, 1), provider.next_id);
+}
+
+test "BatchCaller.init and deinit" {
+    const allocator = std.testing.allocator;
+    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    defer transport.deinit();
+    var prov = Provider.init(allocator, &transport);
+    var batch = BatchCaller.init(allocator, &prov);
+    defer batch.deinit();
+    try std.testing.expectEqual(@as(usize, 0), batch.targets.items.len);
+}
+
+test "BatchCaller.addCall accumulates" {
+    const allocator = std.testing.allocator;
+    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    defer transport.deinit();
+    var prov = Provider.init(allocator, &transport);
+    var batch = BatchCaller.init(allocator, &prov);
+    defer batch.deinit();
+
+    const idx0 = try batch.addCall([_]u8{0x11} ** 20, &.{ 0x01, 0x02 });
+    const idx1 = try batch.addCall([_]u8{0x22} ** 20, &.{ 0x03, 0x04 });
+
+    try std.testing.expectEqual(@as(usize, 0), idx0);
+    try std.testing.expectEqual(@as(usize, 1), idx1);
+    try std.testing.expectEqual(@as(usize, 2), batch.targets.items.len);
+}
+
+test "BatchCaller.reset clears" {
+    const allocator = std.testing.allocator;
+    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    defer transport.deinit();
+    var prov = Provider.init(allocator, &transport);
+    var batch = BatchCaller.init(allocator, &prov);
+    defer batch.deinit();
+
+    _ = try batch.addCall([_]u8{0x11} ** 20, &.{0x01});
+    try std.testing.expectEqual(@as(usize, 1), batch.targets.items.len);
+    batch.reset();
+    try std.testing.expectEqual(@as(usize, 0), batch.targets.items.len);
+}
+
+test "parseBatchResponse in order" {
+    const allocator = std.testing.allocator;
+    const raw = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xdead\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0xbeef\"}]";
+    const ids = [_]u64{ 1, 2 };
+    const results = try parseBatchResponse(allocator, raw, &ids);
+    defer freeBatchResults(allocator, results);
+
+    try std.testing.expectEqual(@as(usize, 2), results.len);
+    switch (results[0]) {
+        .success => |data| try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad }, data),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (results[1]) {
+        .success => |data| try std.testing.expectEqualSlices(u8, &.{ 0xbe, 0xef }, data),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "parseBatchResponse out of order" {
+    const allocator = std.testing.allocator;
+    const raw = "[{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0xbeef\"},{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xdead\"}]";
+    const ids = [_]u64{ 1, 2 };
+    const results = try parseBatchResponse(allocator, raw, &ids);
+    defer freeBatchResults(allocator, results);
+
+    // Results should be in original order (by id), not response order
+    switch (results[0]) {
+        .success => |data| try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad }, data),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (results[1]) {
+        .success => |data| try std.testing.expectEqualSlices(u8, &.{ 0xbe, 0xef }, data),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "parseBatchResponse partial failure" {
+    const allocator = std.testing.allocator;
+    const raw = "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xdead\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":3,\"message\":\"execution reverted\"}}]";
+    const ids = [_]u64{ 1, 2 };
+    const results = try parseBatchResponse(allocator, raw, &ids);
+    defer freeBatchResults(allocator, results);
+
+    switch (results[0]) {
+        .success => |data| try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad }, data),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (results[1]) {
+        .rpc_error => |e| {
+            try std.testing.expectEqual(@as(i64, 3), e.code);
+        },
+        else => return error.TestUnexpectedResult,
+    }
 }

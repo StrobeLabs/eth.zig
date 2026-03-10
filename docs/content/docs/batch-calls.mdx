@@ -1,0 +1,86 @@
+---
+title: Batch RPC Calls
+description: Send multiple eth_call requests in a single JSON-RPC round-trip for MEV and high-throughput applications.
+---
+
+eth.zig supports [JSON-RPC batch requests](https://www.jsonrpc.org/specification#batch), sending multiple `eth_call` requests in a single HTTP POST. This dramatically reduces latency when evaluating many candidates per block.
+
+## Basic Usage
+
+```zig
+const eth = @import("eth");
+
+// Set up provider
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+defer transport.deinit();
+var provider = eth.provider.Provider.init(allocator, &transport);
+
+// Create a batch
+var batch = eth.provider.BatchCaller.init(allocator, &provider);
+defer batch.deinit();
+
+// Add calls (returns index for result retrieval)
+const idx0 = try batch.addCall(pool_a_address, quote_calldata_a);
+const idx1 = try batch.addCall(pool_b_address, quote_calldata_b);
+const idx2 = try batch.addCall(pool_c_address, quote_calldata_c);
+
+// Execute all in one HTTP request
+const results = try batch.execute();
+defer eth.provider.freeBatchResults(allocator, results);
+
+// Each result is either .success or .rpc_error
+switch (results[idx0]) {
+    .success => |data| {
+        // data contains the decoded bytes from the RPC response
+        // Decode as needed (e.g., ABI decode a uint256)
+    },
+    .rpc_error => |err| {
+        // err.code and err.message describe what went wrong
+        // (e.g., execution reverted, invalid params)
+    },
+}
+```
+
+## How It Works
+
+Under the hood, `BatchCaller` uses the [JSON-RPC batch spec](https://www.jsonrpc.org/specification#batch):
+- Each call is formatted as an individual JSON-RPC request with a unique `id`
+- All requests are wrapped in a JSON array and sent as a single HTTP POST
+- Responses may arrive in any order -- `BatchCaller` matches them by `id` and returns results in the original `addCall` order
+
+## Per-Call Error Handling
+
+Some calls in a batch may succeed while others revert. Each `BatchCallResult` is independent:
+
+```zig
+for (results, 0..) |result, i| {
+    switch (result) {
+        .success => |data| std.debug.print("Call {d}: {d} bytes\n", .{ i, data.len }),
+        .rpc_error => |err| std.debug.print("Call {d}: error {d} - {s}\n", .{ i, err.code, err.message }),
+    }
+}
+```
+
+## Reusing a Batch
+
+Call `reset()` to clear pending calls and reuse the `BatchCaller`:
+
+```zig
+batch.reset();
+// Add new calls for the next block...
+_ = try batch.addCall(new_target, new_calldata);
+const new_results = try batch.execute();
+defer eth.provider.freeBatchResults(allocator, new_results);
+```
+
+## When to Use Batch vs Multicall
+
+| Feature | BatchCaller | Multicall3 |
+|---------|-------------|------------|
+| Protocol | JSON-RPC batch | On-chain contract call |
+| Atomicity | Independent calls | Single transaction |
+| Node support | All JSON-RPC nodes | Requires Multicall3 deployment |
+| Gas overhead | None | Contract execution gas |
+| Best for | Mixed RPC methods | Same-block state consistency |
+
+For MEV searchers: use `BatchCaller` when you need to query multiple pools across different blocks or need raw `eth_call` flexibility. Use `Multicall3` when you need atomic same-block reads.

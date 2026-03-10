@@ -1,0 +1,185 @@
+---
+title: DEX Math
+description: Pure Zig Uniswap V2/V3 price computation for off-chain MEV simulation.
+---
+
+eth.zig includes pure Zig implementations of Uniswap V2 and V3 math, enabling off-chain price computation without RPC calls. This is critical for MEV searchers who need to evaluate hundreds of arb paths per block at sub-microsecond latency.
+
+## Uniswap V2
+
+### Single Swap
+
+```zig
+const eth = @import("eth");
+
+// Standard Uniswap V2 (0.3% fee = 997/1000)
+const amount_out = eth.dex_v2.getAmountOut(
+    1_000_000_000_000_000_000, // 1 ETH input
+    100_000_000_000_000_000_000, // 100 ETH reserve_in
+    200_000_000_000, // 200k USDC reserve_out
+    997, 1000, // fee: 0.3%
+);
+
+// SushiSwap / PancakeSwap (0.25% fee = 9975/10000)
+const sushi_out = eth.dex_v2.getAmountOut(
+    amount_in, reserve_in, reserve_out,
+    9975, 10000, // fee: 0.25%
+);
+```
+
+### Inverse: Required Input
+
+```zig
+// How much ETH do I need to get exactly 1000 USDC out?
+const required_input = eth.dex_v2.getAmountIn(
+    1_000_000_000, // 1000 USDC desired output
+    reserve_eth, reserve_usdc,
+    997, 1000,
+) orelse {
+    // null = insufficient liquidity (amount_out >= reserve_out)
+    return error.InsufficientLiquidity;
+};
+```
+
+### Multi-Hop Paths
+
+```zig
+const path = [_]eth.dex_v2.Pair{
+    .{ .reserve_in = 100e18, .reserve_out = 200_000e6 },   // ETH (18 dec) -> USDC (6 dec)
+    .{ .reserve_in = 300_000e6, .reserve_out = 50e18 },    // USDC (6 dec) -> DAI (18 dec)
+};
+
+// Forward: how much DAI for 1 ETH?
+const output = eth.dex_v2.getAmountsOut(1e18, &path);
+
+// Reverse: how much ETH for 10 DAI?
+const input = eth.dex_v2.getAmountsIn(10e18, &path);
+```
+
+### Arbitrage Profit
+
+```zig
+// Circular path: buy on pool A, sell on pool B
+const path = [_]eth.dex_v2.Pair{
+    .{ .reserve_in = 1_000_000, .reserve_out = 2_000_000_000 },
+    .{ .reserve_in = 2_000_000_000, .reserve_out = 2_000_000 },
+};
+
+if (eth.dex_v2.calculateProfit(1000, &path)) |profit| {
+    // profit = output - input (positive means arb exists)
+}
+```
+
+## Uniswap V3
+
+### Tick/Price Conversion
+
+```zig
+// Convert tick index to sqrtPriceX96 (Q96 fixed-point)
+const sqrt_price = eth.dex_v3.getSqrtRatioAtTick(100).?;    // tick 100 ~ price 1.01
+const sqrt_price_0 = eth.dex_v3.getSqrtRatioAtTick(0).?;     // tick 0 = price 1.0 = Q96
+
+// Convert sqrtPriceX96 back to tick
+const tick = eth.dex_v3.getTickAtSqrtRatio(sqrt_price).?;     // = 100
+```
+
+> These functions return `null` for out-of-range ticks (outside `MIN_TICK`..`MAX_TICK`)
+> or invalid sqrt prices. Always check the result before unwrapping with `.?`.
+
+### Token Amount Deltas
+
+```zig
+const sqrt_a = eth.dex_v3.getSqrtRatioAtTick(0).?;
+const sqrt_b = eth.dex_v3.getSqrtRatioAtTick(100).?;
+const liquidity: u128 = 1_000_000_000_000_000_000;
+
+// How much token0 for a price move from tick 0 to tick 100?
+const token0_amount = eth.dex_v3.getAmount0Delta(sqrt_a, sqrt_b, liquidity, true).?;
+
+// How much token1?
+const token1_amount = eth.dex_v3.getAmount1Delta(sqrt_a, sqrt_b, liquidity, true).?;
+```
+
+### Swap Step Simulation
+
+```zig
+// Simulate a single swap step within one tick range
+const step = eth.dex_v3.computeSwapStep(
+    current_sqrt_price,    // current pool price
+    target_sqrt_price,     // next initialized tick boundary
+    pool_liquidity,        // current active liquidity
+    @as(i256, amount_in),  // positive = exact input, negative = exact output
+    3000,                  // fee: 0.3% (3000 pips)
+);
+
+// step.sqrt_ratio_next_x96 -- price after this step
+// step.amount_in           -- tokens consumed
+// step.amount_out          -- tokens produced
+// step.fee_amount          -- fee charged
+```
+
+### Full Multi-Tick Swap Simulation
+
+```zig
+const ticks = [_]eth.dex_v3.TickInfo{
+    .{ .tick = -100, .liquidity_net = 500e18, .sqrt_price_x96 = eth.dex_v3.getSqrtRatioAtTick(-100).? },
+    .{ .tick = -200, .liquidity_net = 300e18, .sqrt_price_x96 = eth.dex_v3.getSqrtRatioAtTick(-200).? },
+};
+
+const result = eth.dex_v3.simulateSwap(
+    current_sqrt_price,
+    current_liquidity,
+    &ticks,
+    amount_in,
+    true,  // zero_for_one (selling token0)
+    3000,  // 0.3% fee
+);
+
+// result.amount_in_consumed  -- total input consumed
+// result.amount_out          -- total output received
+// result.sqrt_price_final_x96 -- final pool price
+// result.ticks_crossed       -- number of tick boundaries crossed
+```
+
+## Cross-DEX Router
+
+Route through mixed V2/V3 pools:
+
+```zig
+const hops = [_]eth.dex_router.Pool{
+    .{ .v2 = .{ .reserve_in = 100e18, .reserve_out = 200_000e6 } },
+    .{ .v3 = .{
+        .sqrt_price_x96 = current_sqrt,
+        .liquidity = pool_liquidity,
+        .ticks = &tick_array,
+        .fee_pips = 3000,
+        .zero_for_one = true,
+    } },
+};
+
+const output = eth.dex_router.quoteExactInput(1e18, &hops);
+```
+
+### Arbitrage Detection
+
+```zig
+if (eth.dex_router.findArbOpportunity(&circular_path, max_input)) |arb| {
+    // arb.profit        -- expected profit
+    // arb.optimal_input -- optimal trade size (found via binary search)
+}
+```
+
+## Fee Configurations
+
+| DEX | fee_numerator | fee_denominator | Fee |
+|-----|--------------|-----------------|-----|
+| Uniswap V2 | 997 | 1000 | 0.30% |
+| SushiSwap | 997 | 1000 | 0.30% |
+| PancakeSwap | 9975 | 10000 | 0.25% |
+| Uniswap V3 | fee_pips=500 | -- | 0.05% |
+| Uniswap V3 | fee_pips=3000 | -- | 0.30% |
+| Uniswap V3 | fee_pips=10000 | -- | 1.00% |
+
+## Performance
+
+All math uses eth.zig's limb-native u256 arithmetic -- no heap allocation, no LLVM software division routines. Run `zig build bench-u256` to measure on your hardware.
