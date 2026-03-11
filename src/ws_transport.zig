@@ -644,7 +644,6 @@ pub const WsTransport = struct {
     }
 };
 
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1152,7 +1151,6 @@ test "encodeFrame - exactly 126 bytes (triggers extended 16-bit length)" {
     try std.testing.expectEqual(@as(u8, 126), frame[3]); // low byte
     try std.testing.expectEqual(@as(usize, 2 + 2 + 4 + 126), frame.len);
 }
-
 
 test "Opcode values" {
     try std.testing.expectEqual(@as(u4, 0x1), @intFromEnum(Opcode.text));
