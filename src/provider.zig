@@ -720,9 +720,11 @@ fn parseSingleLog(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !receip
     const address = (try parseOptionalAddress(jsonGetString(obj, "address"))) orelse return error.InvalidResponse;
     const data_str = jsonGetString(obj, "data") orelse "0x";
     const data = try parseHexBytes(allocator, data_str);
+    errdefer allocator.free(data);
 
     // Parse topics array
     const topics = try parseTopics(allocator, obj);
+    errdefer if (topics.len > 0) allocator.free(topics);
 
     const block_number = try parseOptionalHexU64(jsonGetString(obj, "blockNumber"));
     const tx_hash = try parseOptionalHash(jsonGetString(obj, "transactionHash"));

@@ -15,11 +15,9 @@ const ETHER_F64: f64 = @as(f64, @floatFromInt(ETHER));
 const GWEI_F64: f64 = @as(f64, @floatFromInt(GWEI));
 const TWO_POW_128_F64: f64 = 2.0 * @as(f64, @floatFromInt(@as(u128, 1) << 127));
 
-const MAX_U128_F64: f64 = @as(f64, @floatFromInt(std.math.maxInt(u128)));
-
 inline fn f64ToU256(value: f64) ?u256 {
     if (value < 0.0 or !std.math.isFinite(value)) return null;
-    if (value > MAX_U128_F64) return null;
+    if (value >= TWO_POW_128_F64) return null;
     return @as(u256, @as(u128, @intFromFloat(value)));
 }
 
