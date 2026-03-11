@@ -106,7 +106,7 @@ pub fn hashForSigning(allocator: std.mem.Allocator, tx: Transaction) ![32]u8 {
 /// - EIP-4844: 0x03 ++ RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList, maxFeePerBlobGas, blobVersionedHashes, v, r, s])
 ///
 /// Caller owns the returned slice.
-pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8, s: [32]u8, v: u8) ![]u8 {
+pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8, s: [32]u8, v: u256) ![]u8 {
     switch (tx) {
         .legacy => |legacy| return serializeLegacySigned(allocator, legacy, r, s, v),
         .eip2930 => |eip2930| return serializeTypedSigned(allocator, 0x01, eip2930, r, s, v),
@@ -383,7 +383,7 @@ fn encodeLengthAssumeCapacity(list: *std.ArrayList(u8), len: usize, offset: u8) 
 }
 
 /// Serialize a signed legacy transaction.
-fn serializeLegacySigned(allocator: std.mem.Allocator, legacy: LegacyTransaction, r: [32]u8, s: [32]u8, v: u8) ![]u8 {
+fn serializeLegacySigned(allocator: std.mem.Allocator, legacy: LegacyTransaction, r: [32]u8, s: [32]u8, v: u256) ![]u8 {
     // Calculate payload length
     var payload_len: usize = 0;
     payload_len += rlp.encodedLength(legacy.nonce);
@@ -412,7 +412,7 @@ fn serializeLegacySigned(allocator: std.mem.Allocator, legacy: LegacyTransaction
 }
 
 /// Serialize a signed typed transaction.
-fn serializeTypedSigned(allocator: std.mem.Allocator, type_byte: u8, tx: anytype, r: [32]u8, s: [32]u8, v: u8) ![]u8 {
+fn serializeTypedSigned(allocator: std.mem.Allocator, type_byte: u8, tx: anytype, r: [32]u8, s: [32]u8, v: u256) ![]u8 {
     // Pre-calculate total size
     var payload_len = calculateTypedFieldsLength(tx);
     payload_len += rlp.encodedLength(v);

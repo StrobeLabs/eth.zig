@@ -187,7 +187,7 @@ fn parseParam(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !AbiParam {
     const name_str = jsonGetString(obj, "name") orelse "";
     const indexed = jsonGetBool(obj, "indexed") orelse false;
 
-    const abi_type = parseType(type_str);
+    const abi_type = parseType(type_str) orelse return error.UnknownType;
 
     const name = if (name_str.len > 0) try allocator.dupe(u8, name_str) else name_str;
     errdefer if (name.len > 0) allocator.free(name);
@@ -214,7 +214,7 @@ fn parseMutability(obj: std.json.ObjectMap) StateMutability {
 }
 
 /// Parse a Solidity type string into an AbiType.
-pub fn parseType(type_str: []const u8) AbiType {
+pub fn parseType(type_str: []const u8) ?AbiType {
     // Handle array suffixes
     if (std.mem.endsWith(u8, type_str, "[]")) return .dynamic_array;
 
@@ -243,7 +243,7 @@ pub fn parseType(type_str: []const u8) AbiType {
         return parseBytesType(type_str) orelse .bytes;
     }
 
-    return .uint256; // fallback
+    return null; // unknown type
 }
 
 fn parseUintType(type_str: []const u8) ?AbiType {
@@ -411,6 +411,11 @@ test "parseType - uint without bits defaults to uint256" {
 
 test "parseType - int without bits defaults to int256" {
     try std.testing.expectEqual(AbiType.int256, parseType("int"));
+}
+
+test "parseType - unknown type returns null" {
+    try std.testing.expectEqual(@as(?AbiType, null), parseType("foobar"));
+    try std.testing.expectEqual(@as(?AbiType, null), parseType("custom_type"));
 }
 
 test "ContractAbi.fromJson - ERC20 ABI" {

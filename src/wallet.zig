@@ -45,6 +45,11 @@ pub const Wallet = struct {
         };
     }
 
+    /// Securely zero the private key. Call when the Wallet is no longer needed.
+    pub fn deinit(self: *Wallet) void {
+        self.signer_instance.deinit();
+    }
+
     /// Return the Ethereum address derived from this wallet's private key.
     pub fn address(self: *const Wallet) ![20]u8 {
         return try self.signer_instance.address();

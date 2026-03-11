@@ -18,11 +18,11 @@ pub fn applyEip155(v: u8, chain_id: u64) u256 {
 
 /// Extract the recovery ID (0 or 1) from an EIP-155 encoded v value.
 /// Reverses the formula: recovery_id = v - chain_id * 2 - 35
-pub fn recoverFromEip155V(v: u256, chain_id: u64) u8 {
+pub fn recoverFromEip155V(v: u256, chain_id: u64) ?u8 {
     const base: u256 = @as(u256, chain_id) * 2 + 35;
-    if (v < base) return 0;
+    if (v < base) return null;
     const recovery_id = v - base;
-    if (recovery_id > 1) return 0;
+    if (recovery_id > 1) return null;
     return @intCast(recovery_id);
 }
 
@@ -86,13 +86,18 @@ test "applyEip155 - Arbitrum (chain_id=42161)" {
 }
 
 test "recoverFromEip155V - Ethereum mainnet" {
-    try std.testing.expectEqual(@as(u8, 0), recoverFromEip155V(37, 1));
-    try std.testing.expectEqual(@as(u8, 1), recoverFromEip155V(38, 1));
+    try std.testing.expectEqual(@as(?u8, 0), recoverFromEip155V(37, 1));
+    try std.testing.expectEqual(@as(?u8, 1), recoverFromEip155V(38, 1));
 }
 
 test "recoverFromEip155V - BSC" {
-    try std.testing.expectEqual(@as(u8, 0), recoverFromEip155V(147, 56));
-    try std.testing.expectEqual(@as(u8, 1), recoverFromEip155V(148, 56));
+    try std.testing.expectEqual(@as(?u8, 0), recoverFromEip155V(147, 56));
+    try std.testing.expectEqual(@as(?u8, 1), recoverFromEip155V(148, 56));
+}
+
+test "recoverFromEip155V - invalid v returns null" {
+    try std.testing.expectEqual(@as(?u8, null), recoverFromEip155V(5, 1));
+    try std.testing.expectEqual(@as(?u8, null), recoverFromEip155V(100, 1));
 }
 
 test "recoverFromEip155V roundtrip" {
@@ -100,7 +105,7 @@ test "recoverFromEip155V roundtrip" {
     for (chain_ids) |chain_id| {
         for ([_]u8{ 0, 1 }) |recovery_id| {
             const eip155_v = applyEip155(recovery_id, chain_id);
-            const recovered = recoverFromEip155V(eip155_v, chain_id);
+            const recovered = recoverFromEip155V(eip155_v, chain_id).?;
             try std.testing.expectEqual(recovery_id, recovered);
         }
     }

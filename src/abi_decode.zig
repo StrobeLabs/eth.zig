@@ -86,8 +86,9 @@ fn decodeValuesAt(data: []const u8, base: usize, types: []const AbiType, allocat
     }
 
     var result = try allocator.alloc(AbiValue, n);
+    var decoded_count: usize = 0;
     errdefer {
-        for (result[0..n]) |*val| {
+        for (result[0..decoded_count]) |*val| {
             freeValue(val, allocator);
         }
         allocator.free(result);
@@ -106,6 +107,7 @@ fn decodeValuesAt(data: []const u8, base: usize, types: []const AbiType, allocat
         } else {
             result[i] = try decodeStaticValue(data[head_offset..][0..32], abi_type, allocator);
         }
+        decoded_count += 1;
     }
 
     return result;

@@ -15,7 +15,9 @@ const ETHER_F64: f64 = @as(f64, @floatFromInt(ETHER));
 const GWEI_F64: f64 = @as(f64, @floatFromInt(GWEI));
 const TWO_POW_128_F64: f64 = 2.0 * @as(f64, @floatFromInt(@as(u128, 1) << 127));
 
-inline fn f64ToU256(value: f64) u256 {
+inline fn f64ToU256(value: f64) ?u256 {
+    if (value < 0.0 or !std.math.isFinite(value)) return null;
+    if (value >= TWO_POW_128_F64) return null;
     return @as(u256, @as(u128, @intFromFloat(value)));
 }
 
@@ -28,13 +30,13 @@ inline fn u256ToF64(value: u256) f64 {
     return @as(f64, @floatFromInt(hi)) * TWO_POW_128_F64 + @as(f64, @floatFromInt(lo));
 }
 
-/// Convert ether (as f64) to wei (u256).
-pub fn parseEther(ether: f64) u256 {
+/// Convert ether (as f64) to wei (u256). Returns null for negative, non-finite, or overflow input.
+pub fn parseEther(ether: f64) ?u256 {
     return f64ToU256(ether * ETHER_F64);
 }
 
-/// Convert gwei (as f64) to wei (u256).
-pub fn parseGwei(gwei: f64) u256 {
+/// Convert gwei (as f64) to wei (u256). Returns null for negative, non-finite, or overflow input.
+pub fn parseGwei(gwei: f64) ?u256 {
     return f64ToU256(gwei * GWEI_F64);
 }
 
@@ -50,13 +52,13 @@ pub fn formatGwei(wei: u256) f64 {
 
 // Tests
 test "parseEther" {
-    try std.testing.expectEqual(@as(u256, 1_000_000_000_000_000_000), parseEther(1.0));
-    try std.testing.expectEqual(@as(u256, 500_000_000_000_000_000), parseEther(0.5));
+    try std.testing.expectEqual(@as(?u256, 1_000_000_000_000_000_000), parseEther(1.0));
+    try std.testing.expectEqual(@as(?u256, 500_000_000_000_000_000), parseEther(0.5));
 }
 
 test "parseGwei" {
-    try std.testing.expectEqual(@as(u256, 1_000_000_000), parseGwei(1.0));
-    try std.testing.expectEqual(@as(u256, 20_000_000_000), parseGwei(20.0));
+    try std.testing.expectEqual(@as(?u256, 1_000_000_000), parseGwei(1.0));
+    try std.testing.expectEqual(@as(?u256, 20_000_000_000), parseGwei(20.0));
 }
 
 test "formatEther" {
@@ -68,13 +70,28 @@ test "formatGwei" {
 }
 
 test "parseEther zero" {
-    try std.testing.expectEqual(@as(u256, 0), parseEther(0.0));
+    try std.testing.expectEqual(@as(?u256, 0), parseEther(0.0));
+}
+
+test "parseEther negative returns null" {
+    try std.testing.expectEqual(@as(?u256, null), parseEther(-1.0));
+    try std.testing.expectEqual(@as(?u256, null), parseGwei(-1.0));
+}
+
+test "parseEther non-finite returns null" {
+    try std.testing.expectEqual(@as(?u256, null), parseEther(std.math.inf(f64)));
+    try std.testing.expectEqual(@as(?u256, null), parseEther(std.math.nan(f64)));
+}
+
+test "parseEther overflow returns null" {
+    // 1e30 ether = 1e48 wei exceeds u128 max
+    try std.testing.expectEqual(@as(?u256, null), parseEther(1e30));
 }
 
 test "parseEther large value" {
     // 9007.0 is exact in f64, but 9007.0 * 1e18 exceeds f64 mantissa precision.
     // Allow up to 1 ULP of error at this magnitude (~2^20 = 1_048_576).
-    const result = parseEther(9007.0);
+    const result = parseEther(9007.0).?;
     const expected: u256 = 9007_000_000_000_000_000_000;
     const diff = if (result > expected) result - expected else expected - result;
     try std.testing.expect(diff < 1_048_576);
@@ -89,11 +106,11 @@ test "formatGwei zero" {
 }
 
 test "parseEther formatEther roundtrip" {
-    try std.testing.expectApproxEqAbs(@as(f64, 1.5), formatEther(parseEther(1.5)), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), formatEther(parseEther(1.5).?), 1e-6);
 }
 
 test "parseGwei formatGwei roundtrip" {
-    try std.testing.expectApproxEqAbs(@as(f64, 30.0), formatGwei(parseGwei(30.0)), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f64, 30.0), formatGwei(parseGwei(30.0).?), 1e-6);
 }
 
 test "formatEther is finite and monotonic for very large u256 values" {

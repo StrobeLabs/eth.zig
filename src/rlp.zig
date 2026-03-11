@@ -96,7 +96,7 @@ pub fn encodedLength(value: anytype) usize {
                 return 1; // 0x80
             }
         },
-        else => return 0,
+        else => @compileError("unsupported type for RLP encoding"),
     }
 }
 
@@ -375,7 +375,7 @@ pub fn writeDirect(buf: []u8, value: anytype) usize {
                 return 1;
             }
         },
-        else => return 0,
+        else => @compileError("unsupported type for RLP encoding"),
     }
 }
 

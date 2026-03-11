@@ -128,7 +128,7 @@ pub fn findArbOpportunity(hops: []const Pool, max_input: u256) ?ArbOpportunity {
 fn quotePool(amount_in: u256, pool: Pool) ?u256 {
     switch (pool) {
         .v2 => |p| {
-            const result = v2.getAmountOut(amount_in, p.reserve_in, p.reserve_out, p.fee_numerator, p.fee_denominator);
+            const result = v2.getAmountOut(amount_in, p.reserve_in, p.reserve_out, p.fee_numerator, p.fee_denominator) orelse return null;
             return if (result == 0) null else result;
         },
         .v3 => |p| {
@@ -161,7 +161,7 @@ test "quoteExactInput V2 single hop" {
     try std.testing.expect(result != null);
 
     // Should match direct V2 calculation
-    const direct = v2.getAmountOut(1_000_000_000_000_000_000, 100_000_000_000_000_000_000, 200_000_000_000, 997, 1000);
+    const direct = v2.getAmountOut(1_000_000_000_000_000_000, 100_000_000_000_000_000_000, 200_000_000_000, 997, 1000).?;
     try std.testing.expectEqual(direct, result.?);
 }
 

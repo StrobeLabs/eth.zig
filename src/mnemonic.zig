@@ -172,8 +172,11 @@ fn wordToIndex(word: []const u8) ?u16 {
 /// Convert mnemonic to seed using PBKDF2-HMAC-SHA512.
 /// The passphrase is optional (empty string if not provided).
 pub fn toSeed(words: []const []const u8, passphrase: []const u8) ![64]u8 {
+    const secureZero = @import("utils/constants.zig").secureZero;
+
     // Build mnemonic string: words joined by spaces
     var mnemonic_buf: [1024]u8 = undefined;
+    defer secureZero(&mnemonic_buf);
     var mnemonic_len: usize = 0;
 
     for (words, 0..) |word, i| {
@@ -189,6 +192,7 @@ pub fn toSeed(words: []const []const u8, passphrase: []const u8) ![64]u8 {
 
     // Salt = "mnemonic" + passphrase
     var salt_buf: [256]u8 = undefined;
+    defer secureZero(&salt_buf);
     const prefix = "mnemonic";
     @memcpy(salt_buf[0..prefix.len], prefix);
     @memcpy(salt_buf[prefix.len .. prefix.len + passphrase.len], passphrase);

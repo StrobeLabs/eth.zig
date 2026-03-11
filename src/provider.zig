@@ -649,6 +649,13 @@ fn parseTransactionReceipt(allocator: std.mem.Allocator, raw: []const u8) !?rece
 
     // Parse logs array
     const logs = try parseLogsArray(allocator, obj);
+    errdefer {
+        for (logs) |log| {
+            allocator.free(log.data);
+            if (log.topics.len > 0) allocator.free(log.topics);
+        }
+        if (logs.len > 0) allocator.free(logs);
+    }
 
     // Parse required fields
     const tx_hash = try parseHash(jsonGetString(obj, "transactionHash") orelse return error.InvalidResponse);
@@ -690,11 +697,19 @@ fn parseLogsArray(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ![]cons
     if (arr.items.len == 0) return &.{};
 
     const logs = try allocator.alloc(receipt_mod.Log, arr.items.len);
-    errdefer allocator.free(logs);
+    var parsed_count: usize = 0;
+    errdefer {
+        for (logs[0..parsed_count]) |log| {
+            allocator.free(log.data);
+            if (log.topics.len > 0) allocator.free(log.topics);
+        }
+        allocator.free(logs);
+    }
 
     for (arr.items, 0..) |item, i| {
         if (item != .object) return error.InvalidResponse;
         logs[i] = try parseSingleLog(allocator, item.object);
+        parsed_count += 1;
     }
 
     return logs;
@@ -705,9 +720,11 @@ fn parseSingleLog(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !receip
     const address = (try parseOptionalAddress(jsonGetString(obj, "address"))) orelse return error.InvalidResponse;
     const data_str = jsonGetString(obj, "data") orelse "0x";
     const data = try parseHexBytes(allocator, data_str);
+    errdefer allocator.free(data);
 
     // Parse topics array
     const topics = try parseTopics(allocator, obj);
+    errdefer if (topics.len > 0) allocator.free(topics);
 
     const block_number = try parseOptionalHexU64(jsonGetString(obj, "blockNumber"));
     const tx_hash = try parseOptionalHash(jsonGetString(obj, "transactionHash"));
@@ -780,11 +797,19 @@ fn parseLogsResponse(allocator: std.mem.Allocator, raw: []const u8) ![]receipt_m
     }
 
     const logs = try allocator.alloc(receipt_mod.Log, arr.items.len);
-    errdefer allocator.free(logs);
+    var parsed_count: usize = 0;
+    errdefer {
+        for (logs[0..parsed_count]) |log| {
+            allocator.free(log.data);
+            if (log.topics.len > 0) allocator.free(log.topics);
+        }
+        allocator.free(logs);
+    }
 
     for (arr.items, 0..) |item, i| {
         if (item != .object) return error.InvalidResponse;
         logs[i] = try parseSingleLog(allocator, item.object);
+        parsed_count += 1;
     }
 
     return logs;
@@ -838,6 +863,7 @@ fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_mod.B
     // Parse extraData
     const extra_data_str = jsonGetString(obj, "extraData") orelse "0x";
     const extra_data = try parseHexBytes(allocator, extra_data_str);
+    errdefer allocator.free(extra_data);
 
     // Optional EIP-1559 / EIP-4844 fields
     const base_fee: ?u256 = if (jsonGetString(obj, "baseFeePerGas")) |s|

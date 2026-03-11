@@ -30,6 +30,7 @@ const SECP256K1_CONTEXT_NONE: c_uint = 1;
 const SECP256K1_EC_UNCOMPRESSED: c_uint = 2;
 
 extern fn secp256k1_context_create(flags: c_uint) ?*secp256k1_context;
+extern fn secp256k1_context_destroy(ctx: *secp256k1_context) void;
 extern fn secp256k1_context_randomize(ctx: *secp256k1_context, seed32: ?[*]const u8) c_int;
 
 extern fn secp256k1_ecdsa_sign_recoverable(
@@ -91,8 +92,12 @@ fn getContext() *secp256k1_context {
     if (@atomicLoad(?*secp256k1_context, &global_ctx, .acquire)) |ctx| return ctx;
     const ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE) orelse
         @panic("secp256k1_context_create failed");
-    @atomicStore(?*secp256k1_context, &global_ctx, ctx, .release);
-    return ctx;
+    // Use cmpxchg to avoid TOCTOU race: if another thread won, use their context
+    if (@cmpxchgStrong(?*secp256k1_context, &global_ctx, null, ctx, .release, .acquire)) |_| {
+        // Another thread already initialized; destroy our redundant context.
+        secp256k1_context_destroy(ctx);
+    }
+    return @atomicLoad(?*secp256k1_context, &global_ctx, .acquire).?;
 }
 
 // ============================================================================

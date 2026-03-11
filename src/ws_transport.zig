@@ -28,10 +28,10 @@ pub fn parseUrl(url: []const u8) UrlError!ParsedUrl {
     var rest: []const u8 = undefined;
     var is_tls: bool = false;
 
-    if (startsWith(url, "wss://")) {
+    if (std.mem.startsWith(u8, url, "wss://")) {
         rest = url[6..];
         is_tls = true;
-    } else if (startsWith(url, "ws://")) {
+    } else if (std.mem.startsWith(u8, url, "ws://")) {
         rest = url[5..];
         is_tls = false;
     } else {
@@ -41,7 +41,7 @@ pub fn parseUrl(url: []const u8) UrlError!ParsedUrl {
     if (rest.len == 0) return error.MissingHost;
 
     // Split host+port from path.
-    const path_start = indexOf(rest, '/') orelse rest.len;
+    const path_start = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
     const host_port = rest[0..path_start];
     const path = if (path_start < rest.len) rest[path_start..] else "/";
 
@@ -49,7 +49,7 @@ pub fn parseUrl(url: []const u8) UrlError!ParsedUrl {
     var host: []const u8 = undefined;
     var port: u16 = if (is_tls) 443 else 80;
 
-    if (indexOf(host_port, ':')) |colon| {
+    if (std.mem.indexOfScalar(u8, host_port, ':')) |colon| {
         host = host_port[0..colon];
         const port_str = host_port[colon + 1 ..];
         port = std.fmt.parseInt(u16, port_str, 10) catch {
@@ -253,21 +253,24 @@ pub fn computeAcceptKey(ws_key: []const u8) [28]u8 {
 /// correct Sec-WebSocket-Accept header.
 pub fn validateHandshakeResponse(response: []const u8, expected_accept: []const u8) bool {
     // Check for HTTP 101 status
-    if (!containsSubstring(response, "101")) return false;
+    if (std.mem.indexOf(u8, response, "101") == null) return false;
 
     // Find Sec-WebSocket-Accept header (case-insensitive search)
     const accept_header = "sec-websocket-accept: ";
     var lower_buf: [4096]u8 = undefined;
     const check_len = @min(response.len, lower_buf.len);
     for (response[0..check_len], 0..) |c, i| {
-        lower_buf[i] = toLower(c);
+        lower_buf[i] = std.ascii.toLower(c);
     }
     const lower_response = lower_buf[0..check_len];
 
-    if (indexOfSubstring(lower_response, accept_header)) |header_start| {
+    if (std.mem.indexOf(u8, lower_response, accept_header)) |header_start| {
         const value_start = header_start + accept_header.len;
         // Find end of header value (terminated by \r\n)
-        const value_end = indexOfFrom(response, value_start, '\r') orelse response.len;
+        const value_end = blk: {
+            const slice = response[value_start..];
+            break :blk if (std.mem.indexOfScalar(u8, slice, '\r')) |idx| idx + value_start else null;
+        } orelse response.len;
         const accept_value = response[value_start..value_end];
 
         // Trim whitespace
@@ -441,7 +444,7 @@ pub const WsTransport = struct {
             var id_buf: [32]u8 = undefined;
             const id_str = std.fmt.bufPrint(&id_buf, "\"id\":{d}", .{id}) catch unreachable;
 
-            if (containsSubstring(frame_data, id_str)) {
+            if (std.mem.indexOf(u8, frame_data, id_str) != null) {
                 return frame_data;
             }
 
@@ -575,7 +578,7 @@ pub const WsTransport = struct {
 
             // Check if we have the full response (ends with \r\n\r\n)
             if (total_read >= 4) {
-                if (indexOfSubstring(response_buf[0..total_read], "\r\n\r\n") != null) {
+                if (std.mem.indexOf(u8, response_buf[0..total_read], "\r\n\r\n") != null) {
                     break;
                 }
             }
@@ -640,46 +643,6 @@ pub const WsTransport = struct {
         }
     }
 };
-
-// ---------------------------------------------------------------------------
-// String utility helpers
-// ---------------------------------------------------------------------------
-
-fn startsWith(haystack: []const u8, prefix: []const u8) bool {
-    if (haystack.len < prefix.len) return false;
-    return std.mem.eql(u8, haystack[0..prefix.len], prefix);
-}
-
-fn indexOf(haystack: []const u8, needle: u8) ?usize {
-    return std.mem.indexOfScalar(u8, haystack, needle);
-}
-
-fn indexOfFrom(haystack: []const u8, start: usize, needle: u8) ?usize {
-    if (start >= haystack.len) return null;
-    const idx = std.mem.indexOfScalar(u8, haystack[start..], needle);
-    return if (idx) |i| i + start else null;
-}
-
-fn containsSubstring(haystack: []const u8, needle: []const u8) bool {
-    return indexOfSubstring(haystack, needle) != null;
-}
-
-fn indexOfSubstring(haystack: []const u8, needle: []const u8) ?usize {
-    if (needle.len > haystack.len) return null;
-    if (needle.len == 0) return 0;
-    const limit = haystack.len - needle.len + 1;
-    for (0..limit) |i| {
-        if (std.mem.eql(u8, haystack[i .. i + needle.len], needle)) {
-            return i;
-        }
-    }
-    return null;
-}
-
-fn toLower(c: u8) u8 {
-    if (c >= 'A' and c <= 'Z') return c + 32;
-    return c;
-}
 
 // ============================================================================
 // Tests
@@ -1045,13 +1008,13 @@ test "buildHandshakeRequest - basic" {
     const req = try buildHandshakeRequest(allocator, "localhost", 8545, "/ws", "dGhlIHNhbXBsZSBub25jZQ==");
     defer allocator.free(req);
 
-    try std.testing.expect(containsSubstring(req, "GET /ws HTTP/1.1\r\n"));
-    try std.testing.expect(containsSubstring(req, "Host: localhost:8545\r\n"));
-    try std.testing.expect(containsSubstring(req, "Upgrade: websocket\r\n"));
-    try std.testing.expect(containsSubstring(req, "Connection: Upgrade\r\n"));
-    try std.testing.expect(containsSubstring(req, "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"));
-    try std.testing.expect(containsSubstring(req, "Sec-WebSocket-Version: 13\r\n"));
-    try std.testing.expect(containsSubstring(req, "\r\n\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, req, "GET /ws HTTP/1.1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "Host: localhost:8545\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "Upgrade: websocket\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "Connection: Upgrade\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "Sec-WebSocket-Version: 13\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "\r\n\r\n") != null);
 }
 
 test "buildHandshakeRequest - standard port 80 omitted" {
@@ -1059,8 +1022,8 @@ test "buildHandshakeRequest - standard port 80 omitted" {
     const req = try buildHandshakeRequest(allocator, "example.com", 80, "/", "abc=");
     defer allocator.free(req);
 
-    try std.testing.expect(containsSubstring(req, "Host: example.com\r\n"));
-    try std.testing.expect(!containsSubstring(req, ":80"));
+    try std.testing.expect(std.mem.indexOf(u8, req, "Host: example.com\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, ":80") == null);
 }
 
 test "buildHandshakeRequest - standard port 443 omitted" {
@@ -1068,8 +1031,8 @@ test "buildHandshakeRequest - standard port 443 omitted" {
     const req = try buildHandshakeRequest(allocator, "example.com", 443, "/", "abc=");
     defer allocator.free(req);
 
-    try std.testing.expect(containsSubstring(req, "Host: example.com\r\n"));
-    try std.testing.expect(!containsSubstring(req, "443"));
+    try std.testing.expect(std.mem.indexOf(u8, req, "Host: example.com\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "443") == null);
 }
 
 test "buildHandshakeRequest - deep path" {
@@ -1077,8 +1040,8 @@ test "buildHandshakeRequest - deep path" {
     const req = try buildHandshakeRequest(allocator, "node.io", 9546, "/v2/my-key", "key=");
     defer allocator.free(req);
 
-    try std.testing.expect(containsSubstring(req, "GET /v2/my-key HTTP/1.1\r\n"));
-    try std.testing.expect(containsSubstring(req, "Host: node.io:9546\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, req, "GET /v2/my-key HTTP/1.1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req, "Host: node.io:9546\r\n") != null);
 }
 
 test "validateHandshakeResponse - valid" {
@@ -1187,32 +1150,6 @@ test "encodeFrame - exactly 126 bytes (triggers extended 16-bit length)" {
     try std.testing.expectEqual(@as(u8, 0), frame[2]); // high byte
     try std.testing.expectEqual(@as(u8, 126), frame[3]); // low byte
     try std.testing.expectEqual(@as(usize, 2 + 2 + 4 + 126), frame.len);
-}
-
-test "string helpers - startsWith" {
-    try std.testing.expect(startsWith("ws://hello", "ws://"));
-    try std.testing.expect(startsWith("wss://hello", "wss://"));
-    try std.testing.expect(!startsWith("http://hello", "ws://"));
-    try std.testing.expect(!startsWith("w", "ws://"));
-}
-
-test "string helpers - indexOf" {
-    try std.testing.expectEqual(@as(?usize, 3), indexOf("abc:def", ':'));
-    try std.testing.expectEqual(@as(?usize, null), indexOf("abcdef", ':'));
-}
-
-test "string helpers - containsSubstring" {
-    try std.testing.expect(containsSubstring("Hello, World!", "World"));
-    try std.testing.expect(!containsSubstring("Hello, World!", "xyz"));
-    try std.testing.expect(containsSubstring("abc", "abc"));
-    try std.testing.expect(containsSubstring("abc", ""));
-}
-
-test "string helpers - toLower" {
-    try std.testing.expectEqual(@as(u8, 'a'), toLower('A'));
-    try std.testing.expectEqual(@as(u8, 'z'), toLower('Z'));
-    try std.testing.expectEqual(@as(u8, 'a'), toLower('a'));
-    try std.testing.expectEqual(@as(u8, '1'), toLower('1'));
 }
 
 test "Opcode values" {

@@ -195,7 +195,9 @@ pub fn hashStruct(
     defer allocator.free(ref_types);
 
     // Compute typeHash
-    const fields = if (td) |t| t.fields else fieldDefsFromFieldValues(struct_val.fields);
+    const inferred_fields = if (td == null) try fieldDefsFromFieldValues(allocator, struct_val.fields) else null;
+    defer if (inferred_fields) |f| allocator.free(f);
+    const fields = if (td) |t| t.fields else inferred_fields.?;
     const type_hash = try hashType(allocator, struct_val.type_name, fields, ref_types);
 
     // Build the data: typeHash || encodeData(field1) || encodeData(field2) || ...
@@ -333,24 +335,12 @@ fn findTypeDef(type_defs: []const TypeDef, name: []const u8) ?TypeDef {
 }
 
 /// Build FieldDefs from FieldValues (for when we don't have an explicit TypeDef).
-fn fieldDefsFromFieldValues(fields: []const FieldValue) []const FieldDef {
-    // FieldValue has the same layout prefix as FieldDef (name, type_str),
-    // but they are different types. We cannot simply reinterpret. Instead,
-    // we note that since FieldValue starts with { name, type_str, value },
-    // and FieldDef is { name, type_str }, we need to produce a FieldDef slice.
-    //
-    // Since this function cannot allocate and we need a slice, we use a
-    // static buffer approach with a reasonable max. For production use,
-    // callers should always provide TypeDefs.
-    const max_fields = 32;
-    const S = struct {
-        var buf: [max_fields]FieldDef = undefined;
-    };
-    const count = @min(fields.len, max_fields);
-    for (0..count) |i| {
-        S.buf[i] = .{ .name = fields[i].name, .type_str = fields[i].type_str };
+fn fieldDefsFromFieldValues(allocator: std.mem.Allocator, fields: []const FieldValue) std.mem.Allocator.Error![]const FieldDef {
+    const defs = try allocator.alloc(FieldDef, fields.len);
+    for (fields, 0..) |field, i| {
+        defs[i] = .{ .name = field.name, .type_str = field.type_str };
     }
-    return S.buf[0..count];
+    return defs;
 }
 
 /// Check if a type string refers to a struct type (i.e., not a built-in Solidity type).

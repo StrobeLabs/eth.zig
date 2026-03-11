@@ -11,3 +11,12 @@ pub const ZERO_ADDRESS: primitives.Address = primitives.ZERO_ADDRESS;
 
 /// Zero hash (0x0000...0000).
 pub const ZERO_HASH: primitives.Hash = primitives.ZERO_HASH;
+
+/// Securely zero a buffer using volatile writes to prevent compiler elision.
+/// Use this to clear sensitive data (private keys, seeds, nonces) from memory.
+pub fn secureZero(buf: []u8) void {
+    for (buf) |*b| {
+        const volatile_ptr: *volatile u8 = b;
+        volatile_ptr.* = 0;
+    }
+}

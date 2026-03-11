@@ -17,16 +17,16 @@ pub const ExtendedKey = struct {
     chain_code: [32]u8,
 
     /// Derive the Ethereum address from this private key.
-    pub fn toAddress(self: ExtendedKey) [20]u8 {
+    pub fn toAddress(self: ExtendedKey) HdWalletError!primitives.Address {
         // Get public key from private key
         const Secp256k1 = std.crypto.ecc.Secp256k1;
-        const privkey_scalar = Secp256k1.scalar.Scalar.fromBytes(self.key, .big) catch return std.mem.zeroes([20]u8);
-        const pubkey_point = Secp256k1.basePoint.mul(privkey_scalar.toBytes(.big), .big) catch return std.mem.zeroes([20]u8);
+        const privkey_scalar = Secp256k1.scalar.Scalar.fromBytes(self.key, .big) catch return error.DerivationFailed;
+        const pubkey_point = Secp256k1.basePoint.mul(privkey_scalar.toBytes(.big), .big) catch return error.DerivationFailed;
         const pubkey_bytes = pubkey_point.toUncompressedSec1();
 
         // Address = last 20 bytes of keccak256(pubkey[1..])
         const hash = keccak.hash(pubkey_bytes[1..]);
-        var addr: [20]u8 = undefined;
+        var addr: primitives.Address = undefined;
         @memcpy(&addr, hash[12..32]);
         return addr;
     }
@@ -39,11 +39,13 @@ pub const HARDENED: u32 = 0x80000000;
 pub const ETH_COIN_TYPE: u32 = 60;
 
 const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
+const secureZero = @import("utils/constants.zig").secureZero;
 
 /// Derive the master key from a BIP-39 seed.
 pub fn masterKeyFromSeed(seed: [64]u8) HdWalletError!ExtendedKey {
     // HMAC-SHA512 with key "Bitcoin seed"
     var mac: [64]u8 = undefined;
+    defer secureZero(&mac);
     HmacSha512.create(&mac, &seed, "Bitcoin seed");
 
     const key = mac[0..32].*;
@@ -60,6 +62,7 @@ pub fn masterKeyFromSeed(seed: [64]u8) HdWalletError!ExtendedKey {
 /// Use index | HARDENED for hardened derivation.
 pub fn deriveChild(parent: ExtendedKey, index: u32) HdWalletError!ExtendedKey {
     var data: [37]u8 = undefined;
+    defer secureZero(&data);
 
     if (index >= HARDENED) {
         // Hardened: 0x00 || private_key || index
@@ -79,6 +82,7 @@ pub fn deriveChild(parent: ExtendedKey, index: u32) HdWalletError!ExtendedKey {
 
     // HMAC-SHA512
     var mac: [64]u8 = undefined;
+    defer secureZero(&mac);
     HmacSha512.create(&mac, &data, &parent.chain_code);
 
     const il = mac[0..32].*;
@@ -177,7 +181,7 @@ test "derivePath just m returns master key" {
 test "toAddress produces 20-byte address" {
     const seed = [_]u8{0xef} ** 64;
     const key = try deriveEthAccount(seed, 0);
-    const addr = key.toAddress();
+    const addr = try key.toAddress();
     // Just verify it's not all zeros
     var all_zero = true;
     for (addr) |b| {
@@ -193,8 +197,8 @@ test "different accounts produce different addresses" {
     const seed = [_]u8{0x11} ** 64;
     const key0 = try deriveEthAccount(seed, 0);
     const key1 = try deriveEthAccount(seed, 1);
-    const addr0 = key0.toAddress();
-    const addr1 = key1.toAddress();
+    const addr0 = try key0.toAddress();
+    const addr1 = try key1.toAddress();
     try std.testing.expect(!std.mem.eql(u8, &addr0, &addr1));
 }
 
@@ -209,7 +213,7 @@ test "known BIP-39 mnemonic to address" {
     const seed = try mnemonic_mod.toSeed(&words, "");
 
     const key = try deriveEthAccount(seed, 0);
-    const addr = key.toAddress();
+    const addr = try key.toAddress();
 
     // The address should be deterministic - verify non-zero
     var all_zero = true;
@@ -223,7 +227,7 @@ test "known BIP-39 mnemonic to address" {
 
     // Verify it matches when derived again
     const key2 = try deriveEthAccount(seed, 0);
-    const addr2 = key2.toAddress();
+    const addr2 = try key2.toAddress();
     try std.testing.expectEqualSlices(u8, &addr, &addr2);
 }
 
@@ -253,7 +257,7 @@ test "known mnemonic abandon...about to exact address" {
     };
     const seed = try mnemonic_mod.toSeed(&words, "");
     const key = try deriveEthAccount(seed, 0);
-    const addr = key.toAddress();
+    const addr = try key.toAddress();
     const addr_hex = primitives.addressToChecksum(&addr);
     // Well-known address for this mnemonic
     const expected = try hex_mod.hexToBytesFixed(20, "0x9858EfFD232B4033E47d90003D41EC34EcaEda94");
@@ -274,8 +278,8 @@ test "BIP-44 second account index produces different key and address" {
     // Keys must differ
     try std.testing.expect(!std.mem.eql(u8, &key0.key, &key1.key));
     // Addresses must differ
-    const addr0 = key0.toAddress();
-    const addr1 = key1.toAddress();
+    const addr0 = try key0.toAddress();
+    const addr1 = try key1.toAddress();
     try std.testing.expect(!std.mem.eql(u8, &addr0, &addr1));
 }
 
@@ -286,7 +290,7 @@ test "deriveEthAccount key bytes deterministic" {
     const key2 = try deriveEthAccount(seed, 0);
     try std.testing.expectEqualSlices(u8, &key1.key, &key2.key);
     try std.testing.expectEqualSlices(u8, &key1.chain_code, &key2.chain_code);
-    const addr1 = key1.toAddress();
-    const addr2 = key2.toAddress();
+    const addr1 = try key1.toAddress();
+    const addr2 = try key2.toAddress();
     try std.testing.expectEqualSlices(u8, &addr1, &addr2);
 }

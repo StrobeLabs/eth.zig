@@ -37,10 +37,10 @@ pub const Chain = struct {
     testnet: bool = false,
 };
 
-/// Parse a hex address string into a 20-byte address.
-/// Works at both comptime and runtime.
-pub fn addressFromHex(hex_str: []const u8) Address {
-    return hex_mod.hexToBytesFixed(20, hex_str) catch unreachable;
+/// Parse a hex address string into a 20-byte address at comptime.
+/// Compile error if the hex string is invalid.
+pub fn addressFromHex(comptime hex_str: []const u8) Address {
+    return comptime hex_mod.hexToBytesFixed(20, hex_str) catch @compileError("invalid hex address: " ++ hex_str);
 }
 
 /// Look up a chain by ID.

@@ -54,7 +54,7 @@ pub const ERC20 = struct {
             &.{},
             &.{.string},
         );
-        defer self.contract.allocator.free(result);
+        defer contract_mod.freeReturnValues(result, self.contract.allocator);
         if (result.len == 0) return error.InvalidResponse;
         const s = result[0].string;
         // Copy the string so we can free the decode result
@@ -74,7 +74,7 @@ pub const ERC20 = struct {
             &.{},
             &.{.string},
         );
-        defer self.contract.allocator.free(result);
+        defer contract_mod.freeReturnValues(result, self.contract.allocator);
         if (result.len == 0) return error.InvalidResponse;
         const s = result[0].string;
         const owned = try self.contract.allocator.alloc(u8, s.len);

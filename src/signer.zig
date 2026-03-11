@@ -9,9 +9,16 @@ const Signature = @import("signature.zig").Signature;
 pub const Signer = struct {
     private_key: [32]u8,
 
+    const secureZero = @import("utils/constants.zig").secureZero;
+
     /// Create a new Signer from a 32-byte private key.
     pub fn init(private_key: [32]u8) Signer {
         return .{ .private_key = private_key };
+    }
+
+    /// Securely zero the private key. Call when the Signer is no longer needed.
+    pub fn deinit(self: *Signer) void {
+        secureZero(&self.private_key);
     }
 
     /// Derive the Ethereum address corresponding to this signer's private key.

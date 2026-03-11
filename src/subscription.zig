@@ -247,13 +247,17 @@ pub fn formatHash(hash: [32]u8) [66]u8 {
 fn extractResultString(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
     // Look for "result":" pattern
     const needle = "\"result\":\"";
-    const start = indexOfSubstring(json, needle) orelse return error.InvalidResponse;
+    const start = std.mem.indexOf(u8, json, needle) orelse return error.InvalidResponse;
     const value_start = start + needle.len;
 
     // Find closing quote
-    const value_end = indexOfFrom(json, value_start, '"') orelse return error.InvalidResponse;
+    const value_end = if (value_start < json.len)
+        if (std.mem.indexOfScalar(u8, json[value_start..], '"')) |idx| idx + value_start else null
+    else
+        null;
+    const end = value_end orelse return error.InvalidResponse;
 
-    const value = json[value_start..value_end];
+    const value = json[value_start..end];
     const result = try allocator.alloc(u8, value.len);
     @memcpy(result, value);
     return result;
@@ -262,44 +266,18 @@ fn extractResultString(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
 /// Check if a JSON message is a subscription notification for the given ID.
 fn isSubscriptionNotification(json: []const u8, subscription_id: []const u8) bool {
     // Must contain "eth_subscription" method
-    if (!containsSubstring(json, "\"eth_subscription\"")) return false;
+    if (std.mem.indexOf(u8, json, "\"eth_subscription\"") == null) return false;
 
     // Must contain our subscription ID
     // Look for "subscription":"<id>" pattern
     const needle_prefix = "\"subscription\":\"";
-    const prefix_pos = indexOfSubstring(json, needle_prefix) orelse return false;
+    const prefix_pos = std.mem.indexOf(u8, json, needle_prefix) orelse return false;
     const id_start = prefix_pos + needle_prefix.len;
 
     if (id_start + subscription_id.len > json.len) return false;
     const candidate = json[id_start .. id_start + subscription_id.len];
 
     return std.mem.eql(u8, candidate, subscription_id);
-}
-
-// ---------------------------------------------------------------------------
-// String utilities
-// ---------------------------------------------------------------------------
-
-fn containsSubstring(haystack: []const u8, needle: []const u8) bool {
-    return indexOfSubstring(haystack, needle) != null;
-}
-
-fn indexOfSubstring(haystack: []const u8, needle: []const u8) ?usize {
-    if (needle.len > haystack.len) return null;
-    if (needle.len == 0) return 0;
-    const limit = haystack.len - needle.len + 1;
-    for (0..limit) |i| {
-        if (std.mem.eql(u8, haystack[i .. i + needle.len], needle)) {
-            return i;
-        }
-    }
-    return null;
-}
-
-fn indexOfFrom(haystack: []const u8, start: usize, needle: u8) ?usize {
-    if (start >= haystack.len) return null;
-    const idx = std.mem.indexOfScalar(u8, haystack[start..], needle);
-    return if (idx) |i| i + start else null;
 }
 
 // ============================================================================
@@ -353,10 +331,10 @@ test "buildSubscribeParams - logs with address only" {
     const result = try buildSubscribeParams(allocator, params);
     defer allocator.free(result);
 
-    try std.testing.expect(containsSubstring(result, "[\"logs\",{"));
-    try std.testing.expect(containsSubstring(result, "\"address\":\"0x"));
-    try std.testing.expect(containsSubstring(result, "dededededededededededededededededededededede"));
-    try std.testing.expect(containsSubstring(result, "}]"));
+    try std.testing.expect(std.mem.indexOf(u8, result, "[\"logs\",{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"address\":\"0x") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "dededededededededededededededededededededede") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "}]") != null);
 }
 
 test "buildSubscribeParams - logs with topics" {
@@ -372,8 +350,8 @@ test "buildSubscribeParams - logs with topics" {
     const result = try buildSubscribeParams(allocator, params);
     defer allocator.free(result);
 
-    try std.testing.expect(containsSubstring(result, "\"topics\":["));
-    try std.testing.expect(containsSubstring(result, "\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""));
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"topics\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"") != null);
 }
 
 test "buildSubscribeParams - logs with null topic" {
@@ -388,7 +366,7 @@ test "buildSubscribeParams - logs with null topic" {
     const result = try buildSubscribeParams(allocator, params);
     defer allocator.free(result);
 
-    try std.testing.expect(containsSubstring(result, "\"topics\":[null]"));
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"topics\":[null]") != null);
 }
 
 test "buildSubscribeParams - logs with address and topics" {
@@ -406,10 +384,10 @@ test "buildSubscribeParams - logs with address and topics" {
     const result = try buildSubscribeParams(allocator, params);
     defer allocator.free(result);
 
-    try std.testing.expect(containsSubstring(result, "\"address\":\"0x"));
-    try std.testing.expect(containsSubstring(result, "\"topics\":[\"0x"));
-    try std.testing.expect(containsSubstring(result, "null"));
-    try std.testing.expect(containsSubstring(result, "}]"));
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"address\":\"0x") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"topics\":[\"0x") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "}]") != null);
 }
 
 test "extractResultString - valid response" {
