@@ -30,12 +30,12 @@ inline fn u256ToF64(value: u256) f64 {
     return @as(f64, @floatFromInt(hi)) * TWO_POW_128_F64 + @as(f64, @floatFromInt(lo));
 }
 
-/// Convert ether (as f64) to wei (u256). Returns null for negative or non-finite input.
+/// Convert ether (as f64) to wei (u256). Returns null for negative, non-finite, or overflow input.
 pub fn parseEther(ether: f64) ?u256 {
     return f64ToU256(ether * ETHER_F64);
 }
 
-/// Convert gwei (as f64) to wei (u256). Returns null for negative or non-finite input.
+/// Convert gwei (as f64) to wei (u256). Returns null for negative, non-finite, or overflow input.
 pub fn parseGwei(gwei: f64) ?u256 {
     return f64ToU256(gwei * GWEI_F64);
 }
