@@ -39,7 +39,8 @@ pub const RetryOpts = struct {
 pub const RetryingProvider = struct {
     inner: *Provider,
     opts: RetryOpts,
-    prng: std.rand.DefaultPrng,
+    /// PRNG for jitter; mutated on each retry. Not thread-safe — do not share instances across threads.
+    prng: std.Random.DefaultPrng,
 
     /// Initialise a RetryingProvider wrapping the given Provider.
     /// Seeds the PRNG from a cryptographically random value.
@@ -48,7 +49,7 @@ pub const RetryingProvider = struct {
         return .{
             .inner = inner,
             .opts = opts,
-            .prng = std.rand.DefaultPrng.init(seed),
+            .prng = std.Random.DefaultPrng.init(seed),
         };
     }
 
@@ -287,7 +288,7 @@ test "RetryState - exhausts attempts then stops" {
     var rp = RetryingProvider{
         .inner = &fake_inner,
         .opts = opts,
-        .prng = std.rand.DefaultPrng.init(seed),
+        .prng = std.Random.DefaultPrng.init(seed),
     };
 
     var state = RetryState.init(&rp);
@@ -304,7 +305,7 @@ test "RetryState - non-retryable error stops immediately" {
     var rp = RetryingProvider{
         .inner = &fake_inner,
         .opts = opts,
-        .prng = std.rand.DefaultPrng.init(0),
+        .prng = std.Random.DefaultPrng.init(0),
     };
 
     var state = RetryState.init(&rp);
@@ -325,7 +326,7 @@ test "RetryState - backoff increases exponentially" {
     var rp = RetryingProvider{
         .inner = &fake_inner,
         .opts = opts,
-        .prng = std.rand.DefaultPrng.init(0),
+        .prng = std.Random.DefaultPrng.init(0),
     };
 
     var state = RetryState.init(&rp);

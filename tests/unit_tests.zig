@@ -56,4 +56,6 @@ test {
     // Utils
     _ = eth.units;
     _ = eth.constants;
+    // Middleware
+    _ = eth.retry_provider;
 }
