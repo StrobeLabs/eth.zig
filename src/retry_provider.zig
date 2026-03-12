@@ -138,6 +138,18 @@ pub const RetryingProvider = struct {
         }
     }
 
+    /// Send a signed transaction and return the transaction hash.
+    ///
+    /// Retry semantics: retrying `sendRawTransaction` is generally safe because
+    /// signed Ethereum transactions are nonce-protected — a duplicate submission
+    /// of the same signed bytes is a no-op on the node once the first is mined.
+    /// However, if the first attempt succeeds but the response is lost (network
+    /// error after the node accepted the tx), a subsequent retry will fail with
+    /// a non-retryable "nonce already used" error. Callers should treat that
+    /// error as a signal to check transaction status via `getTransactionReceipt`
+    /// rather than as a confirmation of failure.
+    ///
+    /// See also: `RetryingProvider`, `RetryState`, `RetryOpts`.
     pub fn sendRawTransaction(self: *RetryingProvider, signed_tx: []const u8) ![32]u8 {
         var state = RetryState.init(self);
         while (true) {

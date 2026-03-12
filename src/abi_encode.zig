@@ -273,6 +273,13 @@ fn encodeValuesIntoNoAlloc(buf: *std.ArrayList(u8), values: []const AbiValue) En
 }
 
 /// Write values directly into a raw buffer (zero ArrayList overhead).
+///
+/// Pre-condition: every slice passed to this function — including nested
+/// array/fixed_array/tuple items reached through recursive calls — must
+/// satisfy `values.len <= max_tuple_values`. Public callers (`encodeValues`,
+/// `encodeFunctionCall`) enforce this for the top-level slice. The assert
+/// at the stack-frame boundary is the internal invariant check for all
+/// call sites, including the recursive paths in `writeDynamicValueDirect`.
 fn writeValuesDirect(buf: []u8, values: []const AbiValue) void {
     const n = values.len;
     if (n == 0) return;
