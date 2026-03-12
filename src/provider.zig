@@ -716,7 +716,7 @@ fn parseLogsArray(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ![]cons
 }
 
 /// Parse a single Log from a JSON object.
-fn parseSingleLog(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !receipt_mod.Log {
+pub fn parseSingleLog(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !receipt_mod.Log {
     const address = (try parseOptionalAddress(jsonGetString(obj, "address"))) orelse return error.InvalidResponse;
     const data_str = jsonGetString(obj, "data") orelse "0x";
     const data = try parseHexBytes(allocator, data_str);
@@ -816,7 +816,7 @@ fn parseLogsResponse(allocator: std.mem.Allocator, raw: []const u8) ![]receipt_m
 }
 
 /// Parse a block header from a raw JSON-RPC response.
-fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_mod.BlockHeader {
+pub fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_mod.BlockHeader {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
         return error.InvalidResponse;
     };

@@ -36,6 +36,9 @@ pub const http_transport = @import("http_transport.zig");
 pub const ws_transport = @import("ws_transport.zig");
 pub const subscription = @import("subscription.zig");
 pub const provider = @import("provider.zig");
+pub const retry_provider = @import("retry_provider.zig");
+pub const RetryingProvider = retry_provider.RetryingProvider;
+pub const RetryOpts = retry_provider.RetryOpts;
 
 // -- Layer 7: ENS --
 pub const ens_namehash = @import("ens/namehash.zig");
@@ -105,6 +108,7 @@ test {
     _ = @import("ws_transport.zig");
     _ = @import("subscription.zig");
     _ = @import("provider.zig");
+    _ = @import("retry_provider.zig");
     // Layer 7: Client
     _ = @import("wallet.zig");
     _ = @import("flashbots.zig");

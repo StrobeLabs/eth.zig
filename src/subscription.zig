@@ -1,6 +1,10 @@
 const std = @import("std");
 const WsTransport = @import("ws_transport.zig").WsTransport;
 const json_rpc = @import("json_rpc.zig");
+const block_mod = @import("block.zig");
+const receipt_mod = @import("receipt.zig");
+const primitives = @import("primitives.zig");
+const provider_mod = @import("provider.zig");
 
 /// Types of Ethereum subscriptions available via eth_subscribe.
 pub const SubscriptionType = enum {
@@ -56,6 +60,8 @@ pub const Subscription = struct {
         InvalidResponse,
         ConnectionClosed,
         OutOfMemory,
+        InvalidNotification,
+        NullResult,
     };
 
     /// Subscribe to events via eth_subscribe.
@@ -139,7 +145,75 @@ pub const Subscription = struct {
             self.id = "";
         }
     }
+
+    /// For new_heads subscriptions: parse and return the next block header.
+    /// Caller owns the returned BlockHeader's allocated fields (extra_data).
+    pub fn nextBlock(self: *Subscription, allocator: std.mem.Allocator) !block_mod.BlockHeader {
+        const raw = try self.next();
+        defer self.allocator.free(raw);
+
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
+            return error.InvalidNotification;
+        defer parsed.deinit();
+
+        const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+
+        // Serialize result back and wrap as {"result":...} for reuse with parseBlockHeader.
+        const result_json = try std.json.stringifyAlloc(allocator, result_val, .{});
+        defer allocator.free(result_json);
+
+        const wrapped = try std.fmt.allocPrint(allocator, "{{\"result\":{s}}}", .{result_json});
+        defer allocator.free(wrapped);
+
+        return (try provider_mod.parseBlockHeader(allocator, wrapped)) orelse error.NullResult;
+    }
+
+    /// For logs subscriptions: parse and return the next log.
+    /// Caller owns the returned Log's allocated fields (topics, data).
+    pub fn nextLog(self: *Subscription, allocator: std.mem.Allocator) !receipt_mod.Log {
+        const raw = try self.next();
+        defer self.allocator.free(raw);
+
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
+            return error.InvalidNotification;
+        defer parsed.deinit();
+
+        const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+        if (result_val != .object) return error.InvalidNotification;
+
+        return try provider_mod.parseSingleLog(allocator, result_val.object);
+    }
+
+    /// For new_pending_transactions subscriptions: return the next transaction hash.
+    pub fn nextTxHash(self: *Subscription) ![32]u8 {
+        const raw = try self.next();
+        defer self.allocator.free(raw);
+
+        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, raw, .{}) catch
+            return error.InvalidNotification;
+        defer parsed.deinit();
+
+        const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+        if (result_val != .string) return error.InvalidNotification;
+
+        return primitives.hashFromHex(result_val.string) catch error.InvalidNotification;
+    }
 };
+
+// ---------------------------------------------------------------------------
+// Notification parsing helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the `params.result` value from an eth_subscription notification.
+/// Notification format: {"jsonrpc":"2.0","method":"eth_subscription",
+///                       "params":{"subscription":"0x...","result":{...}}}
+/// Returns null if the JSON does not match the expected notification structure.
+fn getNotificationResult(root: std.json.Value) ?std.json.Value {
+    if (root != .object) return null;
+    const params_val = root.object.get("params") orelse return null;
+    if (params_val != .object) return null;
+    return params_val.object.get("result");
+}
 
 // ---------------------------------------------------------------------------
 // JSON building helpers
@@ -457,6 +531,42 @@ test "formatHash" {
     try std.testing.expect(result[0] == '0');
     try std.testing.expect(result[1] == 'x');
     try std.testing.expectEqualStrings("0xabababababababababababababababababababababababababababababababababab", &result);
+}
+
+test "getNotificationResult - new_heads notification" {
+    const json =
+        \\{"jsonrpc":"2.0","method":"eth_subscription",
+        \\ "params":{"subscription":"0xabc","result":{"number":"0x5","hash":"0xdeadbeef"}}}
+    ;
+    const allocator = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+    const result = getNotificationResult(parsed.value);
+    try std.testing.expect(result != null);
+    try std.testing.expect(result.? == .object);
+    try std.testing.expect(result.?.object.get("number") != null);
+}
+
+test "getNotificationResult - not a notification" {
+    const json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xabc\"}";
+    const allocator = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+    const result = getNotificationResult(parsed.value);
+    try std.testing.expect(result == null);
+}
+
+test "getNotificationResult - pending tx notification (string result)" {
+    const json =
+        \\{"jsonrpc":"2.0","method":"eth_subscription",
+        \\ "params":{"subscription":"0xabc","result":"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}}
+    ;
+    const allocator = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+    const result = getNotificationResult(parsed.value);
+    try std.testing.expect(result != null);
+    try std.testing.expect(result.? == .string);
 }
 
 test "Subscription struct layout" {

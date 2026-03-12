@@ -171,11 +171,12 @@ pub fn decodeAggregate3Results(allocator: std.mem.Allocator, data: []const u8) !
 
     // First word: offset to array data (should be 0x20)
     const array_offset = readWord(data[0..32]);
-    if (array_offset + 32 > data.len) return error.InvalidAbiData;
+    const array_header_end = std.math.add(usize, array_offset, 32) catch return error.InvalidAbiData;
+    if (array_header_end > data.len) return error.InvalidAbiData;
 
     // Array length
     const array_len = readWord(data[array_offset .. array_offset + 32]);
-    const array_data_start = array_offset + 32;
+    const array_data_start = array_offset + 32; // safe: array_header_end <= data.len
 
     var results = try allocator.alloc(Result, array_len);
     errdefer {
@@ -188,25 +189,29 @@ pub fn decodeAggregate3Results(allocator: std.mem.Allocator, data: []const u8) !
     // Read offsets for each result tuple
     for (0..array_len) |i| {
         const offset_pos = array_data_start + i * 32;
-        if (offset_pos + 32 > data.len) return error.InvalidAbiData;
+        const offset_end = std.math.add(usize, offset_pos, 32) catch return error.InvalidAbiData;
+        if (offset_end > data.len) return error.InvalidAbiData;
         const tuple_offset = readWord(data[offset_pos .. offset_pos + 32]);
-        const tuple_start = array_data_start + tuple_offset;
+        const tuple_start = std.math.add(usize, array_data_start, tuple_offset) catch return error.InvalidAbiData;
 
         // Each tuple: (bool success, bytes returnData)
         // word 0: success (bool)
         // word 1: offset to returnData within the tuple
         // At that offset: length word + data
-        if (tuple_start + 64 > data.len) return error.InvalidAbiData;
+        const tuple_end = std.math.add(usize, tuple_start, 64) catch return error.InvalidAbiData;
+        if (tuple_end > data.len) return error.InvalidAbiData;
 
         const success_word = readWord(data[tuple_start .. tuple_start + 32]);
         const return_data_offset = readWord(data[tuple_start + 32 .. tuple_start + 64]);
-        const return_data_abs = tuple_start + return_data_offset;
+        const return_data_abs = std.math.add(usize, tuple_start, return_data_offset) catch return error.InvalidAbiData;
 
-        if (return_data_abs + 32 > data.len) return error.InvalidAbiData;
+        const return_data_header_end = std.math.add(usize, return_data_abs, 32) catch return error.InvalidAbiData;
+        if (return_data_header_end > data.len) return error.InvalidAbiData;
         const return_data_len = readWord(data[return_data_abs .. return_data_abs + 32]);
-        const return_data_start = return_data_abs + 32;
+        const return_data_start = return_data_abs + 32; // safe: return_data_header_end <= data.len
 
-        if (return_data_start + return_data_len > data.len) return error.InvalidAbiData;
+        const return_data_end = std.math.add(usize, return_data_start, return_data_len) catch return error.InvalidAbiData;
+        if (return_data_end > data.len) return error.InvalidAbiData;
 
         var return_data: []const u8 = &.{};
         if (return_data_len > 0) {
