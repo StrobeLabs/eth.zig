@@ -136,7 +136,7 @@ fn encodeValuesInto(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), value
 
     // First pass: calculate tail offsets for dynamic values
     // and pre-compute the offset each dynamic value will be at
-    std.debug.assert(values.len <= max_tuple_values);
+    if (values.len > max_tuple_values) return error.TooManyValues;
     var offsets: [max_tuple_values]usize = undefined;
     for (values, 0..) |val, i| {
         if (val.isDynamic()) {
@@ -157,7 +157,7 @@ fn encodeValuesInto(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), value
     // Third pass: write tail section directly into buf (no temp allocations)
     for (values) |val| {
         if (val.isDynamic()) {
-            encodeDynamicValueInto(buf, val);
+            try encodeDynamicValueInto(buf, val);
         }
     }
 }
@@ -209,7 +209,7 @@ fn encodeStaticValueNoAlloc(buf: *std.ArrayList(u8), val: AbiValue) void {
 }
 
 /// Encode a dynamic value directly into the output buffer (no temp allocation).
-fn encodeDynamicValueInto(buf: *std.ArrayList(u8), val: AbiValue) void {
+fn encodeDynamicValueInto(buf: *std.ArrayList(u8), val: AbiValue) EncodeError!void {
     switch (val) {
         .bytes => |data| {
             writeUint256NoAlloc(buf, @intCast(data.len));
@@ -225,20 +225,20 @@ fn encodeDynamicValueInto(buf: *std.ArrayList(u8), val: AbiValue) void {
         },
         .array => |items| {
             writeUint256NoAlloc(buf, @intCast(items.len));
-            encodeValuesIntoNoAlloc(buf, items);
+            try encodeValuesIntoNoAlloc(buf, items);
         },
         .fixed_array => |items| {
-            encodeValuesIntoNoAlloc(buf, items);
+            try encodeValuesIntoNoAlloc(buf, items);
         },
         .tuple => |items| {
-            encodeValuesIntoNoAlloc(buf, items);
+            try encodeValuesIntoNoAlloc(buf, items);
         },
         else => unreachable,
     }
 }
 
 /// Encode values into an ArrayList that already has sufficient capacity.
-fn encodeValuesIntoNoAlloc(buf: *std.ArrayList(u8), values: []const AbiValue) void {
+fn encodeValuesIntoNoAlloc(buf: *std.ArrayList(u8), values: []const AbiValue) EncodeError!void {
     const n = values.len;
     if (n == 0) return;
 
@@ -246,7 +246,7 @@ fn encodeValuesIntoNoAlloc(buf: *std.ArrayList(u8), values: []const AbiValue) vo
     var tail_offset: usize = head_size;
 
     // Calculate offsets for dynamic values
-    std.debug.assert(values.len <= max_tuple_values);
+    if (values.len > max_tuple_values) return error.TooManyValues;
     var offsets: [max_tuple_values]usize = undefined;
     for (values, 0..) |val, i| {
         if (val.isDynamic()) {
@@ -267,7 +267,7 @@ fn encodeValuesIntoNoAlloc(buf: *std.ArrayList(u8), values: []const AbiValue) vo
     // Write tails
     for (values) |val| {
         if (val.isDynamic()) {
-            encodeDynamicValueInto(buf, val);
+            try encodeDynamicValueInto(buf, val);
         }
     }
 }
