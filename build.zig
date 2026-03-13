@@ -123,11 +123,7 @@ pub fn build(b: *std.Build) void {
 
 /// Add XKCP keccak C sources to a module with CPU-appropriate backend selection.
 fn addXkcp(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
-    // XKCP's plain64 backend casts input data to uint64_t* without alignment
-    // guarantees (KeccakP1600_plain64_AddLanes). Disable alignment sanitizer to
-    // avoid UBSan traps in debug builds; unaligned u64 loads are fast on all
-    // modern targets (x86_64, aarch64).
-    const c_flags = &.{ "-O3", "-fno-sanitize=alignment" };
+    const c_flags = &.{"-O3"};
 
     // Common include paths
     module.addIncludePath(b.path("src/crypto/xkcp/common"));
