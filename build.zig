@@ -119,11 +119,57 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(keccak_bench_exe);
+
+    // FFI static library: C ABI exports for u256 arithmetic (no crypto deps)
+    // Only depends on uint256.zig -- no XKCP, no secp256k1.
+    const uint256_module = b.addModule("uint256", .{
+        .root_source_file = b.path("src/uint256.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
+    const ffi_lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "ethzig_math",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ffi/lib.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "uint256", .module = uint256_module },
+            },
+        }),
+    });
+    const install_lib = b.addInstallArtifact(ffi_lib, .{});
+    ffi_lib.installHeader(b.path("ffi/ethzig_math.h"), "ethzig_math.h");
+
+    const ffi_step = b.step("ffi", "Build FFI static library (libethzig_math.a)");
+    ffi_step.dependOn(&install_lib.step);
+
+    // FFI tests
+    const ffi_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ffi/lib.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "uint256", .module = uint256_module },
+            },
+        }),
+    });
+
+    const run_ffi_tests = b.addRunArtifact(ffi_tests);
+    const ffi_test_step = b.step("test-ffi", "Run FFI unit tests");
+    ffi_test_step.dependOn(&run_ffi_tests.step);
 }
 
 /// Add XKCP keccak C sources to a module with CPU-appropriate backend selection.
 fn addXkcp(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
-    const c_flags = &.{"-O3"};
+    // XKCP's plain64 backend casts input data to uint64_t* without alignment
+    // guarantees (KeccakP1600_plain64_AddLanes). Disable alignment sanitizer to
+    // avoid UBSan traps in debug builds; unaligned u64 loads are fast on all
+    // modern targets (x86_64, aarch64).
+    const c_flags = &.{ "-O3", "-fno-sanitize=alignment" };
 
     // Common include paths
     module.addIncludePath(b.path("src/crypto/xkcp/common"));
