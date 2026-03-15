@@ -454,7 +454,7 @@ test "SseParser multiple events in sequence" {
     _ = parser.feedLine("data: 2");
     const ev2 = parser.feedLine("").?;
     try std.testing.expectEqualStrings("second", ev2.event.?);
-    try std.testing.expectEqualStrings("2", ev2.data.?);
+    try std.testing.expectEqualStrings("2", ev2.data);
 }
 
 test "SseParser ignores unknown fields" {
