@@ -118,6 +118,23 @@ const key = try eth.hd_wallet.deriveEthAccount(seed, 0);
 const addr = key.toAddress();
 ```
 
+## Built with eth.zig
+
+Real production bots and SDKs built on eth.zig:
+
+| Project | Description | Language |
+|---------|-------------|----------|
+| [perpcity-zig-sdk](https://github.com/StrobeLabs/perpcity-zig-sdk) | High-performance SDK for the PerpCity perpetual futures protocol on Base. Comptime ABI encoding, lock-free nonce management, 2-tier price cache. | Zig |
+| [gator-liquidators](https://github.com/StrobeLabs/gator-liquidators) | Production liquidation keeper for PerpCity. Batch-checks positions via Multicall3, pre-signs liquidation txs, submits to Base sequencer. | Zig |
+
+```
+eth.zig
+  └── perpcity-zig-sdk   (protocol SDK with comptime contract ABIs)
+        └── gator-liquidators   (production liquidation bot on Base)
+```
+
+Built something with eth.zig? Open a PR to add it here.
+
 ## Installation
 
 **One-liner:**
@@ -176,7 +193,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155` | ECDSA signing (RFC 6979), Keccak-256, EIP-155 |
 | **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions |
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |
-| **Transport** | `http_transport`, `ws_transport`, `json_rpc`, `provider`, `subscription` | HTTP and WebSocket JSON-RPC transports |
+| **Transport** | `http_transport`, `ws_transport`, `sse_transport`, `json_rpc`, `provider`, `subscription` | HTTP, WebSocket, and SSE transports |
 | **ENS** | `ens_namehash`, `ens_resolver`, `ens_reverse` | ENS name resolution and reverse lookup |
 | **Client** | `wallet`, `contract`, `multicall`, `event`, `erc20`, `erc721` | Signing wallet, contract interaction, Multicall3, token wrappers |
 | **Standards** | `eip712`, `abi_json` | EIP-712 typed data signing, Solidity JSON ABI parsing |
