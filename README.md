@@ -127,7 +127,7 @@ Real production bots and SDKs built on eth.zig:
 | [perpcity-zig-sdk](https://github.com/StrobeLabs/perpcity-zig-sdk) | High-performance SDK for the PerpCity perpetual futures protocol on Base. Comptime ABI encoding, lock-free nonce management, 2-tier price cache. | Zig |
 | [gator-liquidators](https://github.com/StrobeLabs/gator-liquidators) | Production liquidation keeper for PerpCity. Batch-checks positions via Multicall3, pre-signs liquidation txs, submits to Base sequencer. | Zig |
 
-```
+```text
 eth.zig
   └── perpcity-zig-sdk   (protocol SDK with comptime contract ABIs)
         └── gator-liquidators   (production liquidation bot on Base)

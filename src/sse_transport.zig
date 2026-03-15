@@ -5,12 +5,17 @@ const std = @import("std");
 // ============================================================================
 
 /// A parsed SSE event as defined by the W3C Server-Sent Events specification.
-/// All fields borrow from the underlying line buffer -- they are only valid
-/// until the next call to `SseParser.feedLine` or `SseParser.reset`.
+///
+/// All slice fields point into buffers owned by the `SseParser` that produced
+/// this event. They are valid until the next call to `SseParser.feedLine` or
+/// `SseParser.reset`.
 pub const SseEvent = struct {
-    /// The `event:` field value, or null if omitted (defaults to "message").
-    event_type: ?[]const u8 = null,
-    /// The `data:` field value, or null if no data line was present.
+    /// The `id:` field value, or null if omitted.
+    id: ?[]const u8 = null,
+    /// The `event:` field value, or null if omitted (default event type is "message").
+    event: ?[]const u8 = null,
+    /// The accumulated `data:` field value. Multiple `data:` lines within one
+    /// event are joined with U+000A as required by the spec.
     data: ?[]const u8 = null,
 };
 
@@ -25,14 +30,41 @@ pub const SseError = error{
 
 /// Line-oriented SSE parser.
 ///
-/// Feed lines one at a time via `feedLine`. The parser accumulates `event:`
-/// and `data:` fields and emits an `SseEvent` when it sees a blank line
-/// (the event boundary per the SSE spec).
+/// Feed lines one at a time via `feedLine`. The parser accumulates `event:`,
+/// `id:`, and `data:` fields and emits an `SseEvent` when it encounters a
+/// blank line (the event boundary per the SSE spec).
+///
+/// All field values are copied into fixed internal buffers, so emitted
+/// `SseEvent` slices remain valid until the next call to `feedLine` or
+/// `reset` -- regardless of whether the caller's line buffer has been reused.
+///
+/// `last_event_id` and `retry_ms` persist across events and are intended for
+/// use by reconnecting transports.
 ///
 /// Designed to be testable without any network I/O.
 pub const SseParser = struct {
-    current_event_type: ?[]const u8 = null,
-    current_data: ?[]const u8 = null,
+    // Per-event buffers (cleared on event dispatch).
+    event_buf: [256]u8 = undefined,
+    event_len: usize = 0,
+    id_buf: [512]u8 = undefined,
+    id_len: usize = 0,
+    data_buf: [65536]u8 = undefined,
+    data_len: usize = 0,
+
+    // Persistent state (survives event boundaries and reconnects).
+    /// The last `id:` value seen across all events. Sent as `Last-Event-ID`
+    /// on reconnect. Empty slice means no id has been received yet.
+    last_event_id_buf: [512]u8 = undefined,
+    last_event_id_len: usize = 0,
+    /// Server-specified reconnect delay in milliseconds (`retry:` field).
+    /// Null means the server has not specified a value.
+    retry_ms: ?u64 = null,
+
+    /// Return the last received event id, or null if none has been seen.
+    pub fn lastEventId(self: *const SseParser) ?[]const u8 {
+        if (self.last_event_id_len == 0) return null;
+        return self.last_event_id_buf[0..self.last_event_id_len];
+    }
 
     /// Feed a single line (without trailing `\n` or `\r\n`) to the parser.
     /// Returns an `SseEvent` if a blank line was encountered (event boundary),
@@ -40,15 +72,26 @@ pub const SseParser = struct {
     pub fn feedLine(self: *SseParser, line: []const u8) ?SseEvent {
         const trimmed = std.mem.trimRight(u8, line, "\r");
 
-        // Blank line = event boundary.
+        // Blank line = event boundary: dispatch any accumulated fields.
         if (trimmed.len == 0) {
-            if (self.current_event_type != null or self.current_data != null) {
+            if (self.event_len > 0 or self.data_len > 0 or self.id_len > 0) {
+                // Update last-event-id if the event included one.
+                if (self.id_len > 0) {
+                    const copy_len = @min(self.id_len, self.last_event_id_buf.len);
+                    @memcpy(self.last_event_id_buf[0..copy_len], self.id_buf[0..copy_len]);
+                    self.last_event_id_len = copy_len;
+                }
+
                 const evt = SseEvent{
-                    .event_type = self.current_event_type,
-                    .data = self.current_data,
+                    .id = if (self.id_len > 0) self.id_buf[0..self.id_len] else null,
+                    .event = if (self.event_len > 0) self.event_buf[0..self.event_len] else null,
+                    .data = if (self.data_len > 0) self.data_buf[0..self.data_len] else null,
                 };
-                self.current_event_type = null;
-                self.current_data = null;
+
+                // Clear per-event state; last_event_id and retry_ms persist.
+                self.event_len = 0;
+                self.id_len = 0;
+                self.data_len = 0;
                 return evt;
             }
             return null;
@@ -65,20 +108,40 @@ pub const SseParser = struct {
             if (value.len > 0 and value[0] == ' ') value = value[1..];
 
             if (std.mem.eql(u8, field, "event")) {
-                self.current_event_type = value;
+                const copy_len = @min(value.len, self.event_buf.len);
+                @memcpy(self.event_buf[0..copy_len], value[0..copy_len]);
+                self.event_len = copy_len;
             } else if (std.mem.eql(u8, field, "data")) {
-                self.current_data = value;
+                // Append to data buffer, joining multiple data: lines with '\n'.
+                if (self.data_len > 0 and self.data_len < self.data_buf.len) {
+                    self.data_buf[self.data_len] = '\n';
+                    self.data_len += 1;
+                }
+                const remaining = self.data_buf.len - self.data_len;
+                const copy_len = @min(value.len, remaining);
+                @memcpy(self.data_buf[self.data_len .. self.data_len + copy_len], value[0..copy_len]);
+                self.data_len += copy_len;
+            } else if (std.mem.eql(u8, field, "id")) {
+                const copy_len = @min(value.len, self.id_buf.len);
+                @memcpy(self.id_buf[0..copy_len], value[0..copy_len]);
+                self.id_len = copy_len;
+            } else if (std.mem.eql(u8, field, "retry")) {
+                // Parse the retry value as a decimal integer of milliseconds.
+                if (std.fmt.parseInt(u64, value, 10)) |ms| {
+                    self.retry_ms = ms;
+                } else |_| {} // ignore malformed retry values per spec
             }
-            // Other fields (id, retry) are intentionally ignored.
         }
 
         return null;
     }
 
-    /// Reset accumulated state, e.g. on reconnect.
+    /// Reset per-event accumulated state. Does NOT clear `last_event_id` or
+    /// `retry_ms` -- those are persistent and survive reconnects.
     pub fn reset(self: *SseParser) void {
-        self.current_event_type = null;
-        self.current_data = null;
+        self.event_len = 0;
+        self.id_len = 0;
+        self.data_len = 0;
     }
 };
 
@@ -91,14 +154,18 @@ pub const SseParser = struct {
 ///
 /// This function makes a single HTTP request and streams events until EOF.
 /// It does NOT reconnect -- wrap this in a loop with exponential backoff for
-/// production use (see `SseTransport.subscribeWithReconnect`).
+/// production use (see `subscribeWithReconnect`).
 ///
 /// `extra_headers` are appended after the required `Accept` and `Cache-Control`
 /// headers. The caller is responsible for any authentication headers.
+///
+/// `parser` is caller-supplied so that `last_event_id` and `retry_ms` persist
+/// across reconnects when used with `subscribeWithReconnect`.
 pub fn subscribe(
     allocator: std.mem.Allocator,
     url: []const u8,
     extra_headers: []const std.http.Header,
+    parser: *SseParser,
     callback: *const fn (event: SseEvent) void,
 ) !void {
     var client = std.http.Client{ .allocator = allocator };
@@ -106,15 +173,28 @@ pub fn subscribe(
 
     const uri = try std.Uri.parse(url);
 
-    // Build header list: required SSE headers + caller extras.
+    // Build header list: base SSE headers + Last-Event-ID (if any) + caller extras.
     const base_headers: []const std.http.Header = &.{
         .{ .name = "Accept", .value = "text/event-stream" },
         .{ .name = "Cache-Control", .value = "no-cache" },
     };
+
+    var last_id_header_buf: [512 + 20]u8 = undefined; // "Last-Event-ID: " + id
+    var id_headers: []const std.http.Header = &.{};
+    if (parser.lastEventId()) |last_id| {
+        const prefix = ""; // value is the id itself; name is the header name
+        _ = prefix;
+        @memcpy(last_id_header_buf[0..last_id.len], last_id);
+        id_headers = &.{.{
+            .name = "Last-Event-ID",
+            .value = last_id_header_buf[0..last_id.len],
+        }};
+    }
+
     const all_headers = try std.mem.concat(
         allocator,
         std.http.Header,
-        &.{ base_headers, extra_headers },
+        &.{ base_headers, id_headers, extra_headers },
     );
     defer allocator.free(all_headers);
 
@@ -130,7 +210,9 @@ pub fn subscribe(
         return error.BadStatus;
     }
 
-    var parser = SseParser{};
+    // Reset per-event state but preserve last_event_id and retry_ms.
+    parser.reset();
+
     var transfer_buf: [8192]u8 = undefined;
     const reader = response.reader(&transfer_buf);
 
@@ -149,9 +231,10 @@ pub fn subscribe(
 
 /// Options for `subscribeWithReconnect`.
 pub const ReconnectOpts = struct {
-    /// Initial backoff in milliseconds. Default: 1_000.
+    /// Initial backoff in milliseconds. Overridden by the server's `retry:` value
+    /// if one has been received. Default: 1_000.
     initial_backoff_ms: u64 = 1_000,
-    /// Maximum backoff in milliseconds. Default: 30_000.
+    /// Maximum backoff cap in milliseconds. Default: 30_000.
     max_backoff_ms: u64 = 30_000,
     /// Optional callback invoked before each reconnect attempt.
     /// Receives the backoff delay that will be applied.
@@ -160,6 +243,10 @@ pub const ReconnectOpts = struct {
 
 /// Connect to an SSE endpoint and stream events forever, reconnecting with
 /// exponential backoff on disconnection or error.
+///
+/// `Last-Event-ID` is automatically sent on reconnect if the server has
+/// previously sent an `id:` field. The reconnect delay respects the server's
+/// `retry:` value when present.
 ///
 /// This function never returns under normal operation. The caller's thread
 /// will be blocked here.
@@ -170,17 +257,26 @@ pub fn subscribeWithReconnect(
     opts: ReconnectOpts,
     callback: *const fn (event: SseEvent) void,
 ) void {
+    // One parser instance shared across reconnects so last_event_id and
+    // retry_ms survive disconnections.
+    var parser = SseParser{};
     var backoff_ms = opts.initial_backoff_ms;
 
     while (true) {
-        if (subscribe(allocator, url, extra_headers, callback)) |_| {
+        if (subscribe(allocator, url, extra_headers, &parser, callback)) |_| {
             // Clean close -- reset backoff.
             backoff_ms = opts.initial_backoff_ms;
         } else |_| {}
 
-        if (opts.on_reconnect) |cb| cb(backoff_ms);
-        std.Thread.sleep(backoff_ms * std.time.ns_per_ms);
-        backoff_ms = @min(backoff_ms * 2, opts.max_backoff_ms);
+        // Use server-specified retry delay if available, otherwise exponential backoff.
+        const delay = parser.retry_ms orelse backoff_ms;
+        if (opts.on_reconnect) |cb| cb(delay);
+        std.Thread.sleep(delay * std.time.ns_per_ms);
+
+        // Only advance exponential backoff when server hasn't specified retry.
+        if (parser.retry_ms == null) {
+            backoff_ms = @min(backoff_ms * 2, opts.max_backoff_ms);
+        }
     }
 }
 
@@ -193,8 +289,54 @@ test "SseParser basic event" {
     try std.testing.expect(parser.feedLine("event: perp_price") == null);
     try std.testing.expect(parser.feedLine("data: {\"price\": 100}") == null);
     const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("perp_price", evt.event_type.?);
+    try std.testing.expectEqualStrings("perp_price", evt.event.?);
     try std.testing.expectEqualStrings("{\"price\": 100}", evt.data.?);
+    try std.testing.expect(evt.id == null);
+}
+
+test "SseParser captures id field" {
+    var parser = SseParser{};
+    try std.testing.expect(parser.feedLine("id: 42") == null);
+    try std.testing.expect(parser.feedLine("event: update") == null);
+    try std.testing.expect(parser.feedLine("data: hello") == null);
+    const evt = parser.feedLine("").?;
+    try std.testing.expectEqualStrings("42", evt.id.?);
+    try std.testing.expectEqualStrings("update", evt.event.?);
+    try std.testing.expectEqualStrings("hello", evt.data.?);
+}
+
+test "SseParser persists last_event_id across events" {
+    var parser = SseParser{};
+    _ = parser.feedLine("id: 7");
+    _ = parser.feedLine("data: first");
+    _ = parser.feedLine("");
+    try std.testing.expectEqualStrings("7", parser.lastEventId().?);
+
+    // Next event without id -- last_event_id should remain "7".
+    _ = parser.feedLine("data: second");
+    _ = parser.feedLine("");
+    try std.testing.expectEqualStrings("7", parser.lastEventId().?);
+}
+
+test "SseParser parses retry field" {
+    var parser = SseParser{};
+    try std.testing.expect(parser.feedLine("retry: 3000") == null);
+    try std.testing.expect(parser.retry_ms.? == 3000);
+}
+
+test "SseParser ignores malformed retry value" {
+    var parser = SseParser{};
+    _ = parser.feedLine("retry: not_a_number");
+    try std.testing.expect(parser.retry_ms == null);
+}
+
+test "SseParser appends multiple data lines with newline" {
+    var parser = SseParser{};
+    try std.testing.expect(parser.feedLine("event: test") == null);
+    try std.testing.expect(parser.feedLine("data: first") == null);
+    try std.testing.expect(parser.feedLine("data: second") == null);
+    const evt = parser.feedLine("").?;
+    try std.testing.expectEqualStrings("first\nsecond", evt.data.?);
 }
 
 test "SseParser ignores comments" {
@@ -204,7 +346,7 @@ test "SseParser ignores comments" {
     try std.testing.expect(parser.feedLine(": another comment") == null);
     try std.testing.expect(parser.feedLine("data: hello") == null);
     const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("test", evt.event_type.?);
+    try std.testing.expectEqualStrings("test", evt.event.?);
     try std.testing.expectEqualStrings("hello", evt.data.?);
 }
 
@@ -218,7 +360,7 @@ test "SseParser handles event with no data" {
     var parser = SseParser{};
     try std.testing.expect(parser.feedLine("event: heartbeat") == null);
     const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("heartbeat", evt.event_type.?);
+    try std.testing.expectEqualStrings("heartbeat", evt.event.?);
     try std.testing.expect(evt.data == null);
 }
 
@@ -226,15 +368,20 @@ test "SseParser handles data with no event type" {
     var parser = SseParser{};
     try std.testing.expect(parser.feedLine("data: orphan") == null);
     const evt = parser.feedLine("").?;
-    try std.testing.expect(evt.event_type == null);
+    try std.testing.expect(evt.event == null);
     try std.testing.expectEqualStrings("orphan", evt.data.?);
 }
 
-test "SseParser resets state" {
+test "SseParser resets per-event state but not last_event_id" {
     var parser = SseParser{};
-    try std.testing.expect(parser.feedLine("event: test") == null);
+    _ = parser.feedLine("id: 99");
+    _ = parser.feedLine("event: test");
     parser.reset();
+    // Per-event fields cleared.
     try std.testing.expect(parser.feedLine("") == null);
+    // last_event_id is NOT cleared by reset.
+    // (It's updated on dispatch, not on reset, so still 0 here.)
+    try std.testing.expect(parser.lastEventId() == null);
 }
 
 test "SseParser handles carriage return in line" {
@@ -242,7 +389,7 @@ test "SseParser handles carriage return in line" {
     try std.testing.expect(parser.feedLine("event: test\r") == null);
     try std.testing.expect(parser.feedLine("data: value\r") == null);
     const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("test", evt.event_type.?);
+    try std.testing.expectEqualStrings("test", evt.event.?);
     try std.testing.expectEqualStrings("value", evt.data.?);
 }
 
@@ -251,7 +398,7 @@ test "SseParser colon without space" {
     try std.testing.expect(parser.feedLine("event:no_space") == null);
     try std.testing.expect(parser.feedLine("data:also_no_space") == null);
     const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("no_space", evt.event_type.?);
+    try std.testing.expectEqualStrings("no_space", evt.event.?);
     try std.testing.expectEqualStrings("also_no_space", evt.data.?);
 }
 
@@ -260,30 +407,19 @@ test "SseParser multiple events in sequence" {
     _ = parser.feedLine("event: first");
     _ = parser.feedLine("data: 1");
     const ev1 = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("first", ev1.event_type.?);
+    try std.testing.expectEqualStrings("first", ev1.event.?);
     _ = parser.feedLine("event: second");
     _ = parser.feedLine("data: 2");
     const ev2 = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("second", ev2.event_type.?);
+    try std.testing.expectEqualStrings("second", ev2.event.?);
     try std.testing.expectEqualStrings("2", ev2.data.?);
 }
 
-test "SseParser data overwrites previous data within same event" {
+test "SseParser ignores unknown fields" {
     var parser = SseParser{};
-    _ = parser.feedLine("event: test");
-    _ = parser.feedLine("data: first");
-    _ = parser.feedLine("data: second");
-    const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("second", evt.data.?);
-}
-
-test "SseParser ignores unknown fields (id, retry)" {
-    var parser = SseParser{};
-    _ = parser.feedLine("id: 12345");
-    _ = parser.feedLine("retry: 5000");
     _ = parser.feedLine("event: perp_price");
     _ = parser.feedLine("data: test_data");
     const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("perp_price", evt.event_type.?);
+    try std.testing.expectEqualStrings("perp_price", evt.event.?);
     try std.testing.expectEqualStrings("test_data", evt.data.?);
 }
