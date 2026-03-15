@@ -20,7 +20,6 @@ pub const SseEvent = struct {
 };
 
 pub const SseError = error{
-    ConnectionFailed,
     BadStatus,
 };
 
@@ -54,6 +53,10 @@ pub const SseParser = struct {
     has_id: bool = false,
     data_buf: [65536]u8 = undefined,
     data_len: usize = 0,
+    /// Set to true if the accumulated data for the current event exceeded
+    /// `data_buf`. The event is still dispatched with the truncated data.
+    /// Cleared on each event boundary alongside `data_len`.
+    data_truncated: bool = false,
 
     // Persistent state (survives event boundaries and reconnects).
     /// The last `id:` value seen across all events. Sent as `Last-Event-ID`
@@ -98,6 +101,7 @@ pub const SseParser = struct {
             self.id_len = 0;
             self.has_id = false;
             self.data_len = 0;
+            self.data_truncated = false;
             return evt;
         }
 
@@ -126,6 +130,7 @@ pub const SseParser = struct {
                 self.data_len += 1;
             }
             const remaining = self.data_buf.len - self.data_len;
+            if (value.len > remaining) self.data_truncated = true;
             const copy_len = @min(value.len, remaining);
             @memcpy(self.data_buf[self.data_len .. self.data_len + copy_len], value[0..copy_len]);
             self.data_len += copy_len;
@@ -151,6 +156,7 @@ pub const SseParser = struct {
         self.id_len = 0;
         self.has_id = false;
         self.data_len = 0;
+        self.data_truncated = false;
     }
 };
 
@@ -191,8 +197,6 @@ pub fn subscribe(
     var last_id_header_buf: [512 + 20]u8 = undefined; // "Last-Event-ID: " + id
     var id_headers: []const std.http.Header = &.{};
     if (parser.lastEventId()) |last_id| {
-        const prefix = ""; // value is the id itself; name is the header name
-        _ = prefix;
         @memcpy(last_id_header_buf[0..last_id.len], last_id);
         id_headers = &.{.{
             .name = "Last-Event-ID",
@@ -284,7 +288,11 @@ pub fn subscribeWithReconnect(
 
         // Only advance exponential backoff when server hasn't specified retry.
         if (parser.retry_ms == null) {
-            backoff_ms = @min(backoff_ms * 2, opts.max_backoff_ms);
+            // Guard against overflow before clamping.
+            backoff_ms = if (backoff_ms > opts.max_backoff_ms / 2)
+                opts.max_backoff_ms
+            else
+                backoff_ms * 2;
         }
     }
 }
@@ -366,11 +374,10 @@ test "SseParser blank line without prior data emits nothing" {
 }
 
 test "SseParser handles event with no data" {
+    // Per spec §9.2.6: if the data buffer is empty, no event is dispatched.
     var parser = SseParser{};
     try std.testing.expect(parser.feedLine("event: heartbeat") == null);
-    const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("heartbeat", evt.event.?);
-    try std.testing.expect(evt.data == null);
+    try std.testing.expect(parser.feedLine("") == null);
 }
 
 test "SseParser handles data with no event type" {
