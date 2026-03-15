@@ -644,6 +644,63 @@ pub const WsTransport = struct {
     }
 };
 
+// ---------------------------------------------------------------------------
+// Reconnect loop
+// ---------------------------------------------------------------------------
+
+/// Options for `connectWithReconnect`.
+pub const ReconnectOpts = struct {
+    /// Initial backoff in milliseconds. Default: 1_000.
+    initial_backoff_ms: u64 = 1_000,
+    /// Maximum backoff cap in milliseconds. Default: 30_000.
+    max_backoff_ms: u64 = 30_000,
+    /// Optional callback invoked before each reconnect attempt.
+    /// Receives the backoff delay that will be applied.
+    on_reconnect: ?*const fn (backoff_ms: u64) void = null,
+};
+
+/// Connect to a WebSocket endpoint and stream messages forever, reconnecting
+/// with exponential backoff on disconnection or error.
+///
+/// On each successful connection `callback` is invoked with a pointer to the
+/// live `WsTransport`. The callback should perform any subscription setup
+/// (e.g. `eth_subscribe`) and then read messages in a loop until the
+/// connection drops. When the callback returns -- whether cleanly or with an
+/// error -- the transport is closed and a reconnect is scheduled.
+///
+/// This function never returns under normal operation.
+pub fn connectWithReconnect(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    opts: ReconnectOpts,
+    callback: *const fn (transport: *WsTransport) anyerror!void,
+) void {
+    var backoff_ms = opts.initial_backoff_ms;
+
+    while (true) {
+        if (WsTransport.connect(allocator, url)) |transport_val| {
+            var transport = transport_val;
+            defer transport.close();
+            if (callback(&transport)) |_| {
+                // Clean close -- reset backoff.
+                backoff_ms = opts.initial_backoff_ms;
+            } else |_| {}
+        } else |_| {}
+
+        if (opts.on_reconnect) |cb| cb(backoff_ms);
+        // Cap before converting to nanoseconds to prevent u64 overflow.
+        const max_sleep_ms: u64 = std.math.maxInt(u64) / std.time.ns_per_ms;
+        std.Thread.sleep(@min(backoff_ms, max_sleep_ms) * std.time.ns_per_ms);
+
+        // Guard against overflow before clamping.
+        backoff_ms = if (backoff_ms > opts.max_backoff_ms / 2)
+            opts.max_backoff_ms
+        else
+            backoff_ms * 2;
+    }
+}
+
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1159,4 +1216,28 @@ test "Opcode values" {
     try std.testing.expectEqual(@as(u4, 0x9), @intFromEnum(Opcode.ping));
     try std.testing.expectEqual(@as(u4, 0xA), @intFromEnum(Opcode.pong));
     try std.testing.expectEqual(@as(u4, 0x0), @intFromEnum(Opcode.continuation));
+}
+
+test "ReconnectOpts defaults" {
+    const opts = ReconnectOpts{};
+    try std.testing.expectEqual(@as(u64, 1_000), opts.initial_backoff_ms);
+    try std.testing.expectEqual(@as(u64, 30_000), opts.max_backoff_ms);
+    try std.testing.expect(opts.on_reconnect == null);
+}
+
+test "ReconnectOpts backoff clamping logic" {
+    // Verify the overflow-safe backoff calculation used in connectWithReconnect.
+    const max: u64 = 30_000;
+    // Normal doubling
+    var b: u64 = 1_000;
+    b = if (b > max / 2) max else b * 2;
+    try std.testing.expectEqual(@as(u64, 2_000), b);
+    // Clamp when doubling would exceed max
+    b = 20_000;
+    b = if (b > max / 2) max else b * 2;
+    try std.testing.expectEqual(@as(u64, 30_000), b);
+    // Already at max
+    b = 30_000;
+    b = if (b > max / 2) max else b * 2;
+    try std.testing.expectEqual(@as(u64, 30_000), b);
 }
