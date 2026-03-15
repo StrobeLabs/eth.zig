@@ -15,8 +15,10 @@ pub const SseEvent = struct {
     /// The `event:` field value, or null if omitted (default event type is "message").
     event: ?[]const u8 = null,
     /// The accumulated `data:` field value. Multiple `data:` lines within one
-    /// event are joined with U+000A as required by the spec.
-    data: ?[]const u8 = null,
+    /// event are joined with U+000A as required by the spec. Always present
+    /// when the event is dispatched (may be an empty slice when the server sent
+    /// a bare `data:` line with no value).
+    data: []const u8,
 };
 
 pub const SseError = error{
@@ -53,6 +55,10 @@ pub const SseParser = struct {
     has_id: bool = false,
     data_buf: [65536]u8 = undefined,
     data_len: usize = 0,
+    /// True when the current event block contained at least one `data:` line,
+    /// even if its value was empty (per spec, an empty `data:` still dispatches
+    /// an event with data = "").
+    has_data: bool = false,
     /// Set to true if the accumulated data for the current event exceeded
     /// `data_buf`. The event is still dispatched with the truncated data.
     /// Cleared on each event boundary alongside `data_len`.
@@ -75,7 +81,9 @@ pub const SseParser = struct {
 
     /// Feed a single line (without trailing `\n` or `\r\n`) to the parser.
     /// Returns an `SseEvent` if a blank line was encountered (event boundary)
-    /// AND the event contains data, or null otherwise.
+    /// AND at least one `data:` line was seen in this block (per spec §9.2.6),
+    /// or null otherwise. The returned event's `data` field may be an empty
+    /// slice when the server sent a bare `data:` with no value.
     pub fn feedLine(self: *SseParser, line: []const u8) ?SseEvent {
         const trimmed = std.mem.trimRight(u8, line, "\r");
 
@@ -89,8 +97,9 @@ pub const SseParser = struct {
                 self.last_event_id_len = copy_len;
             }
 
-            // Per spec §9.2.6 step 2: do not dispatch if data buffer is empty.
-            const evt: ?SseEvent = if (self.data_len > 0) SseEvent{
+            // Per spec §9.2.6 step 2: dispatch only when at least one data:
+            // line was seen (has_data). An empty-value data: line still counts.
+            const evt: ?SseEvent = if (self.has_data) SseEvent{
                 .id = if (self.id_len > 0) self.id_buf[0..self.id_len] else null,
                 .event = if (self.event_len > 0) self.event_buf[0..self.event_len] else null,
                 .data = self.data_buf[0..self.data_len],
@@ -101,6 +110,7 @@ pub const SseParser = struct {
             self.id_len = 0;
             self.has_id = false;
             self.data_len = 0;
+            self.has_data = false;
             self.data_truncated = false;
             return evt;
         }
@@ -125,10 +135,12 @@ pub const SseParser = struct {
             self.event_len = copy_len;
         } else if (std.mem.eql(u8, field, "data")) {
             // Append to data buffer, joining multiple data: lines with '\n'.
-            if (self.data_len > 0 and self.data_len < self.data_buf.len) {
+            // Mark that a data: line was seen even if the value is empty.
+            if (self.has_data and self.data_len < self.data_buf.len) {
                 self.data_buf[self.data_len] = '\n';
                 self.data_len += 1;
             }
+            self.has_data = true;
             const remaining = self.data_buf.len - self.data_len;
             if (value.len > remaining) self.data_truncated = true;
             const copy_len = @min(value.len, remaining);
@@ -156,6 +168,7 @@ pub const SseParser = struct {
         self.id_len = 0;
         self.has_id = false;
         self.data_len = 0;
+        self.has_data = false;
         self.data_truncated = false;
     }
 };
@@ -284,7 +297,9 @@ pub fn subscribeWithReconnect(
         // Use server-specified retry delay if available, otherwise exponential backoff.
         const delay = parser.retry_ms orelse backoff_ms;
         if (opts.on_reconnect) |cb| cb(delay);
-        std.Thread.sleep(delay * std.time.ns_per_ms);
+        // Cap before converting to nanoseconds to prevent u64 overflow.
+        const max_sleep_ms: u64 = std.math.maxInt(u64) / std.time.ns_per_ms;
+        std.Thread.sleep(@min(delay, max_sleep_ms) * std.time.ns_per_ms);
 
         // Only advance exponential backoff when server hasn't specified retry.
         if (parser.retry_ms == null) {
@@ -307,7 +322,7 @@ test "SseParser basic event" {
     try std.testing.expect(parser.feedLine("data: {\"price\": 100}") == null);
     const evt = parser.feedLine("").?;
     try std.testing.expectEqualStrings("perp_price", evt.event.?);
-    try std.testing.expectEqualStrings("{\"price\": 100}", evt.data.?);
+    try std.testing.expectEqualStrings("{\"price\": 100}", evt.data);
     try std.testing.expect(evt.id == null);
 }
 
@@ -319,7 +334,7 @@ test "SseParser captures id field" {
     const evt = parser.feedLine("").?;
     try std.testing.expectEqualStrings("42", evt.id.?);
     try std.testing.expectEqualStrings("update", evt.event.?);
-    try std.testing.expectEqualStrings("hello", evt.data.?);
+    try std.testing.expectEqualStrings("hello", evt.data);
 }
 
 test "SseParser persists last_event_id across events" {
@@ -353,7 +368,7 @@ test "SseParser appends multiple data lines with newline" {
     try std.testing.expect(parser.feedLine("data: first") == null);
     try std.testing.expect(parser.feedLine("data: second") == null);
     const evt = parser.feedLine("").?;
-    try std.testing.expectEqualStrings("first\nsecond", evt.data.?);
+    try std.testing.expectEqualStrings("first\nsecond", evt.data);
 }
 
 test "SseParser ignores comments" {
@@ -364,13 +379,24 @@ test "SseParser ignores comments" {
     try std.testing.expect(parser.feedLine("data: hello") == null);
     const evt = parser.feedLine("").?;
     try std.testing.expectEqualStrings("test", evt.event.?);
-    try std.testing.expectEqualStrings("hello", evt.data.?);
+    try std.testing.expectEqualStrings("hello", evt.data);
 }
 
 test "SseParser blank line without prior data emits nothing" {
     var parser = SseParser{};
     try std.testing.expect(parser.feedLine("") == null);
     try std.testing.expect(parser.feedLine("") == null);
+}
+
+test "SseParser dispatches event with empty data: line" {
+    // Per spec: a bare `data:` (empty value) counts as a data: line and
+    // must trigger dispatch with an empty data slice.
+    var parser = SseParser{};
+    try std.testing.expect(parser.feedLine("event: ping") == null);
+    try std.testing.expect(parser.feedLine("data:") == null);
+    const evt = parser.feedLine("").?;
+    try std.testing.expectEqualStrings("ping", evt.event.?);
+    try std.testing.expectEqualStrings("", evt.data);
 }
 
 test "SseParser handles event with no data" {
@@ -385,7 +411,7 @@ test "SseParser handles data with no event type" {
     try std.testing.expect(parser.feedLine("data: orphan") == null);
     const evt = parser.feedLine("").?;
     try std.testing.expect(evt.event == null);
-    try std.testing.expectEqualStrings("orphan", evt.data.?);
+    try std.testing.expectEqualStrings("orphan", evt.data);
 }
 
 test "SseParser resets per-event state but not last_event_id" {
@@ -406,7 +432,7 @@ test "SseParser handles carriage return in line" {
     try std.testing.expect(parser.feedLine("data: value\r") == null);
     const evt = parser.feedLine("").?;
     try std.testing.expectEqualStrings("test", evt.event.?);
-    try std.testing.expectEqualStrings("value", evt.data.?);
+    try std.testing.expectEqualStrings("value", evt.data);
 }
 
 test "SseParser colon without space" {
@@ -415,7 +441,7 @@ test "SseParser colon without space" {
     try std.testing.expect(parser.feedLine("data:also_no_space") == null);
     const evt = parser.feedLine("").?;
     try std.testing.expectEqualStrings("no_space", evt.event.?);
-    try std.testing.expectEqualStrings("also_no_space", evt.data.?);
+    try std.testing.expectEqualStrings("also_no_space", evt.data);
 }
 
 test "SseParser multiple events in sequence" {
@@ -437,5 +463,5 @@ test "SseParser ignores unknown fields" {
     _ = parser.feedLine("data: test_data");
     const evt = parser.feedLine("").?;
     try std.testing.expectEqualStrings("perp_price", evt.event.?);
-    try std.testing.expectEqualStrings("test_data", evt.data.?);
+    try std.testing.expectEqualStrings("test_data", evt.data);
 }
