@@ -48,6 +48,10 @@ pub const SseParser = struct {
     event_len: usize = 0,
     id_buf: [512]u8 = undefined,
     id_len: usize = 0,
+    /// True when the current event block contained at least one `id:` line,
+    /// even if its value was empty. Distinguishes "id seen with empty value"
+    /// (which clears last_event_id) from "id not present" (no change).
+    has_id: bool = false,
     data_buf: [65536]u8 = undefined,
     data_len: usize = 0,
 
@@ -67,70 +71,74 @@ pub const SseParser = struct {
     }
 
     /// Feed a single line (without trailing `\n` or `\r\n`) to the parser.
-    /// Returns an `SseEvent` if a blank line was encountered (event boundary),
-    /// or null otherwise.
+    /// Returns an `SseEvent` if a blank line was encountered (event boundary)
+    /// AND the event contains data, or null otherwise.
     pub fn feedLine(self: *SseParser, line: []const u8) ?SseEvent {
         const trimmed = std.mem.trimRight(u8, line, "\r");
 
-        // Blank line = event boundary: dispatch any accumulated fields.
+        // Blank line = event boundary.
         if (trimmed.len == 0) {
-            if (self.event_len > 0 or self.data_len > 0 or self.id_len > 0) {
-                // Update last-event-id if the event included one.
-                if (self.id_len > 0) {
-                    const copy_len = @min(self.id_len, self.last_event_id_buf.len);
-                    @memcpy(self.last_event_id_buf[0..copy_len], self.id_buf[0..copy_len]);
-                    self.last_event_id_len = copy_len;
-                }
-
-                const evt = SseEvent{
-                    .id = if (self.id_len > 0) self.id_buf[0..self.id_len] else null,
-                    .event = if (self.event_len > 0) self.event_buf[0..self.event_len] else null,
-                    .data = if (self.data_len > 0) self.data_buf[0..self.data_len] else null,
-                };
-
-                // Clear per-event state; last_event_id and retry_ms persist.
-                self.event_len = 0;
-                self.id_len = 0;
-                self.data_len = 0;
-                return evt;
+            // Always update last-event-id when an `id:` line was present in
+            // this block, even when the value is empty (spec §9.2.6 step 1).
+            if (self.has_id) {
+                const copy_len = @min(self.id_len, self.last_event_id_buf.len);
+                @memcpy(self.last_event_id_buf[0..copy_len], self.id_buf[0..copy_len]);
+                self.last_event_id_len = copy_len;
             }
-            return null;
+
+            // Per spec §9.2.6 step 2: do not dispatch if data buffer is empty.
+            const evt: ?SseEvent = if (self.data_len > 0) SseEvent{
+                .id = if (self.id_len > 0) self.id_buf[0..self.id_len] else null,
+                .event = if (self.event_len > 0) self.event_buf[0..self.event_len] else null,
+                .data = self.data_buf[0..self.data_len],
+            } else null;
+
+            // Clear per-event state; last_event_id and retry_ms persist.
+            self.event_len = 0;
+            self.id_len = 0;
+            self.has_id = false;
+            self.data_len = 0;
+            return evt;
         }
 
         // Lines starting with ':' are comments -- ignore per spec.
         if (trimmed[0] == ':') return null;
 
-        // Parse "field: value" or "field:value".
-        if (std.mem.indexOf(u8, trimmed, ":")) |colon_idx| {
-            const field = trimmed[0..colon_idx];
-            var value = trimmed[colon_idx + 1 ..];
+        // Parse "field: value", "field:value", or bare "field" (empty value).
+        // Per spec §9.2.6: a line with no colon is a field name with empty value.
+        const parsed = if (std.mem.indexOf(u8, trimmed, ":")) |colon_idx| blk: {
+            const raw_value = trimmed[colon_idx + 1 ..];
             // Strip optional single leading space after colon (SSE spec §9.2.6).
-            if (value.len > 0 and value[0] == ' ') value = value[1..];
+            const v = if (raw_value.len > 0 and raw_value[0] == ' ') raw_value[1..] else raw_value;
+            break :blk .{ .field = trimmed[0..colon_idx], .value = v };
+        } else .{ .field = trimmed, .value = @as([]const u8, "") };
+        const field = parsed.field;
+        const value = parsed.value;
 
-            if (std.mem.eql(u8, field, "event")) {
-                const copy_len = @min(value.len, self.event_buf.len);
-                @memcpy(self.event_buf[0..copy_len], value[0..copy_len]);
-                self.event_len = copy_len;
-            } else if (std.mem.eql(u8, field, "data")) {
-                // Append to data buffer, joining multiple data: lines with '\n'.
-                if (self.data_len > 0 and self.data_len < self.data_buf.len) {
-                    self.data_buf[self.data_len] = '\n';
-                    self.data_len += 1;
-                }
-                const remaining = self.data_buf.len - self.data_len;
-                const copy_len = @min(value.len, remaining);
-                @memcpy(self.data_buf[self.data_len .. self.data_len + copy_len], value[0..copy_len]);
-                self.data_len += copy_len;
-            } else if (std.mem.eql(u8, field, "id")) {
-                const copy_len = @min(value.len, self.id_buf.len);
-                @memcpy(self.id_buf[0..copy_len], value[0..copy_len]);
-                self.id_len = copy_len;
-            } else if (std.mem.eql(u8, field, "retry")) {
-                // Parse the retry value as a decimal integer of milliseconds.
-                if (std.fmt.parseInt(u64, value, 10)) |ms| {
-                    self.retry_ms = ms;
-                } else |_| {} // ignore malformed retry values per spec
+        if (std.mem.eql(u8, field, "event")) {
+            const copy_len = @min(value.len, self.event_buf.len);
+            @memcpy(self.event_buf[0..copy_len], value[0..copy_len]);
+            self.event_len = copy_len;
+        } else if (std.mem.eql(u8, field, "data")) {
+            // Append to data buffer, joining multiple data: lines with '\n'.
+            if (self.data_len > 0 and self.data_len < self.data_buf.len) {
+                self.data_buf[self.data_len] = '\n';
+                self.data_len += 1;
             }
+            const remaining = self.data_buf.len - self.data_len;
+            const copy_len = @min(value.len, remaining);
+            @memcpy(self.data_buf[self.data_len .. self.data_len + copy_len], value[0..copy_len]);
+            self.data_len += copy_len;
+        } else if (std.mem.eql(u8, field, "id")) {
+            const copy_len = @min(value.len, self.id_buf.len);
+            @memcpy(self.id_buf[0..copy_len], value[0..copy_len]);
+            self.id_len = copy_len;
+            self.has_id = true;
+        } else if (std.mem.eql(u8, field, "retry")) {
+            // Parse the retry value as a decimal integer of milliseconds.
+            if (std.fmt.parseInt(u64, value, 10)) |ms| {
+                self.retry_ms = ms;
+            } else |_| {} // ignore malformed retry values per spec
         }
 
         return null;
@@ -141,6 +149,7 @@ pub const SseParser = struct {
     pub fn reset(self: *SseParser) void {
         self.event_len = 0;
         self.id_len = 0;
+        self.has_id = false;
         self.data_len = 0;
     }
 };
