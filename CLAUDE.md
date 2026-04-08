@@ -12,13 +12,13 @@ make fmt-fix           # auto-format with zig fmt
 make bench             # full benchmark suite (ReleaseFast)
 ```
 
-Requires Zig >= 0.15.2. Do NOT use Zig 0.16.0-dev (breaks std.Thread.Mutex).
+Requires Zig >= 0.15.2. Avoid Zig 0.16.0-dev -- it enforces runtime safety checks on struct copy/move for types containing `std.Thread.Mutex`. If you must use 0.16.x, ensure mutex-containing types are never copied or moved (use pointers or arena allocation).
 
 ## Architecture -- Layered Dependencies
 
 Each layer imports ONLY from layers below it. **Never import from a higher layer.** This is the most important structural rule in the codebase.
 
-```
+```text
 Layer 1:  Primitives     (zero deps, no allocator needed)
           primitives.zig, uint256.zig, hex.zig
 
