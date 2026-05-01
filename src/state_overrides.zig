@@ -84,6 +84,7 @@ pub const StateOverrides = struct {
     pub fn setCode(self: *StateOverrides, addr: [20]u8, bytecode: []const u8) !void {
         const ov = try self.ensureOverride(addr);
         const copy = try self.allocator.alloc(u8, bytecode.len);
+        errdefer self.allocator.free(copy);
         @memcpy(copy, bytecode);
         if (ov.code) |old| self.allocator.free(old);
         ov.code = copy;
