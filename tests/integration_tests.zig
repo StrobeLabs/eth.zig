@@ -525,6 +525,11 @@ test "WsClient subscribe pending full streams an RpcTransaction" {
 
     // Drain notifications until we see one matching our sub. Anvil with
     // default instamine still emits a pending-tx event before the mine.
+    //
+    // Some nodes ignore the `full = true` parameter on
+    // `newPendingTransactions` and stream tx hashes (JSON strings) instead
+    // of full objects; in that case parseTransactionFromNotification will
+    // return error.InvalidNotification and we just skip and keep reading.
     var found = false;
     var attempts: usize = 0;
     while (!found and attempts < 8) : (attempts += 1) {
@@ -537,7 +542,13 @@ test "WsClient subscribe pending full streams an RpcTransaction" {
         defer allocator.free(ev.payload);
         if (ev.sub != sub) continue;
 
-        const tx = try eth.subscription.parseTransactionFromNotification(allocator, ev.payload);
+        const tx = eth.subscription.parseTransactionFromNotification(allocator, ev.payload) catch |err| switch (err) {
+            // Hash-only notification on a node that doesn't support `full`;
+            // skip and keep draining until we see (or stop seeing) a real
+            // tx object.
+            error.InvalidNotification => continue,
+            else => return err,
+        };
         defer eth.rpc_transaction.freeRpcTransaction(allocator, tx);
 
         // Anvil may stream txs from previous tests in the same run; only
