@@ -54,8 +54,8 @@ pub const StateOverrides = struct {
         while (it.next()) |entry| {
             const ov = entry.value_ptr;
             if (ov.code) |c| self.allocator.free(c);
-            if (ov.state) |*m| @constCast(m).deinit();
-            if (ov.state_diff) |*m| @constCast(m).deinit();
+            if (ov.state) |*m| m.deinit();
+            if (ov.state_diff) |*m| m.deinit();
         }
         self.overrides.deinit();
     }
