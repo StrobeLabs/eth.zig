@@ -5,6 +5,7 @@ const uint256_mod = @import("uint256.zig");
 const primitives = @import("primitives.zig");
 const receipt_mod = @import("receipt.zig");
 const block_mod = @import("block.zig");
+const state_overrides_mod = @import("state_overrides.zig");
 const HttpTransport = @import("http_transport.zig").HttpTransport;
 
 /// Read-only Ethereum JSON-RPC provider.
@@ -148,6 +149,33 @@ pub const Provider = struct {
     /// Caller owns the returned memory.
     pub fn call(self: *Provider, to: [20]u8, data: []const u8) ![]u8 {
         const params = try self.formatCallParams(to, data, null);
+        defer self.allocator.free(params);
+
+        const raw = try self.rpcCall(json_rpc.Method.eth_call, params);
+        defer self.allocator.free(raw);
+
+        const result_str = try extractResultString(self.allocator, raw);
+        defer self.allocator.free(result_str);
+        return parseHexBytes(self.allocator, result_str);
+    }
+
+    /// Executes a message call (eth_call) against the latest block with
+    /// state overrides applied. Lets simulators answer "what if?" questions
+    /// (modified balances, code, storage) without forking a node.
+    ///
+    /// Maps to the third parameter of the geth-style eth_call:
+    /// `eth_call(transaction, blockTag, stateOverrideObject)`.
+    /// Most production providers (Alchemy, Infura, QuickNode, Anvil)
+    /// accept this third argument.
+    ///
+    /// Caller owns the returned memory.
+    pub fn callWithOverrides(
+        self: *Provider,
+        to: [20]u8,
+        data: []const u8,
+        overrides: *const state_overrides_mod.StateOverrides,
+    ) ![]u8 {
+        const params = try self.formatCallParamsWithOverrides(to, data, null, overrides);
         defer self.allocator.free(params);
 
         const raw = try self.rpcCall(json_rpc.Method.eth_call, params);
@@ -302,6 +330,44 @@ pub const Provider = struct {
         try buf.appendSlice(self.allocator, "\",\"data\":\"");
         try buf.appendSlice(self.allocator, data_hex);
         try buf.appendSlice(self.allocator, "\"},\"latest\"]");
+
+        return buf.toOwnedSlice(self.allocator);
+    }
+
+    /// Like `formatCallParams`, but emits the third state-override
+    /// argument so eth_call can be invoked with simulated state.
+    pub fn formatCallParamsWithOverrides(
+        self: *Provider,
+        to: [20]u8,
+        data: []const u8,
+        from: ?[20]u8,
+        overrides: *const state_overrides_mod.StateOverrides,
+    ) ![]u8 {
+        const to_hex = primitives.addressToHex(&to);
+        const data_hex = try hex_mod.bytesToHex(self.allocator, data);
+        defer self.allocator.free(data_hex);
+
+        const overrides_json = try overrides.serializeJson(self.allocator);
+        defer self.allocator.free(overrides_json);
+
+        var buf: std.ArrayList(u8) = .empty;
+        errdefer buf.deinit(self.allocator);
+        try buf.appendSlice(self.allocator, "[{");
+
+        if (from) |f| {
+            const from_hex = primitives.addressToHex(&f);
+            try buf.appendSlice(self.allocator, "\"from\":\"");
+            try buf.appendSlice(self.allocator, &from_hex);
+            try buf.appendSlice(self.allocator, "\",");
+        }
+
+        try buf.appendSlice(self.allocator, "\"to\":\"");
+        try buf.appendSlice(self.allocator, &to_hex);
+        try buf.appendSlice(self.allocator, "\",\"data\":\"");
+        try buf.appendSlice(self.allocator, data_hex);
+        try buf.appendSlice(self.allocator, "\"},\"latest\",");
+        try buf.appendSlice(self.allocator, overrides_json);
+        try buf.append(self.allocator, ']');
 
         return buf.toOwnedSlice(self.allocator);
     }
@@ -1108,6 +1174,50 @@ test "Provider.formatCallParams - with from" {
 
     try std.testing.expect(std.mem.indexOf(u8, params, "\"from\":\"0xbeef000000000000000000000000000000000000\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, params, "\"to\":\"0xdead000000000000000000000000000000000000\"") != null);
+}
+
+test "Provider.formatCallParamsWithOverrides - balance override" {
+    const allocator = std.testing.allocator;
+    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    defer transport.deinit();
+
+    var provider = Provider.init(allocator, &transport);
+    const to = try primitives.addressFromHex("0xdead000000000000000000000000000000000000");
+    const data = &[_]u8{ 0x12, 0x34 };
+
+    var overrides = state_overrides_mod.StateOverrides.init(allocator);
+    defer overrides.deinit();
+    const target = try primitives.addressFromHex("0xcafe000000000000000000000000000000000000");
+    try overrides.setBalance(target, 0xdeadbeef);
+
+    const params = try provider.formatCallParamsWithOverrides(to, data, null, &overrides);
+    defer allocator.free(params);
+
+    // Shape: [{...},"latest",{...overrides...}]
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"to\":\"0xdead000000000000000000000000000000000000\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"data\":\"0x1234\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params, ",\"latest\",{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"0xcafe000000000000000000000000000000000000\":{\"balance\":\"0xdeadbeef\"}") != null);
+    try std.testing.expect(std.mem.endsWith(u8, params, "}}]"));
+}
+
+test "Provider.formatCallParamsWithOverrides - empty overrides emits {}" {
+    const allocator = std.testing.allocator;
+    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    defer transport.deinit();
+
+    var provider = Provider.init(allocator, &transport);
+    const to = try primitives.addressFromHex("0xdead000000000000000000000000000000000000");
+    const data = &[_]u8{};
+
+    var overrides = state_overrides_mod.StateOverrides.init(allocator);
+    defer overrides.deinit();
+
+    const params = try provider.formatCallParamsWithOverrides(to, data, null, &overrides);
+    defer allocator.free(params);
+
+    // Even with no overrides, the third positional argument is present.
+    try std.testing.expect(std.mem.endsWith(u8, params, "\"latest\",{}]"));
 }
 
 test "parseTransactionReceipt - successful receipt" {

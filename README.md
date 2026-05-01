@@ -87,6 +87,25 @@ const name = try token.name();
 defer allocator.free(name);
 ```
 
+### Simulate eth_call with state overrides
+
+Lets searchers answer "what if?" questions without forking a node: what if this token balance were larger, what if this storage slot held a different value, what if this address ran alternative bytecode? Maps to the geth-style third argument to `eth_call`.
+
+```zig
+const eth = @import("eth");
+
+var overrides = eth.state_overrides.StateOverrides.init(allocator);
+defer overrides.deinit();
+
+// Pretend this account is rich, has nonce 0, and the pool has a hand-tuned reserve.
+try overrides.setBalance(searcher_addr, 1_000_000 * std.math.pow(u256, 10, 18));
+try overrides.setNonce(searcher_addr, 0);
+try overrides.setStorageAt(pool_addr, reserves_slot, new_reserves_word);
+
+const result = try provider.callWithOverrides(target_contract, calldata, &overrides);
+defer allocator.free(result);
+```
+
 ### Function selectors and event topics
 
 ```zig

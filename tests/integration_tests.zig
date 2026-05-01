@@ -331,6 +331,93 @@ test "provider next_id increments across calls" {
 }
 
 // ============================================================================
+// eth_call state overrides (issue #12)
+// ============================================================================
+
+test "callWithOverrides applies code + balance override" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    // Pick a fresh, otherwise-empty address.
+    const target = try eth.primitives.addressFromHex("0xc0dec0dec0dec0dec0dec0dec0dec0dec0dec0de");
+
+    // Bytecode: ADDRESS BALANCE PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN
+    // Returns the contract's own balance as a 32-byte word.
+    const bytecode = [_]u8{ 0x30, 0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3 };
+
+    var overrides = eth.state_overrides.StateOverrides.init(allocator);
+    defer overrides.deinit();
+    try overrides.setCode(target, &bytecode);
+    try overrides.setBalance(target, 0xdeadbeef);
+
+    const result = try provider.callWithOverrides(target, &.{}, &overrides);
+    defer allocator.free(result);
+
+    // Returned 32 bytes encode the overridden balance.
+    try std.testing.expectEqual(@as(usize, 32), result.len);
+    var expected = [_]u8{0} ** 32;
+    expected[28] = 0xde;
+    expected[29] = 0xad;
+    expected[30] = 0xbe;
+    expected[31] = 0xef;
+    try std.testing.expectEqualSlices(u8, &expected, result);
+}
+
+test "callWithOverrides applies stateDiff (storage slot)" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const target = try eth.primitives.addressFromHex("0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef");
+
+    // Bytecode: PUSH1 0x05 SLOAD PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN
+    // Returns storage slot 5 as a 32-byte word.
+    const bytecode = [_]u8{ 0x60, 0x05, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3 };
+
+    var slot = [_]u8{0} ** 32;
+    slot[31] = 0x05;
+    var value = [_]u8{0} ** 32;
+    value[30] = 0xab;
+    value[31] = 0xcd;
+
+    var overrides = eth.state_overrides.StateOverrides.init(allocator);
+    defer overrides.deinit();
+    try overrides.setCode(target, &bytecode);
+    try overrides.setStorageAt(target, slot, value);
+
+    const result = try provider.callWithOverrides(target, &.{}, &overrides);
+    defer allocator.free(result);
+
+    try std.testing.expectEqualSlices(u8, &value, result);
+}
+
+test "callWithOverrides without an override matches plain call" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    // Calling an empty address with empty calldata returns empty bytes.
+    const target = try eth.primitives.addressFromHex("0x9999999999999999999999999999999999999999");
+
+    var overrides = eth.state_overrides.StateOverrides.init(allocator);
+    defer overrides.deinit();
+
+    const result = try provider.callWithOverrides(target, &.{}, &overrides);
+    defer allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+// ============================================================================
 // WsClient: resilient WebSocket subscriptions (issue #35)
 // ============================================================================
 
