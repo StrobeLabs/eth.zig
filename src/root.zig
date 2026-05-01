@@ -37,6 +37,7 @@ pub const ws_transport = @import("ws_transport.zig");
 pub const sse_transport = @import("sse_transport.zig");
 pub const subscription = @import("subscription.zig");
 pub const ws_client = @import("ws_client.zig");
+pub const state_overrides = @import("state_overrides.zig");
 pub const provider = @import("provider.zig");
 pub const retry_provider = @import("retry_provider.zig");
 pub const RetryingProvider = retry_provider.RetryingProvider;
@@ -111,6 +112,7 @@ test {
     _ = @import("sse_transport.zig");
     _ = @import("subscription.zig");
     _ = @import("ws_client.zig");
+    _ = @import("state_overrides.zig");
     _ = @import("provider.zig");
     _ = @import("retry_provider.zig");
     // Layer 7: Client
