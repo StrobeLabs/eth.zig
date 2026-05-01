@@ -71,6 +71,10 @@ pub const Error = error{
     UnsubscribeFailed,
     InvalidNotification,
     InvalidResponse,
+    /// The request was sent but the connection dropped before a response
+    /// arrived. The server may or may not have processed it; the caller
+    /// must decide whether to retry.
+    RequestInterrupted,
     OutOfMemory,
 };
 
@@ -173,7 +177,11 @@ pub const WsClient = struct {
         const params_json = try subscription.buildSubscribeParams(self.allocator, owned);
         defer self.allocator.free(params_json);
 
-        const response = self.request(json_rpc.Method.eth_subscribe, params_json) catch
+        // eth_subscribe is idempotent at the protocol level (a duplicate
+        // subscribe just creates a second sub on the server, which is
+        // harmless if the original was lost to a disconnect), so we use
+        // the replay-safe internal request path.
+        const response = self.requestReplay(json_rpc.Method.eth_subscribe, params_json) catch
             return error.SubscribeFailed;
         defer self.allocator.free(response);
 
@@ -208,6 +216,11 @@ pub const WsClient = struct {
         }
         if (idx_opt) |idx| _ = self.subs.orderedRemove(idx);
 
+        // Drop any queued notifications that point at this sub. Without
+        // this purge, a subsequent next() would return an Event whose
+        // `sub` field is a dangling pointer.
+        self.dropPending(sub);
+
         // Best-effort eth_unsubscribe.
         const params_json = std.fmt.allocPrint(self.allocator, "[\"{s}\"]", .{sub.server_id}) catch {
             self.freeSubscription(sub);
@@ -215,7 +228,9 @@ pub const WsClient = struct {
         };
         defer self.allocator.free(params_json);
 
-        const response = self.request(json_rpc.Method.eth_unsubscribe, params_json) catch {
+        // eth_unsubscribe is idempotent (the server tolerates an unknown
+        // sub-id by returning false), so use the replay-safe internal path.
+        const response = self.requestReplay(json_rpc.Method.eth_unsubscribe, params_json) catch {
             self.freeSubscription(sub);
             return;
         };
@@ -253,9 +268,37 @@ pub const WsClient = struct {
         }
     }
 
-    /// Send a JSON-RPC request and wait for the matching response. Sub
-    /// notifications received while waiting are queued for `next()`.
+    /// Send a JSON-RPC request and wait for the matching response.
+    ///
+    /// Sub notifications received while waiting are queued for `next()`.
+    ///
+    /// **Idempotency:** if the connection drops AFTER the request was sent
+    /// but BEFORE the response was read, this method returns
+    /// `error.RequestInterrupted` instead of silently re-sending. The server
+    /// may have already processed the original request; only the caller
+    /// knows whether the method is safe to retry. Pre-send failures (the
+    /// transport was already dead) trigger a transparent reconnect and a
+    /// single retry, since the request has not yet been observed by any
+    /// server.
     pub fn request(self: *WsClient, method: []const u8, params_json: []const u8) ![]u8 {
+        return self.requestImpl(method, params_json, .no_replay);
+    }
+
+    /// Internal: like `request`, but replays the request on post-send
+    /// disconnect. Use only for methods that are safe to issue twice
+    /// (eth_subscribe, eth_unsubscribe).
+    fn requestReplay(self: *WsClient, method: []const u8, params_json: []const u8) ![]u8 {
+        return self.requestImpl(method, params_json, .replay);
+    }
+
+    const ReplayPolicy = enum { no_replay, replay };
+
+    fn requestImpl(
+        self: *WsClient,
+        method: []const u8,
+        params_json: []const u8,
+        replay: ReplayPolicy,
+    ) ![]u8 {
         const id = self.next_id;
         self.next_id += 1;
 
@@ -266,6 +309,8 @@ pub const WsClient = struct {
         );
         defer self.allocator.free(req);
 
+        // Pre-send: the request has never been sent on the wire, so
+        // reconnecting and retrying the send is always safe.
         try self.sendOrReconnect(req);
 
         while (true) {
@@ -274,11 +319,18 @@ pub const WsClient = struct {
             const frame = self.readFrameWithKeepalive() catch |err| switch (err) {
                 error.Disconnected => return error.Disconnected,
                 error.Closed => return error.Closed,
-                else => {
-                    try self.beginReconnect();
-                    // After reconnect the original request id is gone. Re-send.
-                    try self.sendOrReconnect(req);
-                    continue;
+                else => switch (replay) {
+                    .no_replay => {
+                        // Reconnect for future calls but do NOT replay this
+                        // request -- the server may have processed it.
+                        self.beginReconnect() catch {};
+                        return error.RequestInterrupted;
+                    },
+                    .replay => {
+                        try self.beginReconnect();
+                        try self.sendOrReconnect(req);
+                        continue;
+                    },
                 },
             };
 
@@ -467,6 +519,21 @@ pub const WsClient = struct {
         self.allocator.free(sub.server_id);
         freeOwnedParams(self.allocator, sub.params);
         self.allocator.destroy(sub);
+    }
+
+    /// Remove any queued events whose `sub` pointer matches `target`,
+    /// freeing their payloads. Called from `unsubscribe` to prevent
+    /// dangling pointers in the pending queue.
+    fn dropPending(self: *WsClient, target: *Subscription) void {
+        var i: usize = 0;
+        while (i < self.pending.items.len) {
+            if (self.pending.items[i].sub == target) {
+                const ev = self.pending.orderedRemove(i);
+                self.allocator.free(ev.payload);
+            } else {
+                i += 1;
+            }
+        }
     }
 };
 
@@ -745,6 +812,27 @@ test "queueNotification - rejects unknown sub_id" {
     defer alloc.free(f);
     try std.testing.expect(!try client.queueNotification(f));
     try std.testing.expectEqual(@as(usize, 0), client.pending.items.len);
+}
+
+test "dropPending - removes only matching events" {
+    const alloc = std.testing.allocator;
+    var client = testStubClient(alloc);
+    defer freeStubClient(&client);
+
+    const sub_a = try registerStubSubscription(&client, "0xaaa");
+    const sub_b = try registerStubSubscription(&client, "0xbbb");
+
+    // Queue: A, B, A. After dropPending(sub_a) we expect just B.
+    const f1 = try fakeNotification(alloc, "0xaaa");
+    const f2 = try fakeNotification(alloc, "0xbbb");
+    const f3 = try fakeNotification(alloc, "0xaaa");
+    try std.testing.expect(try client.queueNotification(f1));
+    try std.testing.expect(try client.queueNotification(f2));
+    try std.testing.expect(try client.queueNotification(f3));
+
+    client.dropPending(sub_a);
+    try std.testing.expectEqual(@as(usize, 1), client.pending.items.len);
+    try std.testing.expect(client.pending.items[0].sub == sub_b);
 }
 
 test "subscription registry - server_id remap preserves handle" {

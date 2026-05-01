@@ -337,24 +337,53 @@ pub fn formatHash(hash: [32]u8) [66]u8 {
 
 // ---------------------------------------------------------------------------
 // JSON parsing helpers (minimal, no full JSON parser)
+//
+// These scanners are deliberately not a full JSON parser. They locate a
+// `"key" <ws>? : <ws>? value` pattern by string match. JSON spec allows
+// arbitrary whitespace around the colon, so each scanner skips spaces and
+// tabs (the only whitespace likely on the wire) on either side.
 // ---------------------------------------------------------------------------
 
-/// Extract a string value from a "result":"..." pattern in a JSON response.
+fn isJsonWs(c: u8) bool {
+    return c == ' ' or c == '\t' or c == '\r' or c == '\n';
+}
+
+fn skipWs(json: []const u8, idx: usize) usize {
+    var i = idx;
+    while (i < json.len and isJsonWs(json[i])) : (i += 1) {}
+    return i;
+}
+
+/// Find the first occurrence of `key_quoted` (e.g. `"result"`) and advance
+/// past the trailing colon and any surrounding whitespace. Returns the
+/// index of the first character of the value, or null if no such pattern
+/// exists.
+fn findKeyValueStart(json: []const u8, key_quoted: []const u8) ?usize {
+    var search_from: usize = 0;
+    while (search_from < json.len) {
+        const rel = std.mem.indexOf(u8, json[search_from..], key_quoted) orelse return null;
+        const key_end = search_from + rel + key_quoted.len;
+        var i = skipWs(json, key_end);
+        if (i < json.len and json[i] == ':') {
+            i = skipWs(json, i + 1);
+            return i;
+        }
+        // Found the substring but it was not a key (e.g. it appeared inside
+        // a value). Skip past this match and keep looking.
+        search_from = search_from + rel + key_quoted.len;
+    }
+    return null;
+}
+
+/// Extract a string value from a "result": "..." pattern in a JSON response.
+/// Tolerant of whitespace around the colon.
 /// Caller owns the returned memory.
 pub fn extractResultString(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
-    // Look for "result":" pattern
-    const needle = "\"result\":\"";
-    const start = std.mem.indexOf(u8, json, needle) orelse return error.InvalidResponse;
-    const value_start = start + needle.len;
-
-    // Find closing quote
-    const value_end = if (value_start < json.len)
-        if (std.mem.indexOfScalar(u8, json[value_start..], '"')) |idx| idx + value_start else null
-    else
-        null;
-    const end = value_end orelse return error.InvalidResponse;
-
-    const value = json[value_start..end];
+    const value_start = findKeyValueStart(json, "\"result\"") orelse return error.InvalidResponse;
+    if (value_start >= json.len or json[value_start] != '"') return error.InvalidResponse;
+    const string_start = value_start + 1;
+    const rel_end = std.mem.indexOfScalar(u8, json[string_start..], '"') orelse return error.InvalidResponse;
+    const value = json[string_start .. string_start + rel_end];
     const result = try allocator.alloc(u8, value.len);
     @memcpy(result, value);
     return result;
@@ -362,19 +391,9 @@ pub fn extractResultString(allocator: std.mem.Allocator, json: []const u8) ![]u8
 
 /// Check if a JSON message is a subscription notification for the given ID.
 pub fn isSubscriptionNotification(json: []const u8, subscription_id: []const u8) bool {
-    // Must contain "eth_subscription" method
     if (std.mem.indexOf(u8, json, "\"eth_subscription\"") == null) return false;
-
-    // Must contain our subscription ID
-    // Look for "subscription":"<id>" pattern
-    const needle_prefix = "\"subscription\":\"";
-    const prefix_pos = std.mem.indexOf(u8, json, needle_prefix) orelse return false;
-    const id_start = prefix_pos + needle_prefix.len;
-
-    if (id_start + subscription_id.len > json.len) return false;
-    const candidate = json[id_start .. id_start + subscription_id.len];
-
-    return std.mem.eql(u8, candidate, subscription_id);
+    const id = getSubscriptionId(json) orelse return false;
+    return std.mem.eql(u8, id, subscription_id);
 }
 
 /// Return a slice into `json` containing the subscription id from an
@@ -383,9 +402,9 @@ pub fn isSubscriptionNotification(json: []const u8, subscription_id: []const u8)
 /// its lifetime.
 pub fn getSubscriptionId(json: []const u8) ?[]const u8 {
     if (std.mem.indexOf(u8, json, "\"eth_subscription\"") == null) return null;
-    const needle_prefix = "\"subscription\":\"";
-    const prefix_pos = std.mem.indexOf(u8, json, needle_prefix) orelse return null;
-    const id_start = prefix_pos + needle_prefix.len;
+    const value_start = findKeyValueStart(json, "\"subscription\"") orelse return null;
+    if (value_start >= json.len or json[value_start] != '"') return null;
+    const id_start = value_start + 1;
     const rel_end = std.mem.indexOfScalar(u8, json[id_start..], '"') orelse return null;
     return json[id_start .. id_start + rel_end];
 }
@@ -394,15 +413,11 @@ pub fn getSubscriptionId(json: []const u8) ?[]const u8 {
 /// Returns null if the field is absent or the value is not a base-10 integer.
 /// This is a fast path for matching responses without full JSON parsing.
 pub fn extractResponseId(json: []const u8) ?u64 {
-    const needle = "\"id\":";
-    const start = std.mem.indexOf(u8, json, needle) orelse return null;
-    var i = start + needle.len;
-    // Skip optional whitespace
-    while (i < json.len and (json[i] == ' ' or json[i] == '\t')) : (i += 1) {}
-    const num_start = i;
+    const value_start = findKeyValueStart(json, "\"id\"") orelse return null;
+    var i = value_start;
     while (i < json.len and json[i] >= '0' and json[i] <= '9') : (i += 1) {}
-    if (i == num_start) return null;
-    return std.fmt.parseInt(u64, json[num_start..i], 10) catch null;
+    if (i == value_start) return null;
+    return std.fmt.parseInt(u64, json[value_start..i], 10) catch null;
 }
 
 // ============================================================================
@@ -674,4 +689,38 @@ test "extractResponseId - missing id" {
 test "extractResponseId - non-numeric id" {
     const json = "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":1}";
     try std.testing.expect(extractResponseId(json) == null);
+}
+
+test "extractResultString - whitespace around colon" {
+    const allocator = std.testing.allocator;
+    const json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\" : \"0xabc\"}";
+    const result = try extractResultString(allocator, json);
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("0xabc", result);
+}
+
+test "getSubscriptionId - whitespace around colon" {
+    const json =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"eth_subscription\"," ++
+        "\"params\":{ \"subscription\" : \"0xWS\", \"result\":{}}}";
+    const id = getSubscriptionId(json) orelse return error.TestExpectedSome;
+    try std.testing.expectEqualStrings("0xWS", id);
+}
+
+test "extractResponseId - whitespace before colon" {
+    const json = "{\"jsonrpc\":\"2.0\",\"id\" : 99,\"result\":1}";
+    try std.testing.expectEqual(@as(?u64, 99), extractResponseId(json));
+}
+
+test "extractResultString - skips key found inside a value" {
+    // `"result"` appears inside the error message, but is not a key. The
+    // scanner must keep looking until it finds a real `"result":` key.
+    const allocator = std.testing.allocator;
+    const json =
+        "{\"jsonrpc\":\"2.0\",\"id\":1," ++
+        "\"description\":\"the \\\"result\\\" was unexpected\"," ++
+        "\"result\":\"0xreal\"}";
+    const result = try extractResultString(allocator, json);
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("0xreal", result);
 }
