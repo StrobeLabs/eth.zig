@@ -151,21 +151,7 @@ pub const Subscription = struct {
     pub fn nextBlock(self: *Subscription, allocator: std.mem.Allocator) !block_mod.BlockHeader {
         const raw = try self.next();
         defer self.allocator.free(raw);
-
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
-            return error.InvalidNotification;
-        defer parsed.deinit();
-
-        const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
-
-        // Serialize result back and wrap as {"result":...} for reuse with parseBlockHeader.
-        const result_json = try std.json.stringifyAlloc(allocator, result_val, .{});
-        defer allocator.free(result_json);
-
-        const wrapped = try std.fmt.allocPrint(allocator, "{{\"result\":{s}}}", .{result_json});
-        defer allocator.free(wrapped);
-
-        return (try provider_mod.parseBlockHeader(allocator, wrapped)) orelse error.NullResult;
+        return parseBlockFromNotification(allocator, raw);
     }
 
     /// For logs subscriptions: parse and return the next log.
@@ -173,32 +159,69 @@ pub const Subscription = struct {
     pub fn nextLog(self: *Subscription, allocator: std.mem.Allocator) !receipt_mod.Log {
         const raw = try self.next();
         defer self.allocator.free(raw);
-
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
-            return error.InvalidNotification;
-        defer parsed.deinit();
-
-        const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
-        if (result_val != .object) return error.InvalidNotification;
-
-        return try provider_mod.parseSingleLog(allocator, result_val.object);
+        return parseLogFromNotification(allocator, raw);
     }
 
     /// For new_pending_transactions subscriptions: return the next transaction hash.
     pub fn nextTxHash(self: *Subscription) ![32]u8 {
         const raw = try self.next();
         defer self.allocator.free(raw);
-
-        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, raw, .{}) catch
-            return error.InvalidNotification;
-        defer parsed.deinit();
-
-        const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
-        if (result_val != .string) return error.InvalidNotification;
-
-        return primitives.hashFromHex(result_val.string) catch error.InvalidNotification;
+        return parseTxHashFromNotification(self.allocator, raw);
     }
 };
+
+// ---------------------------------------------------------------------------
+// Free-function notification parsers
+//
+// These are the raw building blocks for parsing eth_subscription notifications.
+// Subscription's nextBlock/nextLog/nextTxHash methods are thin wrappers around
+// them, and ws_client.WsClient uses the same parsers without needing a
+// Subscription instance.
+// ---------------------------------------------------------------------------
+
+/// Parse a `newHeads` notification payload into a BlockHeader.
+/// Caller owns the returned BlockHeader's allocated fields (extra_data).
+pub fn parseBlockFromNotification(allocator: std.mem.Allocator, raw: []const u8) !block_mod.BlockHeader {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
+        return error.InvalidNotification;
+    defer parsed.deinit();
+
+    const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+
+    // Serialize result back and wrap as {"result":...} for reuse with parseBlockHeader.
+    const result_json = try std.json.stringifyAlloc(allocator, result_val, .{});
+    defer allocator.free(result_json);
+
+    const wrapped = try std.fmt.allocPrint(allocator, "{{\"result\":{s}}}", .{result_json});
+    defer allocator.free(wrapped);
+
+    return (try provider_mod.parseBlockHeader(allocator, wrapped)) orelse error.NullResult;
+}
+
+/// Parse a `logs` notification payload into a Log.
+/// Caller owns the returned Log's allocated fields (topics, data).
+pub fn parseLogFromNotification(allocator: std.mem.Allocator, raw: []const u8) !receipt_mod.Log {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
+        return error.InvalidNotification;
+    defer parsed.deinit();
+
+    const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+    if (result_val != .object) return error.InvalidNotification;
+
+    return try provider_mod.parseSingleLog(allocator, result_val.object);
+}
+
+/// Parse a `newPendingTransactions` notification payload into a 32-byte tx hash.
+pub fn parseTxHashFromNotification(allocator: std.mem.Allocator, raw: []const u8) ![32]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
+        return error.InvalidNotification;
+    defer parsed.deinit();
+
+    const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+    if (result_val != .string) return error.InvalidNotification;
+
+    return primitives.hashFromHex(result_val.string) catch error.InvalidNotification;
+}
 
 // ---------------------------------------------------------------------------
 // Notification parsing helpers
@@ -208,7 +231,7 @@ pub const Subscription = struct {
 /// Notification format: {"jsonrpc":"2.0","method":"eth_subscription",
 ///                       "params":{"subscription":"0x...","result":{...}}}
 /// Returns null if the JSON does not match the expected notification structure.
-fn getNotificationResult(root: std.json.Value) ?std.json.Value {
+pub fn getNotificationResult(root: std.json.Value) ?std.json.Value {
     if (root != .object) return null;
     const params_val = root.object.get("params") orelse return null;
     if (params_val != .object) return null;
@@ -318,7 +341,7 @@ pub fn formatHash(hash: [32]u8) [66]u8 {
 
 /// Extract a string value from a "result":"..." pattern in a JSON response.
 /// Caller owns the returned memory.
-fn extractResultString(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
+pub fn extractResultString(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
     // Look for "result":" pattern
     const needle = "\"result\":\"";
     const start = std.mem.indexOf(u8, json, needle) orelse return error.InvalidResponse;
@@ -338,7 +361,7 @@ fn extractResultString(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
 }
 
 /// Check if a JSON message is a subscription notification for the given ID.
-fn isSubscriptionNotification(json: []const u8, subscription_id: []const u8) bool {
+pub fn isSubscriptionNotification(json: []const u8, subscription_id: []const u8) bool {
     // Must contain "eth_subscription" method
     if (std.mem.indexOf(u8, json, "\"eth_subscription\"") == null) return false;
 
@@ -352,6 +375,34 @@ fn isSubscriptionNotification(json: []const u8, subscription_id: []const u8) boo
     const candidate = json[id_start .. id_start + subscription_id.len];
 
     return std.mem.eql(u8, candidate, subscription_id);
+}
+
+/// Return a slice into `json` containing the subscription id from an
+/// eth_subscription notification, or null if `json` is not such a
+/// notification. The returned slice borrows `json` and is only valid for
+/// its lifetime.
+pub fn getSubscriptionId(json: []const u8) ?[]const u8 {
+    if (std.mem.indexOf(u8, json, "\"eth_subscription\"") == null) return null;
+    const needle_prefix = "\"subscription\":\"";
+    const prefix_pos = std.mem.indexOf(u8, json, needle_prefix) orelse return null;
+    const id_start = prefix_pos + needle_prefix.len;
+    const rel_end = std.mem.indexOfScalar(u8, json[id_start..], '"') orelse return null;
+    return json[id_start .. id_start + rel_end];
+}
+
+/// Extract a JSON-RPC `id` integer from a response payload by string match.
+/// Returns null if the field is absent or the value is not a base-10 integer.
+/// This is a fast path for matching responses without full JSON parsing.
+pub fn extractResponseId(json: []const u8) ?u64 {
+    const needle = "\"id\":";
+    const start = std.mem.indexOf(u8, json, needle) orelse return null;
+    var i = start + needle.len;
+    // Skip optional whitespace
+    while (i < json.len and (json[i] == ' ' or json[i] == '\t')) : (i += 1) {}
+    const num_start = i;
+    while (i < json.len and json[i] >= '0' and json[i] <= '9') : (i += 1) {}
+    if (i == num_start) return null;
+    return std.fmt.parseInt(u64, json[num_start..i], 10) catch null;
 }
 
 // ============================================================================
@@ -583,4 +634,44 @@ test "Subscription struct layout" {
 
     // Prevent deinit from freeing non-allocated memory
     sub.id = "";
+}
+
+test "getSubscriptionId - matching" {
+    const json =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"eth_subscription\"," ++
+        "\"params\":{\"subscription\":\"0xabcdef\",\"result\":{}}}";
+    const id = getSubscriptionId(json) orelse return error.TestExpectedSome;
+    try std.testing.expectEqualStrings("0xabcdef", id);
+}
+
+test "getSubscriptionId - not a notification" {
+    const json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xabc\"}";
+    try std.testing.expect(getSubscriptionId(json) == null);
+}
+
+test "getSubscriptionId - missing subscription field" {
+    const json =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"eth_subscription\"," ++
+        "\"params\":{\"result\":{}}}";
+    try std.testing.expect(getSubscriptionId(json) == null);
+}
+
+test "extractResponseId - simple" {
+    const json = "{\"jsonrpc\":\"2.0\",\"id\":42,\"result\":\"0xabc\"}";
+    try std.testing.expectEqual(@as(?u64, 42), extractResponseId(json));
+}
+
+test "extractResponseId - whitespace tolerant" {
+    const json = "{\"jsonrpc\":\"2.0\",\"id\": 7,\"result\":1}";
+    try std.testing.expectEqual(@as(?u64, 7), extractResponseId(json));
+}
+
+test "extractResponseId - missing id" {
+    const json = "{\"jsonrpc\":\"2.0\",\"method\":\"x\"}";
+    try std.testing.expect(extractResponseId(json) == null);
+}
+
+test "extractResponseId - non-numeric id" {
+    const json = "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":1}";
+    try std.testing.expect(extractResponseId(json) == null);
 }

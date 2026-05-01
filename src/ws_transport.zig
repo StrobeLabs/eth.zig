@@ -306,6 +306,11 @@ pub const WsTransport = struct {
     read_pos: usize = 0,
     read_end: usize = 0,
 
+    /// Total number of frames (data + control) received since this transport
+    /// was opened. Higher-level wrappers can sample this to detect liveness
+    /// of pong responses without piercing the abstraction.
+    frames_received: u64 = 0,
+
     // Track whether we use TLS
     is_tls: bool = false,
 
@@ -340,6 +345,7 @@ pub const WsTransport = struct {
         TlsInitFailed,
         WriteError,
         ReadError,
+        Timeout,
     };
 
     /// Connect to a WebSocket endpoint.
@@ -459,10 +465,52 @@ pub const WsTransport = struct {
         return self.sendFrame(payload, .text);
     }
 
+    /// Send a WebSocket ping frame with the given payload (RFC 6455 limits
+    /// payload to 125 bytes; the caller is responsible for honoring that).
+    /// The peer is expected to reply with a pong carrying the same payload.
+    pub fn sendPing(self: *WsTransport, payload: []const u8) !void {
+        return self.sendFrame(payload, .ping);
+    }
+
     /// Read the next WebSocket message (text or binary).
     /// Caller owns the returned memory.
     pub fn readMessage(self: *WsTransport) ![]u8 {
         return self.readFrame();
+    }
+
+    /// Read the next WebSocket message with a deadline.
+    ///
+    /// `deadline_ms` is an absolute timestamp from `std.time.milliTimestamp()`.
+    /// Returns the payload (caller owns memory) on success, or null if the
+    /// deadline expires before a complete data frame is available.
+    ///
+    /// Control frames (ping/pong) are handled transparently as in `readFrame`.
+    /// Note: with TLS, a partially-arrived TLS record may cause the underlying
+    /// read to block briefly past the deadline while the record is assembled.
+    pub fn readMessageDeadline(self: *WsTransport, deadline_ms: i64) !?[]u8 {
+        return self.readFrameDeadline(deadline_ms);
+    }
+
+    /// Wait for the underlying socket to become readable, or for `timeout_ms`
+    /// to elapse. Returns true if data is ready, false on timeout.
+    /// Pass a negative timeout to block indefinitely.
+    pub fn pollReadable(self: *WsTransport, timeout_ms: i32) !bool {
+        // If the read buffer already has unconsumed bytes, we are immediately
+        // readable from the caller's perspective.
+        if (self.read_end > self.read_pos) return true;
+        var fds = [_]std.posix.pollfd{.{
+            .fd = self.stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const n = std.posix.poll(&fds, timeout_ms) catch return error.ReadError;
+        if (n == 0) return false;
+        // POLLERR / POLLHUP / POLLNVAL all indicate the socket is no longer
+        // usable; surface that as ReadError so the caller triggers reconnect.
+        if (fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL) != 0) {
+            return error.ReadError;
+        }
+        return (fds[0].revents & std.posix.POLL.IN) != 0;
     }
 
     // -- Internal methods --
@@ -484,16 +532,28 @@ pub const WsTransport = struct {
     /// Caller owns the returned memory.
     /// Handles ping frames internally by responding with pong.
     fn readFrame(self: *WsTransport) ![]u8 {
+        return (try self.readFrameImpl(null)) orelse unreachable;
+    }
+
+    /// Read a complete WebSocket frame, returning null on deadline.
+    /// `deadline_ms` is absolute (`std.time.milliTimestamp()` units).
+    fn readFrameDeadline(self: *WsTransport, deadline_ms: i64) !?[]u8 {
+        return self.readFrameImpl(deadline_ms);
+    }
+
+    /// Shared implementation for `readFrame` (no deadline) and
+    /// `readFrameDeadline` (returns null on timeout).
+    fn readFrameImpl(self: *WsTransport, deadline_ms: ?i64) !?[]u8 {
         while (true) {
             // Ensure we have at least 2 bytes for the header
-            try self.ensureReadBuf(2);
+            if (!try self.ensureReadBufDeadline(2, deadline_ms)) return null;
 
             const available = self.read_buf[self.read_pos..self.read_end];
             const header_opt = decodeFrameHeader(available);
 
             if (header_opt == null) {
                 // Need more data for header
-                try self.fillReadBuf();
+                if (!try self.fillReadBufDeadline(deadline_ms)) return null;
                 continue;
             }
 
@@ -505,7 +565,7 @@ pub const WsTransport = struct {
             }
 
             // Ensure we have the entire frame in the buffer
-            try self.ensureReadBuf(total_frame_size);
+            if (!try self.ensureReadBufDeadline(total_frame_size, deadline_ms)) return null;
 
             const payload_start = self.read_pos + header.header_size;
             const payload_end = payload_start + @as(usize, @intCast(header.payload_len));
@@ -525,6 +585,7 @@ pub const WsTransport = struct {
 
             // Advance read position past this frame
             self.read_pos = payload_end;
+            self.frames_received +%= 1;
 
             // Handle control frames transparently
             switch (header.opcode) {
@@ -593,13 +654,27 @@ pub const WsTransport = struct {
     /// Ensure the read buffer has at least `min_bytes` available from
     /// the current read_pos.
     fn ensureReadBuf(self: *WsTransport, min_bytes: usize) !void {
-        while (self.read_end - self.read_pos < min_bytes) {
-            try self.fillReadBuf();
-        }
+        _ = try self.ensureReadBufDeadline(min_bytes, null);
     }
 
     /// Read more data from the network into the read buffer.
     fn fillReadBuf(self: *WsTransport) !void {
+        _ = try self.fillReadBufDeadline(null);
+    }
+
+    /// Ensure the read buffer has at least `min_bytes` available, respecting
+    /// `deadline_ms` (absolute milliseconds). Returns true on success, false
+    /// if the deadline expired before enough bytes arrived.
+    fn ensureReadBufDeadline(self: *WsTransport, min_bytes: usize, deadline_ms: ?i64) !bool {
+        while (self.read_end - self.read_pos < min_bytes) {
+            if (!try self.fillReadBufDeadline(deadline_ms)) return false;
+        }
+        return true;
+    }
+
+    /// Read more data from the network into the read buffer, optionally
+    /// bounded by `deadline_ms`. Returns true on read, false on timeout.
+    fn fillReadBufDeadline(self: *WsTransport, deadline_ms: ?i64) !bool {
         // Compact: shift remaining data to the front
         if (self.read_pos > 0) {
             const remaining = self.read_end - self.read_pos;
@@ -610,9 +685,22 @@ pub const WsTransport = struct {
             self.read_pos = 0;
         }
 
+        if (deadline_ms) |dl| {
+            const now = std.time.milliTimestamp();
+            if (now >= dl) return false;
+            const wait_i64 = dl - now;
+            const wait_ms: i32 = if (wait_i64 > std.math.maxInt(i32))
+                std.math.maxInt(i32)
+            else
+                @intCast(wait_i64);
+            const ready = try self.pollReadable(wait_ms);
+            if (!ready) return false;
+        }
+
         const n = self.readSome(self.read_buf[self.read_end..]) catch return error.ReadError;
         if (n == 0) return error.ConnectionClosed;
         self.read_end += n;
+        return true;
     }
 
     /// Write all bytes to the underlying transport (plain TCP or TLS).

@@ -80,7 +80,7 @@ test "getBalance of funded account" {
 
     // Anvil accounts start with 10000 ETH. Even after some tests run the
     // balance should be well above 1 ETH (= 10^18 wei).
-    const one_ether = eth.units.parseEther(1.0);
+    const one_ether = eth.units.parseEther(1.0) orelse return error.ParseEtherFailed;
     try std.testing.expect(balance >= one_ether);
 }
 
@@ -216,7 +216,7 @@ test "send ETH transfer and verify receipt" {
     var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
 
     const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
-    const send_value = eth.units.parseEther(0.01);
+    const send_value = eth.units.parseEther(0.01) orelse return error.ParseEtherFailed;
 
     // Record initial balance of recipient.
     const balance_before = try provider.getBalance(recipient);
@@ -283,7 +283,7 @@ test "sendTransactionAndWait returns receipt directly" {
     var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
 
     const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
-    const send_value = eth.units.parseEther(0.001);
+    const send_value = eth.units.parseEther(0.001) orelse return error.ParseEtherFailed;
 
     const receipt = try wallet.sendTransactionAndWait(.{
         .to = recipient,
@@ -328,4 +328,84 @@ test "provider next_id increments across calls" {
     const id_after_first = provider.next_id;
     _ = try provider.getBlockNumber();
     try std.testing.expect(provider.next_id > id_after_first);
+}
+
+// ============================================================================
+// WsClient: resilient WebSocket subscriptions (issue #35)
+// ============================================================================
+
+const ANVIL_WS_URL = "ws://127.0.0.1:8545";
+
+/// Trigger a block on Anvil so newHeads subscriptions emit a notification.
+fn anvilMineOne(allocator: std.mem.Allocator) !void {
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    defer transport.deinit();
+    const response = try transport.request("evm_mine", "[]", 1);
+    allocator.free(response);
+}
+
+test "WsClient subscribe newHeads receives a fresh block" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    // Disable keepalive in tests so the test's run time is bounded by
+    // mining + dispatch, not by the default 30s ping interval.
+    const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    defer client.deinit();
+
+    const sub = try client.subscribe(.{ .new_heads = {} });
+
+    try anvilMineOne(allocator);
+
+    const event = try client.next();
+    defer allocator.free(event.payload);
+    try std.testing.expect(event.sub == sub);
+    // Sanity-check the payload is a newHeads notification for our sub.
+    try std.testing.expect(std.mem.indexOf(u8, event.payload, "eth_subscription") != null);
+    try std.testing.expect(std.mem.indexOf(u8, event.payload, sub.server_id) != null);
+}
+
+test "WsClient multiplexes two subscriptions on one connection" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    defer client.deinit();
+
+    const sub_a = try client.subscribe(.{ .new_heads = {} });
+    const sub_b = try client.subscribe(.{ .new_heads = {} });
+    // Both subs are newHeads, so each freshly-mined block emits one event per
+    // sub. Anvil assigns each sub a distinct server_id, so dispatch must
+    // route correctly.
+    try std.testing.expect(!std.mem.eql(u8, sub_a.server_id, sub_b.server_id));
+
+    try anvilMineOne(allocator);
+
+    var saw_a = false;
+    var saw_b = false;
+    var i: usize = 0;
+    while ((!saw_a or !saw_b) and i < 4) : (i += 1) {
+        const ev = try client.next();
+        defer allocator.free(ev.payload);
+        if (ev.sub == sub_a) saw_a = true;
+        if (ev.sub == sub_b) saw_b = true;
+    }
+    try std.testing.expect(saw_a);
+    try std.testing.expect(saw_b);
+}
+
+test "WsClient unsubscribe frees handle and removes from registry" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    defer client.deinit();
+
+    const sub = try client.subscribe(.{ .new_heads = {} });
+    try client.unsubscribe(sub);
+    // The registry should be empty; pointer `sub` is freed and must not be
+    // dereferenced after this point.
 }
