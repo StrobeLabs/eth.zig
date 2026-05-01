@@ -118,6 +118,37 @@ const key = try eth.hd_wallet.deriveEthAccount(seed, 0);
 const addr = key.toAddress();
 ```
 
+### Resilient WebSocket subscriptions (production bots)
+
+`ws_client.WsClient` wraps `ws_transport` with three features bots need: transparent reconnect with exponential backoff + jitter, multiplexed subscriptions on a single socket, and an application-layer ping keepalive. Subscription handles stay valid across reconnects -- the underlying server-side sub-id is swapped automatically.
+
+```zig
+const eth = @import("eth");
+
+const client = try eth.ws_client.WsClient.connect(allocator, "wss://mainnet.example.com/ws", .{});
+defer client.deinit();
+
+const heads = try client.subscribe(.{ .new_heads = {} });
+const transfers = try client.subscribe(.{ .logs = .{
+    .address = usdc_address,
+    .topics = &.{transfer_event_topic},
+} });
+
+while (true) {
+    const event = try client.next();
+    defer allocator.free(event.payload);
+    if (event.sub == heads) {
+        const header = try eth.subscription.parseBlockFromNotification(allocator, event.payload);
+        // ... handle new block
+    } else if (event.sub == transfers) {
+        const log = try eth.subscription.parseLogFromNotification(allocator, event.payload);
+        // ... handle Transfer log
+    }
+}
+```
+
+Lower-level building blocks remain available: `ws_transport.WsTransport` for raw frames and `ws_transport.connectWithReconnect()` for a callback-style reconnect loop without subscription state.
+
 ## Built with eth.zig
 
 Real production bots and SDKs built on eth.zig:
@@ -193,7 +224,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155` | ECDSA signing (RFC 6979), Keccak-256, EIP-155 |
 | **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions |
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |
-| **Transport** | `http_transport`, `ws_transport`, `sse_transport`, `json_rpc`, `provider`, `subscription` | HTTP, WebSocket, and SSE transports |
+| **Transport** | `http_transport`, `ws_transport`, `sse_transport`, `json_rpc`, `provider`, `subscription`, `ws_client` | HTTP, WebSocket, and SSE transports; resilient WS client with auto-reconnect |
 | **ENS** | `ens_namehash`, `ens_resolver`, `ens_reverse` | ENS name resolution and reverse lookup |
 | **Client** | `wallet`, `contract`, `multicall`, `event`, `erc20`, `erc721` | Signing wallet, contract interaction, Multicall3, token wrappers |
 | **Standards** | `eip712`, `abi_json` | EIP-712 typed data signing, Solidity JSON ABI parsing |
@@ -216,6 +247,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | BIP-32/39/44 HD wallets | Complete |
 | HTTP transport | Complete |
 | WebSocket transport (with TLS) | Complete |
+| Resilient WS client (auto-reconnect + resubscribe + keepalive) | Complete |
 | JSON-RPC provider (24+ methods) | Complete |
 | ENS resolution (forward + reverse) | Complete |
 | Contract read/write helpers | Complete |
