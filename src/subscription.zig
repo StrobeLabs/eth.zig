@@ -5,6 +5,7 @@ const block_mod = @import("block.zig");
 const receipt_mod = @import("receipt.zig");
 const primitives = @import("primitives.zig");
 const provider_mod = @import("provider.zig");
+const rpc_tx_mod = @import("rpc_transaction.zig");
 
 /// Types of Ethereum subscriptions available via eth_subscribe.
 pub const SubscriptionType = enum {
@@ -28,11 +29,20 @@ pub const LogSubscriptionParams = struct {
     topics: ?[]const ?[32]u8 = null,
 };
 
+/// Parameters for a `newPendingTransactions` subscription.
+pub const PendingTxParams = struct {
+    /// If true, the node streams full transaction objects instead of just
+    /// transaction hashes. Maps to the geth-style second parameter:
+    /// `eth_subscribe("newPendingTransactions", true)`. Some L2s and older
+    /// nodes ignore the parameter and only ever stream hashes.
+    full: bool = false,
+};
+
 /// Parameters for an eth_subscribe call.
 pub const SubscriptionParams = union(enum) {
     new_heads: void,
     logs: LogSubscriptionParams,
-    new_pending_transactions: void,
+    new_pending_transactions: PendingTxParams,
 
     /// Get the subscription type.
     pub fn subType(self: SubscriptionParams) SubscriptionType {
@@ -223,6 +233,21 @@ pub fn parseTxHashFromNotification(allocator: std.mem.Allocator, raw: []const u8
     return primitives.hashFromHex(result_val.string) catch error.InvalidNotification;
 }
 
+/// Parse a full-tx `newPendingTransactions` notification payload into an
+/// RpcTransaction. Use this when the subscription was created with
+/// `PendingTxParams{ .full = true }`. Caller owns the returned
+/// transaction's heap fields; release with `rpc_transaction.freeRpcTransaction`.
+pub fn parseTransactionFromNotification(allocator: std.mem.Allocator, raw: []const u8) !rpc_tx_mod.RpcTransaction {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
+        return error.InvalidNotification;
+    defer parsed.deinit();
+
+    const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+    if (result_val != .object) return error.InvalidNotification;
+
+    return provider_mod.parseSingleTransaction(allocator, result_val.object);
+}
+
 // ---------------------------------------------------------------------------
 // Notification parsing helpers
 // ---------------------------------------------------------------------------
@@ -249,8 +274,12 @@ pub fn buildSubscribeParams(allocator: std.mem.Allocator, params: SubscriptionPa
         .new_heads => {
             return std.fmt.allocPrint(allocator, "[\"{s}\"]", .{SubscriptionType.new_heads.toParamString()}) catch return error.OutOfMemory;
         },
-        .new_pending_transactions => {
-            return std.fmt.allocPrint(allocator, "[\"{s}\"]", .{SubscriptionType.new_pending_transactions.toParamString()}) catch return error.OutOfMemory;
+        .new_pending_transactions => |pending_params| {
+            const tag = SubscriptionType.new_pending_transactions.toParamString();
+            if (pending_params.full) {
+                return std.fmt.allocPrint(allocator, "[\"{s}\",true]", .{tag}) catch return error.OutOfMemory;
+            }
+            return std.fmt.allocPrint(allocator, "[\"{s}\"]", .{tag}) catch return error.OutOfMemory;
         },
         .logs => |log_params| {
             return buildLogSubscribeParams(allocator, log_params) catch return error.OutOfMemory;
@@ -468,7 +497,7 @@ test "SubscriptionParams subType" {
     const logs: SubscriptionParams = .{ .logs = .{} };
     try std.testing.expectEqual(SubscriptionType.logs, logs.subType());
 
-    const pending: SubscriptionParams = .{ .new_pending_transactions = {} };
+    const pending: SubscriptionParams = .{ .new_pending_transactions = .{} };
     try std.testing.expectEqual(SubscriptionType.new_pending_transactions, pending.subType());
 }
 
@@ -481,13 +510,22 @@ test "buildSubscribeParams - newHeads" {
     try std.testing.expectEqualStrings("[\"newHeads\"]", result);
 }
 
-test "buildSubscribeParams - newPendingTransactions" {
+test "buildSubscribeParams - newPendingTransactions hashes only" {
     const allocator = std.testing.allocator;
-    const params: SubscriptionParams = .{ .new_pending_transactions = {} };
+    const params: SubscriptionParams = .{ .new_pending_transactions = .{} };
     const result = try buildSubscribeParams(allocator, params);
     defer allocator.free(result);
 
     try std.testing.expectEqualStrings("[\"newPendingTransactions\"]", result);
+}
+
+test "buildSubscribeParams - newPendingTransactions full" {
+    const allocator = std.testing.allocator;
+    const params: SubscriptionParams = .{ .new_pending_transactions = .{ .full = true } };
+    const result = try buildSubscribeParams(allocator, params);
+    defer allocator.free(result);
+
+    try std.testing.expectEqualStrings("[\"newPendingTransactions\",true]", result);
 }
 
 test "buildSubscribeParams - logs with address only" {

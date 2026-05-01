@@ -577,7 +577,7 @@ pub fn applyJitter(base_ms: u64, pct: u8, rng: std.Random) u64 {
 fn cloneParams(allocator: std.mem.Allocator, params: SubscriptionParams) !SubscriptionParams {
     return switch (params) {
         .new_heads => SubscriptionParams{ .new_heads = {} },
-        .new_pending_transactions => SubscriptionParams{ .new_pending_transactions = {} },
+        .new_pending_transactions => |pp| SubscriptionParams{ .new_pending_transactions = pp },
         .logs => |lp| blk: {
             var owned = LogSubscriptionParams{
                 .address = lp.address,

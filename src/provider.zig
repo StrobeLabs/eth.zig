@@ -6,6 +6,7 @@ const primitives = @import("primitives.zig");
 const receipt_mod = @import("receipt.zig");
 const block_mod = @import("block.zig");
 const state_overrides_mod = @import("state_overrides.zig");
+const rpc_transaction_mod = @import("rpc_transaction.zig");
 const HttpTransport = @import("http_transport.zig").HttpTransport;
 
 /// Read-only Ethereum JSON-RPC provider.
@@ -837,6 +838,66 @@ fn parseTopics(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ![]const [
     return topics;
 }
 
+/// Parse a single RpcTransaction from a JSON object as returned by
+/// `eth_getTransactionByHash`, full-tx pending subscriptions, etc.
+///
+/// Caller owns the returned transaction's `input` slice; use
+/// `rpc_transaction.freeRpcTransaction` to release it.
+pub fn parseSingleTransaction(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !rpc_transaction_mod.RpcTransaction {
+    const hash = try parseHash(jsonGetString(obj, "hash") orelse return error.InvalidResponse);
+    const nonce = try parseHexU64(jsonGetString(obj, "nonce") orelse return error.InvalidResponse);
+    const block_hash = try parseOptionalHash(jsonGetString(obj, "blockHash"));
+    const block_number = try parseOptionalHexU64(jsonGetString(obj, "blockNumber"));
+    const tx_index: ?u32 = if (jsonGetString(obj, "transactionIndex")) |s|
+        parseHexU32(s) catch null
+    else
+        null;
+
+    const from_addr = (try parseOptionalAddress(jsonGetString(obj, "from"))) orelse return error.InvalidResponse;
+    const to_addr = try parseOptionalAddress(jsonGetString(obj, "to"));
+    const value = try parseHexU256(jsonGetString(obj, "value") orelse "0x0");
+
+    const gas = try parseHexU64(jsonGetString(obj, "gas") orelse return error.InvalidResponse);
+    const gas_price: ?u256 = if (jsonGetString(obj, "gasPrice")) |s| try parseHexU256(s) else null;
+    const max_fee: ?u256 = if (jsonGetString(obj, "maxFeePerGas")) |s| try parseHexU256(s) else null;
+    const max_priority: ?u256 = if (jsonGetString(obj, "maxPriorityFeePerGas")) |s| try parseHexU256(s) else null;
+    const max_blob_fee: ?u256 = if (jsonGetString(obj, "maxFeePerBlobGas")) |s| try parseHexU256(s) else null;
+
+    // `input` and `data` are aliases; geth uses `input`, parity used `data`.
+    const input_str = jsonGetString(obj, "input") orelse jsonGetString(obj, "data") orelse "0x";
+    const input = try parseHexBytes(allocator, input_str);
+    errdefer allocator.free(input);
+
+    const v = try parseHexU256(jsonGetString(obj, "v") orelse "0x0");
+    const r = try parseHash(jsonGetString(obj, "r") orelse return error.InvalidResponse);
+    const s = try parseHash(jsonGetString(obj, "s") orelse return error.InvalidResponse);
+
+    const type_val = parseHexU8(jsonGetString(obj, "type") orelse "0x0") catch 0;
+    const chain_id = try parseOptionalHexU64(jsonGetString(obj, "chainId"));
+
+    return rpc_transaction_mod.RpcTransaction{
+        .hash = hash,
+        .nonce = nonce,
+        .block_hash = block_hash,
+        .block_number = block_number,
+        .transaction_index = tx_index,
+        .from = from_addr,
+        .to = to_addr,
+        .value = value,
+        .gas = gas,
+        .gas_price = gas_price,
+        .max_fee_per_gas = max_fee,
+        .max_priority_fee_per_gas = max_priority,
+        .max_fee_per_blob_gas = max_blob_fee,
+        .input = input,
+        .v = v,
+        .r = r,
+        .s = s,
+        .type_ = type_val,
+        .chain_id = chain_id,
+    };
+}
+
 /// Parse the logs response from eth_getLogs.
 fn parseLogsResponse(allocator: std.mem.Allocator, raw: []const u8) ![]receipt_mod.Log {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
@@ -1259,6 +1320,166 @@ test "parseTransactionReceipt - null result" {
 
     const receipt = try parseTransactionReceipt(allocator, raw);
     try std.testing.expect(receipt == null);
+}
+
+test "parseSingleTransaction - pending EIP-1559" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x5",
+        \\ "blockHash":null,
+        \\ "blockNumber":null,
+        \\ "transactionIndex":null,
+        \\ "from":"0x1111111111111111111111111111111111111111",
+        \\ "to":"0x2222222222222222222222222222222222222222",
+        \\ "value":"0xde0b6b3a7640000",
+        \\ "gas":"0x5208",
+        \\ "maxFeePerGas":"0x4a817c800",
+        \\ "maxPriorityFeePerGas":"0x77359400",
+        \\ "input":"0xdeadbeef",
+        \\ "v":"0x1",
+        \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\ "type":"0x2",
+        \\ "chainId":"0x1"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(allocator, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expectEqual(@as(u64, 5), tx.nonce);
+    try std.testing.expect(tx.block_hash == null);
+    try std.testing.expectEqual(@as(u8, 2), tx.type_);
+    try std.testing.expect(tx.gas_price == null);
+    try std.testing.expectEqual(@as(?u256, 20_000_000_000), tx.max_fee_per_gas);
+    try std.testing.expectEqual(@as(?u256, 2_000_000_000), tx.max_priority_fee_per_gas);
+    try std.testing.expectEqual(@as(?u64, 1), tx.chain_id);
+    try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad, 0xbe, 0xef }, tx.input);
+    try std.testing.expectEqual(@as(u256, 1_000_000_000_000_000_000), tx.value);
+}
+
+test "parseSingleTransaction - mined legacy" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x10",
+        \\ "blockHash":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        \\ "blockNumber":"0xbc614e",
+        \\ "transactionIndex":"0x2a",
+        \\ "from":"0x1111111111111111111111111111111111111111",
+        \\ "to":"0x2222222222222222222222222222222222222222",
+        \\ "value":"0x0",
+        \\ "gas":"0x5208",
+        \\ "gasPrice":"0x4a817c800",
+        \\ "input":"0x",
+        \\ "v":"0x25",
+        \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\ "type":"0x0",
+        \\ "chainId":"0x1"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(allocator, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expectEqual(@as(u8, 0), tx.type_);
+    try std.testing.expectEqual(@as(?u64, 12345678), tx.block_number);
+    try std.testing.expectEqual(@as(?u32, 42), tx.transaction_index);
+    try std.testing.expectEqual(@as(?u256, 20_000_000_000), tx.gas_price);
+    try std.testing.expect(tx.max_fee_per_gas == null);
+    try std.testing.expectEqual(@as(usize, 0), tx.input.len);
+    try std.testing.expectEqual(@as(u256, 0x25), tx.v);
+}
+
+test "parseSingleTransaction - contract creation has null to" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x0",
+        \\ "blockHash":null,
+        \\ "blockNumber":null,
+        \\ "transactionIndex":null,
+        \\ "from":"0x1111111111111111111111111111111111111111",
+        \\ "to":null,
+        \\ "value":"0x0",
+        \\ "gas":"0x5208",
+        \\ "gasPrice":"0x4a817c800",
+        \\ "input":"0x6080",
+        \\ "v":"0x1c",
+        \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\ "type":"0x0"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(allocator, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expect(tx.to == null);
+    try std.testing.expectEqualSlices(u8, &.{ 0x60, 0x80 }, tx.input);
+}
+
+test "parseSingleTransaction - data alias falls back when input missing" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x0",
+        \\ "blockHash":null,
+        \\ "blockNumber":null,
+        \\ "transactionIndex":null,
+        \\ "from":"0x1111111111111111111111111111111111111111",
+        \\ "to":"0x2222222222222222222222222222222222222222",
+        \\ "value":"0x0",
+        \\ "gas":"0x5208",
+        \\ "gasPrice":"0x1",
+        \\ "data":"0xfeed",
+        \\ "v":"0x1",
+        \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\ "type":"0x0"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(allocator, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expectEqualSlices(u8, &.{ 0xfe, 0xed }, tx.input);
+}
+
+test "parseTransactionFromNotification - end-to-end pending tx" {
+    // Verify the subscription.zig wrapper round-trips: build a fake
+    // notification envelope wrapping a tx object and parse it.
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"jsonrpc":"2.0","method":"eth_subscription","params":{
+        \\ "subscription":"0xfeedface",
+        \\ "result":{
+        \\   "hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\   "nonce":"0x1",
+        \\   "blockHash":null,
+        \\   "blockNumber":null,
+        \\   "transactionIndex":null,
+        \\   "from":"0x1111111111111111111111111111111111111111",
+        \\   "to":"0x2222222222222222222222222222222222222222",
+        \\   "value":"0x0",
+        \\   "gas":"0x5208",
+        \\   "maxFeePerGas":"0x4a817c800",
+        \\   "maxPriorityFeePerGas":"0x77359400",
+        \\   "input":"0x",
+        \\   "v":"0x1",
+        \\   "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\   "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\   "type":"0x2",
+        \\   "chainId":"0x1"}}}
+    ;
+    const subscription = @import("subscription.zig");
+    const tx = try subscription.parseTransactionFromNotification(allocator, raw);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expectEqual(@as(u8, 2), tx.type_);
+    try std.testing.expectEqual(@as(u64, 1), tx.nonce);
 }
 
 test "parseBlockHeader - basic block" {

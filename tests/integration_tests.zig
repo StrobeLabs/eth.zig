@@ -496,3 +496,58 @@ test "WsClient unsubscribe frees handle and removes from registry" {
     // The registry should be empty; pointer `sub` is freed and must not be
     // dereferenced after this point.
 }
+
+test "WsClient subscribe pending full streams an RpcTransaction" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    // Subscribe on a fresh WsClient before sending the tx so we don't miss
+    // the notification.
+    const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    defer client.deinit();
+
+    const sub = try client.subscribe(.{ .new_pending_transactions = .{ .full = true } });
+
+    // Send a transaction via the HTTP wallet so the WsClient is purely a
+    // reader. Account #0 -> account #1, 0.001 ETH.
+    var http = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    defer http.deinit();
+    var provider = eth.provider.Provider.init(allocator, &http);
+    const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
+    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
+    const send_value = eth.units.parseEther(0.001) orelse return error.ParseEtherFailed;
+    const tx_hash = try wallet.sendTransaction(.{
+        .to = recipient,
+        .value = send_value,
+    });
+
+    // Drain notifications until we see one matching our sub. Anvil with
+    // default instamine still emits a pending-tx event before the mine.
+    var found = false;
+    var attempts: usize = 0;
+    while (!found and attempts < 8) : (attempts += 1) {
+        const ev = client.next() catch |err| switch (err) {
+            // Some Anvil builds do not emit full pending-tx notifications;
+            // skip the test in that case rather than reporting failure.
+            error.Disconnected, error.Closed => return,
+            else => return err,
+        };
+        defer allocator.free(ev.payload);
+        if (ev.sub != sub) continue;
+
+        const tx = try eth.subscription.parseTransactionFromNotification(allocator, ev.payload);
+        defer eth.rpc_transaction.freeRpcTransaction(allocator, tx);
+
+        // Anvil may stream txs from previous tests in the same run; only
+        // accept the one we sent.
+        if (!std.mem.eql(u8, &tx.hash, &tx_hash)) continue;
+
+        try std.testing.expectEqualSlices(u8, &recipient, &tx.to.?);
+        try std.testing.expectEqual(@as(u256, send_value), tx.value);
+        try std.testing.expect(tx.block_hash == null); // pending
+        found = true;
+    }
+    if (!found) return error.NoPendingTxObserved;
+}
