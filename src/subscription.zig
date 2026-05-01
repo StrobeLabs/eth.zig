@@ -354,23 +354,54 @@ fn skipWs(json: []const u8, idx: usize) usize {
     return i;
 }
 
+/// Return true if `idx` is inside an open JSON string starting from the
+/// beginning of `json`. This walks character-by-character and is therefore
+/// O(idx); the call sites do this lazily only when needed (which is rare
+/// in practice -- only when a key-shaped substring appears as a false
+/// match before the real key).
+fn isInsideString(json: []const u8, idx: usize) bool {
+    const limit = @min(idx, json.len);
+    var in_string = false;
+    var i: usize = 0;
+    while (i < limit) : (i += 1) {
+        const c = json[i];
+        if (in_string and c == '\\') {
+            // Skip the next character (escape sequence).
+            i += 1;
+            continue;
+        }
+        if (c == '"') in_string = !in_string;
+    }
+    return in_string;
+}
+
 /// Find the first occurrence of `key_quoted` (e.g. `"result"`) and advance
 /// past the trailing colon and any surrounding whitespace. Returns the
 /// index of the first character of the value, or null if no such pattern
 /// exists.
+///
+/// This skips false matches in two situations:
+///   1. The substring is followed by something other than (optional ws +
+///      colon + optional ws), meaning it is not a key.
+///   2. The substring's opening quote is itself inside an open string
+///      value (e.g. an error message containing the literal text
+///      `"result":"..."`). `isInsideString` performs the check.
 fn findKeyValueStart(json: []const u8, key_quoted: []const u8) ?usize {
     var search_from: usize = 0;
     while (search_from < json.len) {
         const rel = std.mem.indexOf(u8, json[search_from..], key_quoted) orelse return null;
-        const key_end = search_from + rel + key_quoted.len;
-        var i = skipWs(json, key_end);
-        if (i < json.len and json[i] == ':') {
-            i = skipWs(json, i + 1);
-            return i;
+        const key_start = search_from + rel;
+        const key_end = key_start + key_quoted.len;
+        if (!isInsideString(json, key_start)) {
+            var i = skipWs(json, key_end);
+            if (i < json.len and json[i] == ':') {
+                i = skipWs(json, i + 1);
+                return i;
+            }
         }
-        // Found the substring but it was not a key (e.g. it appeared inside
-        // a value). Skip past this match and keep looking.
-        search_from = search_from + rel + key_quoted.len;
+        // Not a key, or the key text appeared inside a value. Skip past
+        // this match and keep looking.
+        search_from = key_end;
     }
     return null;
 }
@@ -723,4 +754,31 @@ test "extractResultString - skips key found inside a value" {
     const result = try extractResultString(allocator, json);
     defer allocator.free(result);
     try std.testing.expectEqualStrings("0xreal", result);
+}
+
+test "extractResultString - skips fake key:value embedded in a string" {
+    // The error message embeds the literal text `"result":"fake"`, which
+    // looks like a key-value pair but is inside an open string. The real
+    // `result` key follows.
+    const allocator = std.testing.allocator;
+    const json =
+        "{\"jsonrpc\":\"2.0\",\"id\":1," ++
+        "\"error\":\"got \\\"result\\\":\\\"fake\\\" from upstream\"," ++
+        "\"result\":\"0xreal\"}";
+    const result = try extractResultString(allocator, json);
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("0xreal", result);
+}
+
+test "isInsideString - basic" {
+    // Position 0 is before any string.
+    try std.testing.expect(!isInsideString("\"hi\"", 0));
+    // Position 1 is inside "hi".
+    try std.testing.expect(isInsideString("\"hi\"", 1));
+    // Position 4 is after "hi".
+    try std.testing.expect(!isInsideString("\"hi\"", 4));
+    // Escaped quotes inside a string do not close the string.
+    try std.testing.expect(isInsideString("\"a\\\"b\"", 3));
+    // Backslash before any string is not a special character.
+    try std.testing.expect(!isInsideString("\\", 1));
 }
