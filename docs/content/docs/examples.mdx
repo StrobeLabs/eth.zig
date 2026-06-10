@@ -14,6 +14,7 @@ The [`examples/`](https://github.com/StrobeLabs/eth.zig/tree/main/examples) dire
 | `05_read_erc20` | ERC-20 module API showcase | Yes |
 | `06_hd_wallet` | BIP-44 HD wallet derivation | No |
 | `07_comptime_selectors` | Comptime function selectors | No |
+| `08_mev_share_backrunner` | MEV-Share backrunner bot (SSE stream + bundle) | No (dry-run) |
 
 Run any example:
 
@@ -110,4 +111,46 @@ var mc = eth.multicall.Multicall3.init(allocator, &provider);
 try mc.addCall(token_addr, eth.erc20.selectors.balanceOf, .{holder_addr});
 try mc.addCall(token_addr, eth.erc20.selectors.totalSupply, .{});
 const results = try mc.execute();
+```
+
+## MEV-Share Backrunner
+
+`08_mev_share_backrunner` is a teaching example that ties together comptime
+selectors, the MEV-Share SSE stream, EIP-1559 signing, and bundle composition.
+It subscribes to the pending-transaction event stream, matches hints against a
+comptime-computed table of Uniswap swap selectors, and builds a backrun bundle
+(the user's tx hash followed by a signed backrun tx). It defaults to a safe
+`DRY_RUN` mode that prints the `mev_sendBundle` params it would submit, and
+points at Sepolia by default so the subscription flow can be exercised with no
+mainnet funds.
+
+```zig
+const eth = @import("eth");
+
+// Comptime: the swap selector is hashed by the compiler.
+const v2_swap = comptime eth.keccak.selector(
+    "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)",
+);
+
+var client = eth.mev_share.MevShareClient.init(allocator, relay_url, stream_url, auth_key);
+defer client.deinit();
+
+// Subscribe to the SSE stream; the callback fires per pending-tx hint.
+try client.on(&onEvent);
+
+// Inside onEvent: match the revealed selector, then compose the bundle.
+const body = [_]eth.flashbots.MevBundleBody{
+    .{ .hash = user_tx_hash }, // the user's pending swap
+    .{ .tx = .{ .data = signed_backrun_tx } }, // our backrun
+};
+_ = try client.relay.mevSendBundle(.{
+    .body = &body,
+    .inclusion = .{ .block = target_block, .max_block = target_block + 2 },
+});
+```
+
+Run it (dry-run, against the Sepolia matchmaker):
+
+```bash
+cd examples && zig build && DRY_RUN=1 ./zig-out/bin/08_mev_share_backrunner
 ```

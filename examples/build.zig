@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
         .{ "05_read_erc20", "05_read_erc20.zig" },
         .{ "06_hd_wallet", "06_hd_wallet.zig" },
         .{ "07_selectors", "07_selectors.zig" },
+        .{ "08_mev_share_backrunner", "08_mev_share_backrunner.zig" },
     };
 
     inline for (examples) |example| {

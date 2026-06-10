@@ -86,7 +86,7 @@ pub const SseParser = struct {
     /// or null otherwise. The returned event's `data` field may be an empty
     /// slice when the server sent a bare `data:` with no value.
     pub fn feedLine(self: *SseParser, line: []const u8) ?SseEvent {
-        const trimmed = std.mem.trimRight(u8, line, "\r");
+        const trimmed = std.mem.trimEnd(u8, line, "\r");
 
         // Blank line = event boundary.
         if (trimmed.len == 0) {
@@ -121,12 +121,13 @@ pub const SseParser = struct {
 
         // Parse "field: value", "field:value", or bare "field" (empty value).
         // Per spec §9.2.6: a line with no colon is a field name with empty value.
-        const parsed = if (std.mem.indexOf(u8, trimmed, ":")) |colon_idx| blk: {
+        const Parsed = struct { field: []const u8, value: []const u8 };
+        const parsed: Parsed = if (std.mem.indexOf(u8, trimmed, ":")) |colon_idx| blk: {
             const raw_value = trimmed[colon_idx + 1 ..];
             // Strip optional single leading space after colon (SSE spec §9.2.6).
             const v = if (raw_value.len > 0 and raw_value[0] == ' ') raw_value[1..] else raw_value;
             break :blk .{ .field = trimmed[0..colon_idx], .value = v };
-        } else .{ .field = trimmed, .value = @as([]const u8, "") };
+        } else .{ .field = trimmed, .value = "" };
         const field = parsed.field;
         const value = parsed.value;
 
