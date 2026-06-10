@@ -433,137 +433,6 @@ fn divLimbs(numerator: u256, divisor: u256) u256 {
     return limbsToU256(knuthDivCore(num, nn, div, dd));
 }
 
-/// Divide [8]u64 numerator by [4]u64 divisor, returning [4]u64 quotient.
-/// Returns null if result overflows u256 (high 4 limbs >= divisor).
-/// Uses Knuth Algorithm D for multi-limb division (replaces binary long division).
-fn divWide(num: [8]u64, div: [4]u64) ?[4]u64 {
-    const dd = countLimbs(div);
-    if (dd == 0) return null;
-
-    var nn: usize = 8;
-    while (nn > 0 and num[nn - 1] == 0) nn -= 1;
-    if (nn == 0) return .{ 0, 0, 0, 0 };
-
-    // If numerator fits in 4 limbs, use regular division
-    if (nn <= 4) {
-        const lo = [4]u64{ num[0], num[1], num[2], num[3] };
-        return divLimbsDirect(lo, div);
-    }
-
-    // Check overflow: if high part >= divisor, result > u256
-    // This means the quotient would need more than 4 limbs
-    if (nn - dd >= 4) {
-        // More than 4 quotient digits possible -- check if highest actually needed
-        // If nn > dd + 4, definitely overflows
-        if (nn > dd + 4) return null;
-        // nn == dd + 4: need to check if quotient fits in 4 limbs
-        // (handled by the division itself -- if q[4+] != 0, overflow)
-    }
-
-    if (dd == 1) {
-        // Single-limb divisor fast path
-        var q: [8]u64 = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
-        var rem: u64 = 0;
-        var i: usize = nn;
-        while (i > 0) {
-            i -= 1;
-            const result = div128by64(rem, num[i], div[0]);
-            q[i] = result.q;
-            rem = result.r;
-        }
-        // Check overflow: quotient must fit in 4 limbs
-        if (q[4] != 0 or q[5] != 0 or q[6] != 0 or q[7] != 0) return null;
-        return .{ q[0], q[1], q[2], q[3] };
-    }
-
-    // Full Knuth Algorithm D with extended arrays for 8-limb numerator
-    const s: u6 = @intCast(@clz(div[dd - 1]));
-
-    var v: [4]u64 = .{ 0, 0, 0, 0 };
-    var u_arr: [9]u64 = .{ 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-
-    // Normalize: shift divisor and numerator left by s bits
-    if (s > 0) {
-        const rs: u6 = @intCast(@as(u7, 64) - s);
-        var i: usize = dd;
-        while (i > 1) {
-            i -= 1;
-            v[i] = (div[i] << s) | (div[i - 1] >> rs);
-        }
-        v[0] = div[0] << s;
-        u_arr[nn] = num[nn - 1] >> rs;
-        i = nn;
-        while (i > 1) {
-            i -= 1;
-            u_arr[i] = (num[i] << s) | (num[i - 1] >> rs);
-        }
-        u_arr[0] = num[0] << s;
-    } else {
-        for (0..dd) |i| v[i] = div[i];
-        for (0..nn) |i| u_arr[i] = num[i];
-    }
-
-    // Main loop: produce quotient digits from MSB to LSB
-    var q: [8]u64 = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
-    var j: usize = nn - dd + 1;
-    while (j > 0) {
-        j -= 1;
-
-        const result = div128by64(u_arr[j + dd], u_arr[j + dd - 1], v[dd - 1]);
-        var qhat: u128 = result.q;
-        var rhat: u128 = result.r;
-
-        // Refine with second divisor limb
-        while (true) {
-            if (qhat >= (@as(u128, 1) << 64) or
-                qhat * v[dd - 2] > (rhat << 64) | u_arr[j + dd - 2])
-            {
-                qhat -= 1;
-                rhat += v[dd - 1];
-                if (rhat >= (@as(u128, 1) << 64)) break;
-            } else break;
-        }
-
-        // Multiply qhat * v and subtract from u_arr[j..j+dd]
-        var prod: [5]u64 = .{ 0, 0, 0, 0, 0 };
-        var carry: u128 = 0;
-        for (0..dd) |i| {
-            carry += qhat * v[i];
-            prod[i] = @truncate(carry);
-            carry >>= 64;
-        }
-        prod[dd] = @truncate(carry);
-
-        var borrow: u1 = 0;
-        for (0..dd + 1) |i| {
-            const s1 = @subWithOverflow(u_arr[j + i], prod[i]);
-            const s2 = @subWithOverflow(s1[0], @as(u64, borrow));
-            u_arr[j + i] = s2[0];
-            borrow = s1[1] | s2[1];
-        }
-
-        // Add back if qhat was 1 too large
-        if (borrow != 0) {
-            @branchHint(.cold);
-            qhat -= 1;
-            var c: u1 = 0;
-            for (0..dd) |i| {
-                const a1 = @addWithOverflow(u_arr[j + i], v[i]);
-                const a2 = @addWithOverflow(a1[0], @as(u64, c));
-                u_arr[j + i] = a2[0];
-                c = a1[1] | a2[1];
-            }
-            u_arr[j + dd] +%= @as(u64, c);
-        }
-
-        q[j] = @truncate(qhat);
-    }
-
-    // Check overflow: quotient must fit in 4 limbs
-    if (q[4] != 0 or q[5] != 0 or q[6] != 0 or q[7] != 0) return null;
-    return .{ q[0], q[1], q[2], q[3] };
-}
-
 /// Inline single-limb division helper for mulDiv fast path.
 /// Uses native u128 division — LLVM lowers to optimal hardware UDIV on ARM64.
 /// Comptime-unrolled: LLVM sees 4 straight-line division blocks.
@@ -626,9 +495,13 @@ pub inline fn mulDiv(a: u256, b: u256, denominator: u256) ?u256 {
         return limbsToU256(divLimbsDirect(u256ToLimbs(ov[0]), d_limbs));
     }
 
-    // === Overflow path: 512-bit intermediate via limb-native mulWide + divWide ===
-    const wide = mulWide(a_limbs, b_limbs);
-    return if (divWide(wide, d_limbs)) |q| limbsToU256(q) else null;
+    // === Overflow path: a*b exceeds u256. Compute exactly in native u512. ===
+    // (The previous limb-native Knuth-D divider mis-handled full-width
+    // divisors, e.g. mulDiv(MAX, MAX, MAX); native u512 is simple and correct.)
+    const product: u512 = @as(u512, a) * @as(u512, b);
+    const quotient: u512 = product / @as(u512, denominator);
+    if (quotient > MAX) return null; // result does not fit in u256
+    return @intCast(quotient);
 }
 
 /// mulDiv with rounding up: ceil(a * b / denominator)
@@ -782,7 +655,6 @@ test "mulDiv basic" {
 }
 
 test "mulDiv overflow intermediate" {
-    if (true) return error.SkipZigTest; // quarantined: MAX-boundary bug, see #81
     // MAX * 2 overflows u256, but MAX * 2 / 2 = MAX
     try std.testing.expectEqual(@as(?u256, MAX), mulDiv(MAX, 2, 2));
     // MAX * MAX / MAX = MAX
