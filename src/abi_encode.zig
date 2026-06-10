@@ -716,11 +716,9 @@ test "encode tuple static" {
     const encoded = try encodeValues(allocator, &values);
     defer allocator.free(encoded);
 
-    // Static tuple with 2 uint256 values = 2 * 32 = 64 bytes
-    // But since tuple is always dynamic, it uses offset encoding:
-    // Head: 32 bytes (offset = 32)
-    // Tail: 2 * 32 = 64 bytes (the two uint256 values)
-    try testing.expectEqual(@as(usize, 96), encoded.len);
+    // A tuple of only static components is itself static, so it is encoded
+    // inline (no offset word) per the Solidity ABI: 2 * 32 = 64 bytes.
+    try testing.expectEqual(@as(usize, 64), encoded.len);
 }
 
 test "encode large uint256" {

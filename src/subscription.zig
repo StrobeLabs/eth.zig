@@ -536,7 +536,7 @@ test "buildSubscribeParams - logs with address only" {
 
     try std.testing.expect(std.mem.indexOf(u8, result, "[\"logs\",{") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "\"address\":\"0x") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result, "dededededededededededededededededededededede") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "dededededededededededededededededededede") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "}]") != null);
 }
 
@@ -659,7 +659,7 @@ test "formatHash" {
     const result = formatHash(hash);
     try std.testing.expect(result[0] == '0');
     try std.testing.expect(result[1] == 'x');
-    try std.testing.expectEqualStrings("0xabababababababababababababababababababababababababababababababababab", &result);
+    try std.testing.expectEqualStrings("0xabababababababababababababababababababababababababababababababab", &result);
 }
 
 test "getNotificationResult - new_heads notification" {

@@ -24,12 +24,12 @@ pub const ContractAbi = struct {
         const root = parsed.value;
         if (root != .array) return error.InvalidAbiFormat;
 
-        var functions = std.ArrayList(abi_types.Function).init(allocator);
-        defer functions.deinit();
-        var events = std.ArrayList(abi_types.Event).init(allocator);
-        defer events.deinit();
-        var errors = std.ArrayList(abi_types.AbiError).init(allocator);
-        defer errors.deinit();
+        var functions: std.ArrayList(abi_types.Function) = .empty;
+        defer functions.deinit(allocator);
+        var events: std.ArrayList(abi_types.Event) = .empty;
+        defer events.deinit(allocator);
+        var errors: std.ArrayList(abi_types.AbiError) = .empty;
+        defer errors.deinit(allocator);
 
         for (root.array.items) |item| {
             if (item != .object) continue;
@@ -39,21 +39,21 @@ pub const ContractAbi = struct {
 
             if (std.mem.eql(u8, type_str, "function")) {
                 const func = try parseFunction(allocator, obj);
-                try functions.append(func);
+                try functions.append(allocator, func);
             } else if (std.mem.eql(u8, type_str, "event")) {
                 const evt = try parseEvent(allocator, obj);
-                try events.append(evt);
+                try events.append(allocator, evt);
             } else if (std.mem.eql(u8, type_str, "error")) {
                 const err = try parseError(allocator, obj);
-                try errors.append(err);
+                try errors.append(allocator, err);
             }
             // Skip constructor, fallback, receive -- not needed for call encoding
         }
 
         return .{
-            .functions = try functions.toOwnedSlice(),
-            .events = try events.toOwnedSlice(),
-            .errors = try errors.toOwnedSlice(),
+            .functions = try functions.toOwnedSlice(allocator),
+            .events = try events.toOwnedSlice(allocator),
+            .errors = try errors.toOwnedSlice(allocator),
             .allocator = allocator,
         };
     }
@@ -166,23 +166,28 @@ fn parseError(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !abi_types.
     };
 }
 
-fn parseInputs(allocator: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) ![]const AbiParam {
+/// Explicit error set shared by the mutually-recursive `parseInputs` and
+/// `parseParam` (tuple components recurse). An inferred error set here forms a
+/// dependency loop that fails to compile under Zig 0.16.
+const ComponentError = std.mem.Allocator.Error || error{ MissingType, UnknownType };
+
+fn parseInputs(allocator: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) ComponentError![]const AbiParam {
     const val = obj.get(key) orelse return try allocator.alloc(AbiParam, 0);
     if (val != .array) return try allocator.alloc(AbiParam, 0);
 
-    var params = std.ArrayList(AbiParam).init(allocator);
-    defer params.deinit();
+    var params: std.ArrayList(AbiParam) = .empty;
+    defer params.deinit(allocator);
 
     for (val.array.items) |item| {
         if (item != .object) continue;
         const param = try parseParam(allocator, item.object);
-        try params.append(param);
+        try params.append(allocator, param);
     }
 
-    return try params.toOwnedSlice();
+    return try params.toOwnedSlice(allocator);
 }
 
-fn parseParam(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !AbiParam {
+fn parseParam(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ComponentError!AbiParam {
     const type_str = jsonGetString(obj, "type") orelse return error.MissingType;
     const name_str = jsonGetString(obj, "name") orelse "";
     const indexed = jsonGetBool(obj, "indexed") orelse false;

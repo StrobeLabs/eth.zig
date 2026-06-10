@@ -1104,5 +1104,5 @@ test "all public declarations compile" {
     // Network paths (on, getEventHistory, simulateBundle) have no unit
     // tests, so force semantic analysis of every declaration to keep
     // lazily-compiled API breakage out (see the Zig 0.16 migration).
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

@@ -82,10 +82,12 @@ pub fn encodedLength(value: anytype) usize {
                 return lengthPrefixSize(payload_len) + payload_len;
             }
         },
-        .@"struct" => |s| {
+        .@"struct" => {
             var payload_len: usize = 0;
-            inline for (s.fields) |field| {
-                payload_len += encodedLength(@field(value, field.name));
+            // std.meta.fieldNames abstracts over the Type.Struct layout, which
+            // changed between Zig 0.16 (`fields`) and 0.17-dev (`field_names`).
+            inline for (comptime std.meta.fieldNames(@TypeOf(value))) |field_name| {
+                payload_len += encodedLength(@field(value, field_name));
             }
             return lengthPrefixSize(payload_len) + payload_len;
         },
@@ -356,14 +358,15 @@ pub fn writeDirect(buf: []u8, value: anytype) usize {
                 return pos;
             }
         },
-        .@"struct" => |s| {
+        .@"struct" => {
+            const field_names = comptime std.meta.fieldNames(@TypeOf(value));
             var payload_len: usize = 0;
-            inline for (s.fields) |field| {
-                payload_len += encodedLength(@field(value, field.name));
+            inline for (field_names) |field_name| {
+                payload_len += encodedLength(@field(value, field_name));
             }
             var pos = writeLengthDirect(buf, payload_len, 0xc0);
-            inline for (s.fields) |field| {
-                pos += writeDirect(buf[pos..], @field(value, field.name));
+            inline for (field_names) |field_name| {
+                pos += writeDirect(buf[pos..], @field(value, field_name));
             }
             return pos;
         },
@@ -506,11 +509,19 @@ fn bytesToUint(comptime T: type, bytes: []const u8) RlpError!T {
         return @intCast(std.mem.readInt(u64, &buf, .big));
     }
 
-    var result: T = 0;
-    for (bytes) |b| {
-        result = (result << 8) | @as(T, b);
+    // Slow path is only reached for byte slices longer than 8, i.e. T wider
+    // than u64. Guard with a comptime branch so the `<< 8` shift does not fail
+    // to compile when this generic is instantiated with a small T (whose Log2
+    // shift type cannot represent 8), even though that path is unreachable for
+    // such T (a value that large cannot fit).
+    if (comptime @bitSizeOf(T) > 64) {
+        var result: T = 0;
+        for (bytes) |b| {
+            result = (result << 8) | @as(T, b);
+        }
+        return result;
     }
-    return result;
+    unreachable;
 }
 
 // ============================================================================

@@ -49,7 +49,12 @@ pub fn hexToBytes(dest: []u8, hex_str: []const u8) HexError![]u8 {
 /// Decode hex string to a fixed-size byte array.
 pub fn hexToBytesFixed(comptime N: usize, hex_str: []const u8) HexError![N]u8 {
     var result: [N]u8 = undefined;
-    const decoded = try hexToBytes(&result, hex_str);
+    // For a fixed-size target, an input that decodes to more than N bytes is a
+    // length error, not a buffer-capacity error -- map it accordingly.
+    const decoded = hexToBytes(&result, hex_str) catch |e| switch (e) {
+        error.OutputTooSmall => return error.InvalidHexLength,
+        else => return e,
+    };
     if (decoded.len != N) return error.InvalidHexLength;
     return result;
 }
