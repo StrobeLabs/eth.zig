@@ -3,7 +3,7 @@ title: Transactions
 description: Building, signing, and sending Ethereum transactions with eth.zig.
 ---
 
-eth.zig supports all Ethereum transaction types -- Legacy, EIP-2930 (access lists), EIP-1559 (priority fees), and EIP-4844 (blob transactions).
+eth.zig supports all Ethereum transaction types -- Legacy, EIP-2930 (access lists), EIP-1559 (priority fees), EIP-4844 (blob transactions), and EIP-7702 (set-code authorizations).
 
 ## Sending a Transaction
 
@@ -94,6 +94,59 @@ const tx = eth.transaction.Transaction{ .eip4844 = .{
     .max_fee_per_blob_gas = 1_000_000_000,
     .blob_versioned_hashes = &.{blob_hash},
 }};
+```
+
+### EIP-7702 (Type 4)
+
+Set-code transactions (Pectra) let an EOA delegate its code to a contract via
+one or more signed authorization tuples. Each authorization is signed over
+`keccak256(0x05 || rlp([chain_id, address, nonce]))`, and the recovered signer
+is the `authority` whose code is being set. Note that EIP-7702's `to` field is
+**not** nullable -- type-0x04 transactions cannot create contracts.
+
+Sign an authorization with `signer.signAuthorization`, then attach it to the
+transaction. A `chain_id` of `0` makes the authorization valid on any chain.
+
+```zig
+const eth = @import("eth");
+
+// The authority (the EOA whose code is being delegated) signs the authorization.
+var authority = eth.signer.Signer.init(authority_private_key);
+defer authority.deinit();
+
+// Delegate `authority`'s code to `delegate_contract` for chain 1, nonce 0.
+const auth = try authority.signAuthorization(
+    allocator,
+    1, // chain_id (0 = valid on any chain)
+    delegate_contract, // [20]u8 delegation target
+    0, // authority account nonce
+);
+
+const auths = [_]eth.transaction.Authorization{auth};
+
+const tx = eth.transaction.Transaction{ .eip7702 = .{
+    .chain_id = 1,
+    .nonce = 0,
+    .max_priority_fee_per_gas = 1_000_000_000, // 1 Gwei tip
+    .max_fee_per_gas = 30_000_000_000, // 30 Gwei max
+    .gas_limit = 100_000,
+    .to = recipient, // required -- no contract creation
+    .value = 0,
+    .data = &.{},
+    .access_list = &.{},
+    .authorization_list = &auths,
+}};
+
+// Sign the transaction with the sender's key and broadcast.
+var sender = eth.signer.Signer.init(sender_private_key);
+defer sender.deinit();
+
+const sighash = try eth.transaction.hashForSigning(allocator, tx);
+const sig = try sender.signHash(sighash);
+const raw = try eth.transaction.serializeSigned(allocator, tx, sig.r, sig.s, sig.v);
+defer allocator.free(raw);
+
+const tx_hash = try provider.sendRawTransaction(raw);
 ```
 
 ## Serialization
