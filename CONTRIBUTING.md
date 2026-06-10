@@ -4,7 +4,7 @@ Thanks for your interest in contributing to eth.zig! This document covers everyt
 
 ## Prerequisites
 
-- [Zig >= 0.15.2](https://ziglang.org/download/)
+- [Zig >= 0.16.0](https://ziglang.org/download/)
 - Git
 
 ## Getting Started

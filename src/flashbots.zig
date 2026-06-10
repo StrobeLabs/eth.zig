@@ -7,6 +7,7 @@ const primitives = @import("primitives.zig");
 const uint256_mod = @import("uint256.zig");
 const json_rpc = @import("json_rpc.zig");
 const HttpTransport = @import("http_transport.zig").HttpTransport;
+const runtime = @import("runtime.zig");
 
 // ============================================================================
 // Types
@@ -210,7 +211,7 @@ pub const Relay = struct {
             .allocator = allocator,
             .url = url,
             .auth_signer = signer_mod.Signer.init(auth_key),
-            .client = .{ .allocator = allocator },
+            .client = .{ .allocator = allocator, .io = runtime.defaultIo() },
             .next_id = 1,
         };
     }

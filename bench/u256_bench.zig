@@ -25,7 +25,29 @@ const FULL_C: u256 = 0x00000001_00000000_00000000_00000000_00000000_00000000_000
 const WARMUP_NS: u64 = 500_000_000; // 0.5s warmup
 const BENCH_NS: u64 = 2_000_000_000; // 2s measurement
 
-const Timer = std.time.Timer;
+/// Minimal replacement for std.time.Timer, which was removed in Zig 0.16.
+const Timer = struct {
+    start_ns: i96,
+
+    fn now() i96 {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        return std.Io.Clock.now(.awake, io).nanoseconds;
+    }
+
+    fn start() error{}!Timer {
+        return .{ .start_ns = now() };
+    }
+
+    fn reset(self: *Timer) void {
+        self.start_ns = now();
+    }
+
+    fn read(self: *Timer) u64 {
+        const elapsed = now() - self.start_ns;
+        if (elapsed < 0) return 0;
+        return @intCast(elapsed);
+    }
+};
 
 const BenchResult = struct {
     ns_per_op: u64,
@@ -232,7 +254,7 @@ fn runAndJson(comptime name: []const u8, comptime func: fn () void, stdout: anyt
 
 pub fn main() !void {
     var buf: [8192]u8 = undefined;
-    var w = std.fs.File.stdout().writer(&buf);
+    var w = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &buf);
     const stdout = &w.interface;
 
     try stdout.print("\n{s:<32} {s:>12} {s:>14}\n", .{ "Benchmark", "ns/op", "iters" });

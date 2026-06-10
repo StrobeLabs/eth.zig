@@ -8,7 +8,7 @@ const eth = @import("eth");
 
 pub fn main() !void {
     var buf: [4096]u8 = undefined;
-    var stdout_impl = std.fs.File.stdout().writer(&buf);
+    var stdout_impl = std.Io.File.stdout().writerStreaming(eth.runtime.defaultIo(), &buf);
     const stdout = &stdout_impl.interface;
 
     // Standard test mnemonic (DO NOT use in production)
@@ -27,7 +27,7 @@ pub fn main() !void {
     // Derive first 5 accounts
     for (0..5) |i| {
         const key = try eth.hd_wallet.deriveEthAccount(seed, @intCast(i));
-        const addr = key.toAddress();
+        const addr = try key.toAddress();
         const checksum = eth.primitives.addressToChecksum(&addr);
         try stdout.print("  [{d}] {s}\n", .{ i, checksum });
     }

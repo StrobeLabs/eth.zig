@@ -1,9 +1,10 @@
 const std = @import("std");
 const json_rpc = @import("json_rpc.zig");
+const runtime = @import("runtime.zig");
 
 /// Minimal WebSocket transport for JSON-RPC over ws:// and wss:// URLs.
 ///
-/// Implements RFC 6455 framing on top of std.net.Stream with optional TLS.
+/// Implements RFC 6455 framing on top of std.Io.net.Stream with optional TLS.
 /// This is a synchronous (blocking) implementation suitable for use with
 /// Ethereum JSON-RPC subscriptions and requests.
 
@@ -298,7 +299,8 @@ pub fn validateHandshakeResponse(response: []const u8, expected_accept: []const 
 ///   defer allocator.free(response);
 pub const WsTransport = struct {
     allocator: std.mem.Allocator,
-    stream: std.net.Stream,
+    io: std.Io,
+    stream: std.Io.net.Stream,
     next_id: u64,
 
     // Read buffer for incoming WebSocket frame data
@@ -324,15 +326,24 @@ pub const WsTransport = struct {
     /// stable addresses for the lifetime of the connection.
     pub const TlsState = struct {
         tls_client: std.crypto.tls.Client,
-        stream_reader: std.net.Stream.Reader,
-        stream_writer: std.net.Stream.Writer,
+        stream_reader: std.Io.net.Stream.Reader,
+        stream_writer: std.Io.net.Stream.Writer,
+
+        // CA store used to verify the server certificate during the
+        // handshake. The TLS client rescans the system store into this
+        // bundle (guarded by the lock) inside `init`.
+        ca_lock: std.Io.RwLock,
+        ca_bundle: std.crypto.Certificate.Bundle,
 
         // Buffers that the TLS client and stream reader/writer reference.
         // These are stored here so they live as long as the TLS client.
-        tls_read_buf: [16384]u8,
-        socket_write_buf: [16384]u8,
-        socket_read_buf: [16384]u8,
-        stream_write_buf: [16384]u8,
+        // The socket-side read buffer must hold at least one full TLS
+        // ciphertext record (`min_buffer_len`); the others are sized the
+        // same for headroom.
+        tls_read_buf: [std.crypto.tls.Client.min_buffer_len]u8,
+        socket_write_buf: [std.crypto.tls.Client.min_buffer_len]u8,
+        socket_read_buf: [std.crypto.tls.Client.min_buffer_len]u8,
+        stream_write_buf: [std.crypto.tls.Client.min_buffer_len]u8,
     };
 
     pub const TransportError = error{
@@ -354,21 +365,33 @@ pub const WsTransport = struct {
     /// and performs the WebSocket upgrade handshake.
     pub fn connect(allocator: std.mem.Allocator, url: []const u8) TransportError!WsTransport {
         const parsed = parseUrl(url) catch return error.ConnectionFailed;
+        const io = runtime.defaultIo();
 
-        // Open TCP connection
-        const stream = std.net.tcpConnectToHost(allocator, parsed.host, parsed.port) catch
-            return error.ConnectionFailed;
-        errdefer stream.close();
+        // Open TCP connection. Try the host as an IP literal first, then
+        // fall back to DNS resolution.
+        const stream = blk: {
+            if (std.Io.net.IpAddress.parse(parsed.host, parsed.port)) |addr| {
+                break :blk addr.connect(io, .{ .mode = .stream }) catch
+                    return error.ConnectionFailed;
+            } else |_| {
+                const host_name = std.Io.net.HostName.init(parsed.host) catch
+                    return error.ConnectionFailed;
+                break :blk host_name.connect(io, parsed.port, .{ .mode = .stream }) catch
+                    return error.ConnectionFailed;
+            }
+        };
+        errdefer stream.close(io);
 
         var transport = WsTransport{
             .allocator = allocator,
+            .io = io,
             .stream = stream,
             .next_id = 1,
             .is_tls = parsed.is_tls,
         };
 
         if (parsed.is_tls) {
-            transport.tls_state = initTls(allocator, stream, parsed.host) catch
+            transport.tls_state = initTls(allocator, io, stream, parsed.host) catch
                 return error.TlsInitFailed;
         }
 
@@ -380,30 +403,42 @@ pub const WsTransport = struct {
     }
 
     /// Initialize TLS state on the heap.
-    fn initTls(allocator: std.mem.Allocator, stream: std.net.Stream, host: []const u8) !*TlsState {
+    fn initTls(allocator: std.mem.Allocator, io: std.Io, stream: std.Io.net.Stream, host: []const u8) !*TlsState {
         const state = try allocator.create(TlsState);
         errdefer allocator.destroy(state);
 
         // Initialize the stream reader/writer with buffers stored in the state.
-        state.stream_reader = stream.reader(&state.socket_read_buf);
-        state.stream_writer = stream.writer(&state.stream_write_buf);
+        state.stream_reader = stream.reader(io, &state.socket_read_buf);
+        state.stream_writer = stream.writer(io, &state.stream_write_buf);
 
-        // Load system CA certificates for TLS verification.
-        // The CA bundle is only used during the TLS handshake in init()
-        // and is not retained by the TLS client afterwards, so we free
-        // it once init completes.
-        var ca_bundle: std.crypto.Certificate.Bundle = .{};
-        ca_bundle.rescan(allocator) catch return error.TlsInitFailed;
-        defer ca_bundle.deinit(allocator);
+        // System CA certificates for verification. The TLS client rescans
+        // the system store into `ca_bundle` during init; the bundle is only
+        // needed for the handshake, so it is freed once init completes.
+        state.ca_lock = .init;
+        state.ca_bundle = .empty;
+        defer {
+            state.ca_bundle.deinit(allocator);
+            state.ca_bundle = .empty;
+        }
+
+        var entropy: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
+        io.random(&entropy);
 
         state.tls_client = std.crypto.tls.Client.init(
-            state.stream_reader.interface(),
+            &state.stream_reader.interface,
             &state.stream_writer.interface,
             .{
                 .host = .{ .explicit = host },
-                .ca = .{ .bundle = ca_bundle },
+                .ca = .{ .bundle = .{
+                    .gpa = allocator,
+                    .io = io,
+                    .lock = &state.ca_lock,
+                    .bundle = &state.ca_bundle,
+                } },
                 .read_buffer = &state.tls_read_buf,
                 .write_buffer = &state.socket_write_buf,
+                .entropy = &entropy,
+                .realtime_now = std.Io.Clock.now(.real, io),
             },
         ) catch return error.TlsInitFailed;
 
@@ -414,7 +449,7 @@ pub const WsTransport = struct {
     pub fn close(self: *WsTransport) void {
         // Try to send a close frame (best effort)
         self.sendFrame(&.{}, .close) catch {};
-        self.stream.close();
+        self.stream.close(self.io);
 
         // Free heap-allocated TLS state
         if (self.tls_state) |state| {
@@ -480,7 +515,7 @@ pub const WsTransport = struct {
 
     /// Read the next WebSocket message with a deadline.
     ///
-    /// `deadline_ms` is an absolute timestamp from `std.time.milliTimestamp()`.
+    /// `deadline_ms` is an absolute timestamp from `eth.runtime.milliTimestamp()`.
     /// Returns the payload (caller owns memory) on success, or null if the
     /// deadline expires before a complete data frame is available.
     ///
@@ -499,7 +534,7 @@ pub const WsTransport = struct {
         // readable from the caller's perspective.
         if (self.read_end > self.read_pos) return true;
         var fds = [_]std.posix.pollfd{.{
-            .fd = self.stream.handle,
+            .fd = self.stream.socket.handle,
             .events = std.posix.POLL.IN,
             .revents = 0,
         }};
@@ -519,7 +554,7 @@ pub const WsTransport = struct {
     fn sendFrame(self: *WsTransport, payload: []const u8, opcode: Opcode) !void {
         // Generate random mask key (required for client-to-server frames)
         var mask_key: [4]u8 = undefined;
-        std.crypto.random.bytes(&mask_key);
+        self.io.random(&mask_key);
 
         const frame = encodeFrame(self.allocator, opcode, payload, mask_key) catch
             return error.OutOfMemory;
@@ -536,7 +571,7 @@ pub const WsTransport = struct {
     }
 
     /// Read a complete WebSocket frame, returning null on deadline.
-    /// `deadline_ms` is absolute (`std.time.milliTimestamp()` units).
+    /// `deadline_ms` is absolute (`eth.runtime.milliTimestamp()` units).
     fn readFrameDeadline(self: *WsTransport, deadline_ms: i64) !?[]u8 {
         return self.readFrameImpl(deadline_ms);
     }
@@ -619,7 +654,7 @@ pub const WsTransport = struct {
     fn performHandshake(self: *WsTransport, host: []const u8, port: u16, path: []const u8) !void {
         // Generate random key
         var random_bytes: [16]u8 = undefined;
-        std.crypto.random.bytes(&random_bytes);
+        self.io.random(&random_bytes);
         const ws_key = generateWebSocketKey(random_bytes);
 
         // Build and send handshake request
@@ -686,7 +721,7 @@ pub const WsTransport = struct {
         }
 
         if (deadline_ms) |dl| {
-            const now = std.time.milliTimestamp();
+            const now = runtime.milliTimestamp();
             if (now >= dl) return false;
             const wait_i64 = dl - now;
             const wait_ms: i32 = if (wait_i64 > std.math.maxInt(i32))
@@ -710,24 +745,38 @@ pub const WsTransport = struct {
             tls.tls_client.writer.writeAll(data) catch return error.WriteError;
             tls.tls_client.writer.flush() catch return error.WriteError;
         } else {
-            // Plain TCP: write directly via POSIX syscall
-            var sent: usize = 0;
-            while (sent < data.len) {
-                const n = std.posix.write(self.stream.handle, data[sent..]) catch return error.WriteError;
-                if (n == 0) return error.WriteError;
-                sent += n;
-            }
+            // Plain TCP: write through an unbuffered transient stream writer.
+            var stream_writer = self.stream.writer(self.io, &.{});
+            stream_writer.interface.writeAll(data) catch return error.WriteError;
+            stream_writer.interface.flush() catch return error.WriteError;
         }
     }
 
     /// Read some bytes from the underlying transport (plain TCP or TLS).
+    ///
+    /// Performs a single underlying read and returns however many bytes are
+    /// available (like a raw `recv`), rather than blocking until `buf` is
+    /// full. Returns 0 on end of stream.
     fn readSome(self: *WsTransport, buf: []u8) !usize {
+        var data: [1][]u8 = .{buf};
         if (self.tls_state) |tls| {
-            // Read through TLS: use the TLS client's reader
-            return tls.tls_client.reader.readSliceShort(buf) catch return error.ReadError;
+            // Read through TLS: use the TLS client's reader. A successful
+            // read of 0 bytes just means a record with no application data
+            // was processed, so try again.
+            while (true) {
+                const n = tls.tls_client.reader.readVec(&data) catch |err| switch (err) {
+                    error.EndOfStream => return 0,
+                    else => return error.ReadError,
+                };
+                if (n != 0) return n;
+            }
         } else {
-            // Plain TCP: read directly via POSIX syscall
-            return std.posix.read(self.stream.handle, buf) catch return error.ReadError;
+            // Plain TCP: read through an unbuffered transient stream reader.
+            var stream_reader = self.stream.reader(self.io, &.{});
+            return stream_reader.interface.readVec(&data) catch |err| switch (err) {
+                error.EndOfStream => 0,
+                else => error.ReadError,
+            };
         }
     }
 };
@@ -776,9 +825,7 @@ pub fn connectWithReconnect(
         } else |_| {}
 
         if (opts.on_reconnect) |cb| cb(backoff_ms);
-        // Cap before converting to nanoseconds to prevent u64 overflow.
-        const max_sleep_ms: u64 = std.math.maxInt(u64) / std.time.ns_per_ms;
-        std.Thread.sleep(@min(backoff_ms, max_sleep_ms) * std.time.ns_per_ms);
+        runtime.sleepMs(backoff_ms);
 
         // Guard against overflow before clamping.
         backoff_ms = if (backoff_ms > opts.max_backoff_ms / 2)

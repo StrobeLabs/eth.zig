@@ -1,5 +1,6 @@
 const std = @import("std");
 const keccak = @import("keccak.zig");
+const runtime = @import("runtime.zig");
 
 /// BIP-39 mnemonic phrase generation and seed derivation.
 ///
@@ -44,7 +45,7 @@ pub const ValidEntropySize = enum(u8) {
 /// Generate a random mnemonic phrase.
 pub fn generate(comptime entropy_size: ValidEntropySize) [entropy_size.wordCount()][]const u8 {
     var entropy: [@intFromEnum(entropy_size)]u8 = undefined;
-    std.crypto.random.bytes(&entropy);
+    runtime.defaultIo().random(&entropy);
     return entropyToMnemonic(entropy_size, &entropy);
 }
 
@@ -290,6 +291,12 @@ test "validate rejects bad checksum" {
         "abandon", "abandon", "abandon", "abandon",
     };
     try std.testing.expectError(error.InvalidChecksum, validate(&words));
+}
+
+test "generate produces a valid mnemonic" {
+    const words = generate(.@"128");
+    try std.testing.expectEqual(@as(usize, 12), words.len);
+    try validate(&words);
 }
 
 test "entropyToMnemonic known vector" {

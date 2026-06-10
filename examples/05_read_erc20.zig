@@ -8,10 +8,10 @@ const eth = @import("eth");
 
 pub fn main() !void {
     var buf: [4096]u8 = undefined;
-    var stdout_impl = std.fs.File.stdout().writer(&buf);
+    var stdout_impl = std.Io.File.stdout().writerStreaming(eth.runtime.defaultIo(), &buf);
     const stdout = &stdout_impl.interface;
 
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

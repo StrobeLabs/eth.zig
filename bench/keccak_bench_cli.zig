@@ -1,8 +1,8 @@
 const std = @import("std");
 const eth = @import("eth");
 
-pub fn main() !void {
-    var args = std.process.args();
+pub fn main(init: std.process.Init.Minimal) !void {
+    var args = std.process.Args.Iterator.init(init.args);
     _ = args.next(); // skip program name
 
     const size_str = args.next() orelse "32";
