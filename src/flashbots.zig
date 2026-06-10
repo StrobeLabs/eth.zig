@@ -103,6 +103,43 @@ pub const MevSendBundleResult = struct {
     bundle_hash: [32]u8,
 };
 
+/// Options for eth_sendPrivateTransaction (MEV-Share).
+///
+/// Submits a single private transaction with configurable hints about what
+/// information to share with searchers -- the primary method for getting MEV
+/// protection while still allowing backruns.
+pub const SendPrivateTxOpts = struct {
+    /// Raw signed transaction bytes (not hex).
+    tx: []const u8,
+    /// Maximum block number for inclusion. Null lets the relay default
+    /// (current block + 25).
+    max_block_number: ?u64 = null,
+    /// MEV-Share hint preferences -- what to reveal to searchers.
+    /// Null sends no preferences object (relay defaults apply).
+    preferences: ?TxPreferences = null,
+
+    pub const TxPreferences = struct {
+        /// Request fast-mode inclusion (shared with all registered builders,
+        /// validity-period refund rules relaxed).
+        fast: bool = false,
+        /// Reveal calldata to searchers.
+        calldata: bool = false,
+        /// Reveal contract address to searchers.
+        contract_address: bool = false,
+        /// Reveal event logs to searchers.
+        logs: bool = false,
+        /// Reveal the 4-byte function selector to searchers.
+        function_selector: bool = false,
+        /// Which builders to share with. Null = all Flashbots builders.
+        builders: ?[]const []const u8 = null,
+    };
+};
+
+/// Result from eth_sendPrivateTransaction.
+pub const SendPrivateTxResult = struct {
+    tx_hash: [32]u8,
+};
+
 // ============================================================================
 // Bundle builder
 // ============================================================================
@@ -252,6 +289,18 @@ pub const Relay = struct {
 
         const result = try parseBundleHashResult(self.allocator, raw);
         return MevSendBundleResult{ .bundle_hash = result.bundle_hash };
+    }
+
+    /// Submit a single private transaction via eth_sendPrivateTransaction
+    /// (MEV-Share).
+    pub fn sendPrivateTransaction(self: *Relay, opts: SendPrivateTxOpts) !SendPrivateTxResult {
+        const params = try buildSendPrivateTxParams(self.allocator, opts);
+        defer self.allocator.free(params);
+
+        const raw = try self.authenticatedRequest("eth_sendPrivateTransaction", params);
+        defer self.allocator.free(raw);
+
+        return parseTxHashResult(self.allocator, raw);
     }
 
     /// Cancel a bundle via eth_cancelBundle.
@@ -578,6 +627,76 @@ fn buildMevSendBundleParams(allocator: std.mem.Allocator, opts: MevSendBundleOpt
     return buf.toOwnedSlice(allocator);
 }
 
+fn buildSendPrivateTxParams(allocator: std.mem.Allocator, opts: SendPrivateTxOpts) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "[{\"tx\":\"");
+    const tx_hex = try hex_mod.bytesToHex(allocator, opts.tx);
+    defer allocator.free(tx_hex);
+    try buf.appendSlice(allocator, tx_hex);
+    try buf.append(allocator, '"');
+
+    if (opts.max_block_number) |mbn| {
+        try buf.appendSlice(allocator, ",\"maxBlockNumber\":\"");
+        var hex_buf: [18]u8 = undefined;
+        try buf.appendSlice(allocator, formatHexU64(&hex_buf, mbn));
+        try buf.append(allocator, '"');
+    }
+
+    if (opts.preferences) |prefs| {
+        try buf.appendSlice(allocator, ",\"preferences\":{\"fast\":");
+        try buf.appendSlice(allocator, if (prefs.fast) "true" else "false");
+
+        const any_hint = prefs.calldata or prefs.contract_address or
+            prefs.logs or prefs.function_selector;
+        if (any_hint or prefs.builders != null) {
+            try buf.appendSlice(allocator, ",\"privacy\":{");
+            var first = true;
+
+            if (any_hint) {
+                try buf.appendSlice(allocator, "\"hints\":[");
+                var first_hint = true;
+                const hint_flags = [_]struct { on: bool, name: []const u8 }{
+                    .{ .on = prefs.calldata, .name = "calldata" },
+                    .{ .on = prefs.contract_address, .name = "contract_address" },
+                    .{ .on = prefs.logs, .name = "logs" },
+                    .{ .on = prefs.function_selector, .name = "function_selector" },
+                };
+                for (hint_flags) |hf| {
+                    if (!hf.on) continue;
+                    if (!first_hint) try buf.append(allocator, ',');
+                    try buf.append(allocator, '"');
+                    try buf.appendSlice(allocator, hf.name);
+                    try buf.append(allocator, '"');
+                    first_hint = false;
+                }
+                try buf.append(allocator, ']');
+                first = false;
+            }
+
+            if (prefs.builders) |builders| {
+                if (!first) try buf.append(allocator, ',');
+                try buf.appendSlice(allocator, "\"builders\":[");
+                for (builders, 0..) |b, i| {
+                    if (i > 0) try buf.append(allocator, ',');
+                    try buf.append(allocator, '"');
+                    try appendJsonEscaped(allocator, &buf, b);
+                    try buf.append(allocator, '"');
+                }
+                try buf.append(allocator, ']');
+            }
+
+            try buf.append(allocator, '}');
+        }
+
+        try buf.append(allocator, '}');
+    }
+
+    try buf.appendSlice(allocator, "}]");
+    return buf.toOwnedSlice(allocator);
+}
+
 fn buildCancelBundleParams(allocator: std.mem.Allocator, opts: CancelBundleOpts) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
@@ -632,6 +751,29 @@ fn parseBundleHashResult(allocator: std.mem.Allocator, raw: []const u8) !SendBun
 
     const bundle_hash = primitives.hashFromHex(hash_str) catch return error.InvalidResponse;
     return SendBundleResult{ .bundle_hash = bundle_hash };
+}
+
+/// Parse a response whose `result` is a bare transaction-hash string,
+/// as returned by eth_sendPrivateTransaction.
+fn parseTxHashResult(allocator: std.mem.Allocator, raw: []const u8) !SendPrivateTxResult {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch {
+        return error.InvalidResponse;
+    };
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    if (root != .object) return error.InvalidResponse;
+
+    if (root.object.get("error")) |err_val| {
+        if (err_val == .object) return error.RpcError;
+    }
+
+    const result_val = root.object.get("result") orelse return error.InvalidResponse;
+    if (result_val == .null) return error.NullResult;
+    if (result_val != .string) return error.InvalidResponse;
+
+    const tx_hash = primitives.hashFromHex(result_val.string) catch return error.InvalidResponse;
+    return SendPrivateTxResult{ .tx_hash = tx_hash };
 }
 
 fn parseCallBundleResult(allocator: std.mem.Allocator, raw: []const u8) !CallBundleResult {
@@ -1046,4 +1188,71 @@ test "MevSendBundleOpts defaults" {
     try std.testing.expect(opts.validity == null);
     try std.testing.expect(opts.privacy == null);
     try std.testing.expect(opts.inclusion.max_block == null);
+}
+
+test "buildSendPrivateTxParams - minimal" {
+    const allocator = std.testing.allocator;
+    const params = try buildSendPrivateTxParams(allocator, .{
+        .tx = &[_]u8{ 0x02, 0xab, 0xcd },
+    });
+    defer allocator.free(params);
+
+    try std.testing.expectEqualStrings("[{\"tx\":\"0x02abcd\"}]", params);
+}
+
+test "buildSendPrivateTxParams - max block and full preferences" {
+    const allocator = std.testing.allocator;
+    const builders = [_][]const u8{ "flashbots", "beaverbuild" };
+    const params = try buildSendPrivateTxParams(allocator, .{
+        .tx = &[_]u8{0xff},
+        .max_block_number = 0x112a880,
+        .preferences = .{
+            .fast = true,
+            .calldata = true,
+            .logs = true,
+            .builders = &builders,
+        },
+    });
+    defer allocator.free(params);
+
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"tx\":\"0xff\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"maxBlockNumber\":\"0x112a880\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params, "\"preferences\":{\"fast\":true,\"privacy\":{\"hints\":[\"calldata\",\"logs\"],\"builders\":[\"flashbots\",\"beaverbuild\"]}}") != null);
+}
+
+test "buildSendPrivateTxParams - fast only emits no privacy object" {
+    const allocator = std.testing.allocator;
+    const params = try buildSendPrivateTxParams(allocator, .{
+        .tx = &[_]u8{0x01},
+        .preferences = .{ .fast = true },
+    });
+    defer allocator.free(params);
+
+    try std.testing.expectEqualStrings("[{\"tx\":\"0x01\",\"preferences\":{\"fast\":true}}]", params);
+}
+
+test "parseTxHashResult - success" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"jsonrpc":"2.0","id":1,"result":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+    ;
+    const result = try parseTxHashResult(allocator, raw);
+    try std.testing.expectEqual(@as(u8, 0xaa), result.tx_hash[0]);
+    try std.testing.expectEqual(@as(u8, 0xaa), result.tx_hash[31]);
+}
+
+test "parseTxHashResult - rpc error" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"invalid"}}
+    ;
+    try std.testing.expectError(error.RpcError, parseTxHashResult(allocator, raw));
+}
+
+test "parseTxHashResult - null result" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"jsonrpc":"2.0","id":1,"result":null}
+    ;
+    try std.testing.expectError(error.NullResult, parseTxHashResult(allocator, raw));
 }
