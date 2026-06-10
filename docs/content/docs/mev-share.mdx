@@ -1,0 +1,171 @@
+---
+title: MEV-Share
+description: Private transactions, the MEV-Share event stream, and bundle simulation in eth.zig.
+---
+
+[MEV-Share](https://docs.flashbots.net/flashbots-mev-share/introduction) is Flashbots'
+orderflow auction: users submit private transactions with configurable hints, searchers
+subscribe to a stream of those hints and compose backrun bundles, and a share of searcher
+profit flows back to the user. The `mev_share` module mirrors the official
+`mev-share-client-ts` API.
+
+Under the hood it is built on `eth.flashbots.Relay` -- the same authenticated client used
+for `eth_sendBundle` / `mev_sendBundle` -- so all JSON-RPC submissions carry the
+`X-Flashbots-Signature` header signed by your reputation key. The event stream and history
+API are public and need no authentication.
+
+## Creating a Client
+
+```zig
+const eth = @import("eth");
+
+// auth_key is your Flashbots reputation key (NOT a funded key).
+var client = eth.mev_share.MevShareClient.initMainnet(allocator, auth_key);
+defer client.deinit();
+
+// Or with explicit endpoints (e.g. Sepolia):
+var sepolia = eth.mev_share.MevShareClient.init(
+    allocator,
+    "https://relay-sepolia.flashbots.net",
+    eth.mev_share.sepolia_stream_url,
+    auth_key,
+);
+defer sepolia.deinit();
+```
+
+## Sending a Private Transaction
+
+`sendTransaction` maps to `eth_sendPrivateTransaction` and delegates to
+`flashbots.Relay.sendPrivateTransaction`. Hint preferences control what searchers are
+allowed to see (and therefore how much MEV can be shared back to you):
+
+```zig
+const tx_hash = try client.sendTransaction(.{
+    .tx = signed_tx_bytes, // raw signed transaction (bytes, not hex)
+    .max_block_number = current_block + 25,
+    .preferences = .{
+        .fast = true,
+        .calldata = false, // keep calldata private
+        .logs = true, // reveal logs so searchers can backrun
+        .function_selector = true,
+        .contract_address = true,
+    },
+});
+```
+
+## The Event Stream
+
+Searchers subscribe to the SSE event stream of pending transaction and bundle hints.
+`MevShareClient.on` is blocking: it streams events until the server closes the
+connection, invoking your callback for each parsed event. Events are freed after the
+callback returns -- copy anything you need to keep.
+
+```zig
+fn onEvent(event: eth.mev_share.PendingEvent) void {
+    switch (event) {
+        .transaction => |tx| {
+            // tx.hash is the event identity (a double-hash, not the tx hash)
+            // Optional hints: tx.to, tx.function_selector, tx.calldata,
+            // tx.logs, tx.value -- null when not revealed.
+            _ = tx;
+        },
+        .bundle => |bundle| {
+            // bundle.txs holds per-transaction hints
+            _ = bundle;
+        },
+    }
+}
+
+// Reconnect loop: `on` returns on clean close, errors on transport failure.
+while (true) {
+    client.on(&onEvent) catch {};
+    eth.runtime.sleepMs(1_000);
+}
+```
+
+### Backrun Loop Sketch
+
+A minimal backrunner: watch for hints touching a target pool, then submit a bundle
+that includes the pending transaction by hash followed by your backrun:
+
+```zig
+fn onEvent(event: eth.mev_share.PendingEvent) void {
+    const tx = switch (event) {
+        .transaction => |tx| tx,
+        .bundle => return,
+    };
+    const to = tx.to orelse return;
+    if (!std.mem.eql(u8, &to, &target_pool)) return;
+
+    // Build and sign your backrun tx, then bundle it behind the hint:
+    const body = [_]eth.flashbots.MevBundleBody{
+        .{ .hash = tx.hash }, // the pending tx (by event hash)
+        .{ .tx = .{ .data = my_signed_backrun } },
+    };
+    _ = client.relay.mevSendBundle(.{
+        .body = &body,
+        .inclusion = .{ .block = next_block, .max_block = next_block + 3 },
+    }) catch return;
+}
+```
+
+The pure parser is also exposed for testing or custom transports:
+
+```zig
+var event = try eth.mev_share.parseEventData(allocator, sse_data_payload);
+defer eth.mev_share.freePendingEvent(allocator, &event);
+```
+
+## Simulating Bundles
+
+`simulateBundle` maps to `mev_simBundle`. The bundle is described with the same
+`flashbots.MevSendBundleOpts` used for `mev_sendBundle`; `SimBundleOpts` controls the
+simulation environment (all fields optional, relay defaults derive from the parent block):
+
+```zig
+const body = [_]eth.flashbots.MevBundleBody{
+    .{ .hash = pending_event_hash },
+    .{ .tx = .{ .data = my_signed_backrun } },
+};
+
+var sim = try client.simulateBundle(.{
+    .body = &body,
+    .inclusion = .{ .block = next_block },
+}, .{
+    .parent_block = next_block - 1,
+    .timeout = 5, // seconds
+});
+defer eth.mev_share.freeSimBundleResult(allocator, &sim);
+
+if (sim.success) {
+    // sim.profit, sim.refundable_value, sim.mev_gas_price, sim.gas_used
+} else {
+    // sim.error_message describes the failure
+}
+```
+
+## Event History
+
+Historical hints are served from `GET /api/v1/history` on the stream endpoint:
+
+```zig
+const entries = try client.getEventHistory(.{
+    .block_start = 17_000_000,
+    .limit = 500,
+});
+defer eth.mev_share.freeEventHistory(allocator, entries);
+
+for (entries) |entry| {
+    // entry.block, entry.timestamp, entry.hint (a PendingEvent)
+}
+```
+
+## Memory Conventions
+
+All returned heap data is caller-owned, with matching free helpers:
+
+| Returned by | Free with |
+|-------------|-----------|
+| `parseEventData`, events passed to `on` callbacks | `freePendingEvent` (automatic inside `on`) |
+| `simulateBundle` / `parseSimBundleResult` | `freeSimBundleResult` |
+| `getEventHistory` / `parseEventHistoryResponse` | `freeEventHistory` |
