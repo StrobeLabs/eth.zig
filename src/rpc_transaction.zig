@@ -28,6 +28,17 @@ const std = @import("std");
 /// omitted from the v1 parser; both are rare in mempool sniping and add
 /// significant parsing surface area. They can be added later without a
 /// breaking change.
+/// A single EIP-7702 authorization tuple as returned in an RPC transaction's
+/// `authorizationList`. Mirrors the canonical `transaction.Authorization`.
+pub const RpcAuthorization = struct {
+    chain_id: u256,
+    address: [20]u8,
+    nonce: u64,
+    y_parity: u8,
+    r: [32]u8,
+    s: [32]u8,
+};
+
 pub const RpcTransaction = struct {
     // ----- Identity & position -----
     hash: [32]u8,
@@ -61,14 +72,20 @@ pub const RpcTransaction = struct {
     s: [32]u8,
 
     // ----- Type & chain -----
-    /// 0 = legacy, 1 = EIP-2930, 2 = EIP-1559, 3 = EIP-4844.
+    /// 0 = legacy, 1 = EIP-2930, 2 = EIP-1559, 3 = EIP-4844, 4 = EIP-7702.
     type_: u8,
     chain_id: ?u64,
+
+    // ----- EIP-7702 (heap-owned) -----
+    /// The authorization list for EIP-7702 (type 4) transactions; null for all
+    /// other types. Caller owns this memory; free with `freeRpcTransaction`.
+    authorization_list: ?[]const RpcAuthorization = null,
 };
 
 /// Free heap-owned memory inside an RpcTransaction.
 pub fn freeRpcTransaction(allocator: std.mem.Allocator, tx: RpcTransaction) void {
     allocator.free(tx.input);
+    if (tx.authorization_list) |list| allocator.free(list);
 }
 
 // ============================================================================
@@ -132,5 +149,37 @@ test "freeRpcTransaction frees the input slice" {
     };
     // If freeRpcTransaction does not free input, the testing allocator
     // would report a leak.
+    freeRpcTransaction(allocator, tx);
+}
+
+test "freeRpcTransaction frees the authorization_list" {
+    const allocator = std.testing.allocator;
+    const list = try allocator.alloc(RpcAuthorization, 2);
+    list[0] = .{ .chain_id = 1, .address = @as([20]u8, @splat(0xaa)), .nonce = 0, .y_parity = 0, .r = @as([32]u8, @splat(0)), .s = @as([32]u8, @splat(0)) };
+    list[1] = list[0];
+
+    const tx = RpcTransaction{
+        .hash = @as([32]u8, @splat(0)),
+        .nonce = 0,
+        .block_hash = null,
+        .block_number = null,
+        .transaction_index = null,
+        .from = @as([20]u8, @splat(0)),
+        .to = null,
+        .value = 0,
+        .gas = 0,
+        .gas_price = null,
+        .max_fee_per_gas = null,
+        .max_priority_fee_per_gas = null,
+        .max_fee_per_blob_gas = null,
+        .input = &.{},
+        .v = 0,
+        .r = @as([32]u8, @splat(0)),
+        .s = @as([32]u8, @splat(0)),
+        .type_ = 4,
+        .chain_id = 1,
+        .authorization_list = list,
+    };
+    // Testing allocator reports a leak if the list is not freed.
     freeRpcTransaction(allocator, tx);
 }

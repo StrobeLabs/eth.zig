@@ -886,6 +886,11 @@ pub fn parseSingleTransaction(allocator: std.mem.Allocator, obj: std.json.Object
     const type_val: u8 = if (jsonGetString(obj, "type")) |t| try parseHexU8(t) else 0;
     const chain_id = try parseOptionalHexU64(jsonGetString(obj, "chainId"));
 
+    // EIP-7702 authorization list (best-effort: parse if the field is present
+    // and is an array). Present only on type-0x04 transactions.
+    const authorization_list = try parseAuthorizationList(allocator, obj);
+    errdefer if (authorization_list) |list| allocator.free(list);
+
     return rpc_transaction_mod.RpcTransaction{
         .hash = hash,
         .nonce = nonce,
@@ -906,7 +911,51 @@ pub fn parseSingleTransaction(allocator: std.mem.Allocator, obj: std.json.Object
         .s = s,
         .type_ = type_val,
         .chain_id = chain_id,
+        .authorization_list = authorization_list,
     };
+}
+
+/// Parse an EIP-7702 `authorizationList` from an RPC transaction object.
+/// Returns null if the field is absent or not an array. Each element is an
+/// object with `chainId`, `address`, `nonce`, `yParity`, `r`, `s`.
+/// The returned slice is heap-owned; free with `freeRpcTransaction`.
+fn parseAuthorizationList(
+    allocator: std.mem.Allocator,
+    obj: std.json.ObjectMap,
+) !?[]const rpc_transaction_mod.RpcAuthorization {
+    const val = obj.get("authorizationList") orelse return null;
+    if (val != .array) return null;
+    const items = val.array.items;
+    if (items.len == 0) {
+        return try allocator.alloc(rpc_transaction_mod.RpcAuthorization, 0);
+    }
+
+    const out = try allocator.alloc(rpc_transaction_mod.RpcAuthorization, items.len);
+    errdefer allocator.free(out);
+
+    for (items, 0..) |item, i| {
+        if (item != .object) return error.InvalidResponse;
+        const ao = item.object;
+        const chain_id = try parseHexU256(jsonGetString(ao, "chainId") orelse return error.InvalidResponse);
+        const address = (try parseOptionalAddress(jsonGetString(ao, "address"))) orelse return error.InvalidResponse;
+        const nonce = try parseHexU64(jsonGetString(ao, "nonce") orelse return error.InvalidResponse);
+        // yParity is the canonical key; tolerate `v` as an alias.
+        const yp_str = jsonGetString(ao, "yParity") orelse jsonGetString(ao, "v") orelse return error.InvalidResponse;
+        const y_parity = try parseHexU8(yp_str);
+        if (y_parity > 1) return error.InvalidResponse; // EIP-7702 y_parity is 0 or 1
+        const r = try parseHash(jsonGetString(ao, "r") orelse return error.InvalidResponse);
+        const s = try parseHash(jsonGetString(ao, "s") orelse return error.InvalidResponse);
+        out[i] = .{
+            .chain_id = chain_id,
+            .address = address,
+            .nonce = nonce,
+            .y_parity = y_parity,
+            .r = r,
+            .s = s,
+        };
+    }
+
+    return out;
 }
 
 /// Parse the logs response from eth_getLogs.
@@ -1372,6 +1421,76 @@ test "parseSingleTransaction - pending EIP-1559" {
     try std.testing.expectEqual(@as(?u64, 1), tx.chain_id);
     try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad, 0xbe, 0xef }, tx.input);
     try std.testing.expectEqual(@as(u256, 1_000_000_000_000_000_000), tx.value);
+}
+
+test "parseSingleTransaction - EIP-7702 with authorizationList" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x7",
+        \\ "blockHash":null,
+        \\ "blockNumber":null,
+        \\ "transactionIndex":null,
+        \\ "from":"0x1111111111111111111111111111111111111111",
+        \\ "to":"0x2222222222222222222222222222222222222222",
+        \\ "value":"0x0",
+        \\ "gas":"0x186a0",
+        \\ "maxFeePerGas":"0x4a817c800",
+        \\ "maxPriorityFeePerGas":"0x77359400",
+        \\ "input":"0x",
+        \\ "v":"0x1",
+        \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\ "type":"0x4",
+        \\ "chainId":"0x1",
+        \\ "authorizationList":[
+        \\   {"chainId":"0x1",
+        \\    "address":"0x3333333333333333333333333333333333333333",
+        \\    "nonce":"0x2a",
+        \\    "yParity":"0x1",
+        \\    "r":"0x1111111111111111111111111111111111111111111111111111111111111111",
+        \\    "s":"0x2222222222222222222222222222222222222222222222222222222222222222"}
+        \\ ]}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(allocator, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expectEqual(@as(u8, 4), tx.type_);
+    try std.testing.expect(tx.authorization_list != null);
+    const list = tx.authorization_list.?;
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    try std.testing.expectEqual(@as(u256, 1), list[0].chain_id);
+    try std.testing.expectEqual(@as(u64, 0x2a), list[0].nonce);
+    try std.testing.expectEqual(@as(u8, 1), list[0].y_parity);
+    try std.testing.expectEqual(@as(u8, 0x33), list[0].address[0]);
+    try std.testing.expectEqual(@as(u8, 0x11), list[0].r[0]);
+    try std.testing.expectEqual(@as(u8, 0x22), list[0].s[0]);
+}
+
+test "parseSingleTransaction - no authorizationList yields null" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x5",
+        \\ "from":"0x1111111111111111111111111111111111111111",
+        \\ "to":"0x2222222222222222222222222222222222222222",
+        \\ "value":"0x0",
+        \\ "gas":"0x5208",
+        \\ "gasPrice":"0x4a817c800",
+        \\ "input":"0x",
+        \\ "v":"0x25",
+        \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\ "type":"0x0"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(allocator, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expect(tx.authorization_list == null);
 }
 
 test "parseSingleTransaction - mined legacy" {

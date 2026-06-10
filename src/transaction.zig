@@ -61,12 +61,47 @@ pub const Eip4844Transaction = struct {
     blob_versioned_hashes: []const [32]u8,
 };
 
+/// A signed EIP-7702 authorization tuple: `[chain_id, address, nonce, y_parity, r, s]`.
+///
+/// Authorizes setting the code of `authority` (the signer, recovered from the
+/// signature) to a delegation pointing at `address`. The signature is computed
+/// over `keccak256(0x05 || rlp([chain_id, address, nonce]))`.
+///
+/// - `chain_id` of 0 means the authorization is valid on any chain.
+/// - `address` is the 20-byte delegation target.
+/// - `nonce` is the authority account's nonce at the time of authorization.
+pub const Authorization = struct {
+    chain_id: u256,
+    address: [20]u8,
+    nonce: u64,
+    y_parity: u8,
+    r: [32]u8,
+    s: [32]u8,
+};
+
+/// EIP-7702 set-code transaction (type 4).
+///
+/// Note: `to` is NOT nullable — EIP-7702 transactions cannot create contracts.
+pub const Eip7702Transaction = struct {
+    chain_id: u64,
+    nonce: u64,
+    max_priority_fee_per_gas: u256,
+    max_fee_per_gas: u256,
+    gas_limit: u64,
+    to: [20]u8, // EIP-7702 has no contract creation; destination is required
+    value: u256,
+    data: []const u8,
+    access_list: []const AccessListItem,
+    authorization_list: []const Authorization,
+};
+
 /// Tagged union of all transaction types.
 pub const Transaction = union(enum) {
     legacy: LegacyTransaction,
     eip2930: Eip2930Transaction,
     eip1559: Eip1559Transaction,
     eip4844: Eip4844Transaction,
+    eip7702: Eip7702Transaction,
 };
 
 // ============================================================================
@@ -80,6 +115,7 @@ pub const Transaction = union(enum) {
 /// - EIP-2930: 0x01 ++ RLP([chainId, nonce, gasPrice, gasLimit, to, value, data, accessList])
 /// - EIP-1559: 0x02 ++ RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList])
 /// - EIP-4844: 0x03 ++ RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList, maxFeePerBlobGas, blobVersionedHashes])
+/// - EIP-7702: 0x04 ++ RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList, authorizationList])
 ///
 /// Caller owns the returned slice.
 pub fn serializeForSigning(allocator: std.mem.Allocator, tx: Transaction) ![]u8 {
@@ -88,6 +124,7 @@ pub fn serializeForSigning(allocator: std.mem.Allocator, tx: Transaction) ![]u8 
         .eip2930 => |eip2930| return serializeTypedForSigning(allocator, 0x01, eip2930),
         .eip1559 => |eip1559| return serializeTypedForSigning(allocator, 0x02, eip1559),
         .eip4844 => |eip4844| return serializeTypedForSigning(allocator, 0x03, eip4844),
+        .eip7702 => |eip7702| return serializeTypedForSigning(allocator, 0x04, eip7702),
     }
 }
 
@@ -104,6 +141,7 @@ pub fn hashForSigning(allocator: std.mem.Allocator, tx: Transaction) ![32]u8 {
 /// - EIP-2930: 0x01 ++ RLP([chainId, nonce, gasPrice, gasLimit, to, value, data, accessList, v, r, s])
 /// - EIP-1559: 0x02 ++ RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList, v, r, s])
 /// - EIP-4844: 0x03 ++ RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList, maxFeePerBlobGas, blobVersionedHashes, v, r, s])
+/// - EIP-7702: 0x04 ++ RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList, authorizationList, v, r, s])
 ///
 /// Caller owns the returned slice.
 pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8, s: [32]u8, v: u256) ![]u8 {
@@ -112,6 +150,7 @@ pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8,
         .eip2930 => |eip2930| return serializeTypedSigned(allocator, 0x01, eip2930, r, s, v),
         .eip1559 => |eip1559| return serializeTypedSigned(allocator, 0x02, eip1559, r, s, v),
         .eip4844 => |eip4844| return serializeTypedSigned(allocator, 0x03, eip4844, r, s, v),
+        .eip7702 => |eip7702| return serializeTypedSigned(allocator, 0x04, eip7702, r, s, v),
     }
 }
 
@@ -211,6 +250,105 @@ fn encodeTypedFields(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), tx: 
         // blob_versioned_hashes: list of [32]u8
         try encodeBlobHashes(allocator, buf, tx.blob_versioned_hashes);
     }
+
+    // EIP-7702 extra field
+    if (@hasField(T, "authorization_list")) {
+        try encodeAuthorizationList(allocator, buf, tx.authorization_list);
+    }
+}
+
+/// Calculate the RLP-encoded length of a single authorization tuple
+/// `[chain_id, address, nonce, y_parity, r, s]`.
+fn authorizationItemLength(auth: Authorization) usize {
+    var payload_len: usize = 0;
+    payload_len += rlp.encodedLength(auth.chain_id);
+    payload_len += rlp.encodedLength(auth.address);
+    payload_len += rlp.encodedLength(auth.nonce);
+    payload_len += rlp.encodedLength(auth.y_parity);
+    payload_len += encodedU256BytesLength(&auth.r);
+    payload_len += encodedU256BytesLength(&auth.s);
+    return rlp.lengthPrefixSize(payload_len) + payload_len;
+}
+
+/// Calculate the total RLP-encoded length of an authorization list.
+fn authorizationListEncodedLength(list: []const Authorization) usize {
+    var outer_payload_len: usize = 0;
+    for (list) |auth| {
+        outer_payload_len += authorizationItemLength(auth);
+    }
+    return rlp.lengthPrefixSize(outer_payload_len) + outer_payload_len;
+}
+
+/// RLP-encode an EIP-7702 authorization list into the given ArrayList.
+/// Each item is encoded as `[chain_id, address, nonce, y_parity, r, s]`.
+fn encodeAuthorizationList(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), list: []const Authorization) !void {
+    var outer_payload_len: usize = 0;
+    for (list) |auth| {
+        outer_payload_len += authorizationItemLength(auth);
+    }
+
+    try buf.ensureTotalCapacity(allocator, buf.items.len + rlp.lengthPrefixSize(outer_payload_len) + outer_payload_len);
+    encodeLengthAssumeCapacity(buf, outer_payload_len, 0xc0);
+
+    for (list) |auth| {
+        var item_payload_len: usize = 0;
+        item_payload_len += rlp.encodedLength(auth.chain_id);
+        item_payload_len += rlp.encodedLength(auth.address);
+        item_payload_len += rlp.encodedLength(auth.nonce);
+        item_payload_len += rlp.encodedLength(auth.y_parity);
+        item_payload_len += encodedU256BytesLength(&auth.r);
+        item_payload_len += encodedU256BytesLength(&auth.s);
+
+        encodeLengthAssumeCapacity(buf, item_payload_len, 0xc0);
+        try rlp.encodeInto(allocator, buf, auth.chain_id);
+        try rlp.encodeInto(allocator, buf, auth.address);
+        try rlp.encodeInto(allocator, buf, auth.nonce);
+        try rlp.encodeInto(allocator, buf, auth.y_parity);
+        try encodeU256Bytes(allocator, buf, &auth.r);
+        try encodeU256Bytes(allocator, buf, &auth.s);
+    }
+}
+
+/// Write an EIP-7702 authorization list directly to buffer. Returns bytes written.
+fn writeAuthorizationListDirect(buf: []u8, list: []const Authorization) usize {
+    var outer_payload_len: usize = 0;
+    for (list) |auth| {
+        outer_payload_len += authorizationItemLength(auth);
+    }
+
+    var pos = rlp.writeLengthDirect(buf, outer_payload_len, 0xc0);
+
+    for (list) |auth| {
+        var item_payload_len: usize = 0;
+        item_payload_len += rlp.encodedLength(auth.chain_id);
+        item_payload_len += rlp.encodedLength(auth.address);
+        item_payload_len += rlp.encodedLength(auth.nonce);
+        item_payload_len += rlp.encodedLength(auth.y_parity);
+        item_payload_len += encodedU256BytesLength(&auth.r);
+        item_payload_len += encodedU256BytesLength(&auth.s);
+
+        pos += rlp.writeLengthDirect(buf[pos..], item_payload_len, 0xc0);
+        pos += rlp.writeDirect(buf[pos..], auth.chain_id);
+        pos += rlp.writeDirect(buf[pos..], auth.address);
+        pos += rlp.writeDirect(buf[pos..], auth.nonce);
+        pos += rlp.writeDirect(buf[pos..], auth.y_parity);
+        pos += writeU256BytesDirect(buf[pos..], &auth.r);
+        pos += writeU256BytesDirect(buf[pos..], &auth.s);
+    }
+
+    return pos;
+}
+
+/// Write a 32-byte big-endian value as an RLP integer (stripping leading zeros)
+/// directly to buffer. Returns bytes written.
+fn writeU256BytesDirect(buf: []u8, bytes: *const [32]u8) usize {
+    var start: usize = 0;
+    while (start < 32 and bytes[start] == 0) : (start += 1) {}
+    if (start == 32) {
+        buf[0] = 0x80;
+        return 1;
+    }
+    return rlp.writeDirect(buf, bytes[start..]);
 }
 
 /// Encode a list of 32-byte blob versioned hashes.
@@ -265,6 +403,10 @@ fn writeTypedFieldsDirect(buf: []u8, tx: anytype) usize {
         for (tx.blob_versioned_hashes) |h| {
             pos += rlp.writeDirect(buf[pos..], h);
         }
+    }
+
+    if (@hasField(T, "authorization_list")) {
+        pos += writeAuthorizationListDirect(buf[pos..], tx.authorization_list);
     }
 
     return pos;
@@ -341,6 +483,10 @@ fn calculateTypedFieldsLength(tx: anytype) usize {
             hashes_payload += rlp.encodedLength(h);
         }
         payload_len += rlp.lengthPrefixSize(hashes_payload) + hashes_payload;
+    }
+
+    if (@hasField(T, "authorization_list")) {
+        payload_len += authorizationListEncodedLength(tx.authorization_list);
     }
 
     return payload_len;
@@ -1089,6 +1235,229 @@ test "signed eip1559 tx structure" {
     const unsigned = try serializeForSigning(allocator, tx);
     defer allocator.free(unsigned);
     try std.testing.expect(signed.len > unsigned.len);
+}
+
+test "eip7702 tx serialization for signing starts with 0x04" {
+    const allocator = std.testing.allocator;
+
+    const auth = Authorization{
+        .chain_id = 1,
+        .address = @as([20]u8, @splat(0xab)),
+        .nonce = 0,
+        .y_parity = 0,
+        .r = @as([32]u8, @splat(0x11)),
+        .s = @as([32]u8, @splat(0x22)),
+    };
+    const auths = [_]Authorization{auth};
+
+    const tx = Transaction{ .eip7702 = .{
+        .chain_id = 1,
+        .nonce = 7,
+        .max_priority_fee_per_gas = 1_000_000_000,
+        .max_fee_per_gas = 30_000_000_000,
+        .gas_limit = 100_000,
+        .to = @as([20]u8, @splat(0xcc)),
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+        .authorization_list = &auths,
+    } };
+
+    const payload = try serializeForSigning(allocator, tx);
+    defer allocator.free(payload);
+
+    // Type prefix 0x04 followed by an RLP list.
+    try std.testing.expectEqual(@as(u8, 0x04), payload[0]);
+    try std.testing.expect(payload[1] >= 0xc0);
+}
+
+test "eip7702 empty authorization_list encodes as empty list" {
+    const allocator = std.testing.allocator;
+
+    const tx_empty = Transaction{ .eip7702 = .{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 0,
+        .max_fee_per_gas = 0,
+        .gas_limit = 0,
+        .to = @as([20]u8, @splat(0)),
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+        .authorization_list = &.{},
+    } };
+
+    const payload = try serializeForSigning(allocator, tx_empty);
+    defer allocator.free(payload);
+
+    // 0x04 ++ RLP([1, 0, 0, 0, 0, addr(20 zeros), 0, 0x80, accessList=0xc0, authList=0xc0])
+    // chainId=1 -> 0x01
+    // nonce=0 -> 0x80
+    // maxPriorityFeePerGas=0 -> 0x80
+    // maxFeePerGas=0 -> 0x80
+    // gasLimit=0 -> 0x80
+    // to=20 zero bytes -> 0x94 ++ 20*0x00 (21 bytes)
+    // value=0 -> 0x80
+    // data=empty -> 0x80
+    // accessList=empty -> 0xc0
+    // authorizationList=empty -> 0xc0
+    // The last two bytes of the payload must be 0xc0 0xc0.
+    try std.testing.expectEqual(@as(u8, 0x04), payload[0]);
+    try std.testing.expectEqual(@as(u8, 0xc0), payload[payload.len - 1]); // authList
+    try std.testing.expectEqual(@as(u8, 0xc0), payload[payload.len - 2]); // accessList
+
+    // Compare shared 1559-style fields against an equivalent EIP-1559 tx.
+    // The 1559 payload after its list header should match the 7702 payload's
+    // leading shared fields (chainId..data) since they encode identically.
+    const tx_1559 = Transaction{ .eip1559 = .{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 0,
+        .max_fee_per_gas = 0,
+        .gas_limit = 0,
+        .to = @as([20]u8, @splat(0)),
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+    } };
+    const payload_1559 = try serializeForSigning(allocator, tx_1559);
+    defer allocator.free(payload_1559);
+
+    // Both start with type byte + list header. Skip type byte + list-header byte
+    // (single-byte header for both since payloads < 56 bytes), then the first
+    // 8 field encodings (chainId..data = 0x01,0x80,0x80,0x80,0x80,0x94+20*0,0x80,0x80)
+    // must be byte-identical.
+    const shared_len: usize = 1 + 1 + 1 + 1 + 1 + 21 + 1 + 1; // chainId..data
+    try std.testing.expectEqualSlices(
+        u8,
+        payload_1559[2 .. 2 + shared_len],
+        payload[2 .. 2 + shared_len],
+    );
+}
+
+test "eip7702 signed serialization appends y_parity/r/s" {
+    const allocator = std.testing.allocator;
+
+    const auth = Authorization{
+        .chain_id = 1,
+        .address = @as([20]u8, @splat(0xab)),
+        .nonce = 3,
+        .y_parity = 1,
+        .r = @as([32]u8, @splat(0x33)),
+        .s = @as([32]u8, @splat(0x44)),
+    };
+    const auths = [_]Authorization{auth};
+
+    const tx = Transaction{ .eip7702 = .{
+        .chain_id = 1,
+        .nonce = 7,
+        .max_priority_fee_per_gas = 1_000_000_000,
+        .max_fee_per_gas = 30_000_000_000,
+        .gas_limit = 100_000,
+        .to = @as([20]u8, @splat(0xcc)),
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+        .authorization_list = &auths,
+    } };
+
+    const unsigned = try serializeForSigning(allocator, tx);
+    defer allocator.free(unsigned);
+
+    const r = @as([32]u8, @splat(0xaa));
+    const s = @as([32]u8, @splat(0xbb));
+    const v: u8 = 1;
+    const signed = try serializeSigned(allocator, tx, r, s, v);
+    defer allocator.free(signed);
+
+    // Signed starts with 0x04 and is longer than the unsigned payload.
+    try std.testing.expectEqual(@as(u8, 0x04), signed[0]);
+    try std.testing.expect(signed.len > unsigned.len);
+    // r and s are each 32 non-zero bytes => 33 bytes each encoded, plus v=1 (1 byte).
+    // Difference should be at least 3 + 33 + 33 - (header growth) bytes.
+    try std.testing.expect(signed.len >= unsigned.len + 60);
+}
+
+test "eip7702 one-item vs empty authorization list length" {
+    const allocator = std.testing.allocator;
+
+    const auth = Authorization{
+        .chain_id = 1,
+        .address = @as([20]u8, @splat(0xab)),
+        .nonce = 0,
+        .y_parity = 0,
+        .r = @as([32]u8, @splat(0x11)),
+        .s = @as([32]u8, @splat(0x22)),
+    };
+    const one = [_]Authorization{auth};
+
+    const base = Eip7702Transaction{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 1_000_000_000,
+        .max_fee_per_gas = 30_000_000_000,
+        .gas_limit = 100_000,
+        .to = @as([20]u8, @splat(0xcc)),
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+        .authorization_list = &.{},
+    };
+
+    var with_one = base;
+    with_one.authorization_list = &one;
+
+    const payload_empty = try serializeForSigning(allocator, .{ .eip7702 = base });
+    defer allocator.free(payload_empty);
+    const payload_one = try serializeForSigning(allocator, .{ .eip7702 = with_one });
+    defer allocator.free(payload_one);
+
+    try std.testing.expect(payload_one.len > payload_empty.len);
+}
+
+test "encodeAuthorizationList shape for a single item" {
+    const allocator = std.testing.allocator;
+
+    // chain_id=1 -> 0x01 (1 byte)
+    // address (20 bytes) -> 0x94 ++ 20 bytes (21 bytes)
+    // nonce=0 -> 0x80 (1 byte)
+    // y_parity=0 -> 0x80 (1 byte)
+    // r=1 (after strip) -> 0x01 (1 byte)
+    // s=2 (after strip) -> 0x02 (1 byte)
+    // item payload = 1 + 21 + 1 + 1 + 1 + 1 = 26 bytes
+    // item header = 0xc0 + 26 = 0xda
+    // outer payload = 1 + 26 = 27 bytes
+    // outer header = 0xc0 + 27 = 0xdb
+    var r = @as([32]u8, @splat(0));
+    r[31] = 1;
+    var s = @as([32]u8, @splat(0));
+    s[31] = 2;
+
+    const auth = Authorization{
+        .chain_id = 1,
+        .address = @as([20]u8, @splat(0xcd)),
+        .nonce = 0,
+        .y_parity = 0,
+        .r = r,
+        .s = s,
+    };
+    const auths = [_]Authorization{auth};
+
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(allocator);
+    try encodeAuthorizationList(allocator, &list, &auths);
+
+    try std.testing.expectEqual(@as(u8, 0xdb), list.items[0]); // outer list header
+    try std.testing.expectEqual(@as(u8, 0xda), list.items[1]); // item list header
+    try std.testing.expectEqual(@as(u8, 0x01), list.items[2]); // chain_id=1
+    try std.testing.expectEqual(@as(u8, 0x94), list.items[3]); // address prefix
+    // Tail: nonce(0x80), y_parity(0x80), r(0x01), s(0x02)
+    const n = list.items.len;
+    try std.testing.expectEqual(@as(u8, 0x02), list.items[n - 1]); // s
+    try std.testing.expectEqual(@as(u8, 0x01), list.items[n - 2]); // r
+    try std.testing.expectEqual(@as(u8, 0x80), list.items[n - 3]); // y_parity
+    try std.testing.expectEqual(@as(u8, 0x80), list.items[n - 4]); // nonce
+    try std.testing.expectEqual(@as(usize, 28), n); // outer_hdr(1) + item_hdr(1) + 26 payload
 }
 
 test "hashForSigning different chain IDs produce different hashes" {
