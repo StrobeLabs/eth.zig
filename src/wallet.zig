@@ -6,6 +6,7 @@ const http_transport_mod = @import("http_transport.zig");
 const transaction_mod = @import("transaction.zig");
 const receipt_mod = @import("receipt.zig");
 const keccak = @import("keccak.zig");
+const nonce_manager_mod = @import("nonce_manager.zig");
 
 /// Options for sending a transaction. Fields left as null will be auto-filled
 /// from the provider (nonce, gas, fees).
@@ -33,6 +34,12 @@ pub const Wallet = struct {
     provider: *provider_mod.Provider,
     allocator: std.mem.Allocator,
     chain_id: ?u64,
+    /// Optional atomic nonce source. When set, `sendTransaction` draws the
+    /// nonce from it (collision-free across threads) instead of making a
+    /// per-send `eth_getTransactionCount` call. Defaults to null, preserving
+    /// the original per-send-RPC behavior. The wallet borrows it and never
+    /// frees it. See `nonce_manager.NonceManager`.
+    nonce_manager: ?*nonce_manager_mod.NonceManager = null,
 
     /// Create a new Wallet from a private key and provider.
     /// The chain_id is initially null and will be fetched from the provider
@@ -43,6 +50,7 @@ pub const Wallet = struct {
             .provider = provider,
             .allocator = allocator,
             .chain_id = null,
+            .nonce_manager = null,
         };
     }
 
@@ -77,10 +85,28 @@ pub const Wallet = struct {
     pub fn sendTransaction(self: *Wallet, tx: SendTransactionOpts) ![32]u8 {
         const chain_id = try self.ensureChainId();
 
-        // Auto-fill nonce
-        const nonce = if (tx.nonce) |n| n else blk: {
+        // Auto-fill nonce: an explicit nonce wins; otherwise draw from the
+        // nonce manager if one is attached (collision-free across threads),
+        // falling back to a per-send pending-count RPC.
+        //
+        // When the nonce comes from the manager, return it on any later
+        // failure (gas estimation, signing, broadcast) so a transaction that
+        // never reaches the mempool does not burn a nonce and stall the
+        // account. `onFailure` only rolls back if this is still the last nonce
+        // issued, so a concurrent `next()` is handled safely.
+        var managed_nonce: ?u64 = null;
+        const nonce = if (tx.nonce) |n|
+            n
+        else if (self.nonce_manager) |nm| blk: {
+            const n = try nm.next();
+            managed_nonce = n;
+            break :blk n;
+        } else blk: {
             const addr = try self.address();
             break :blk try self.provider.getTransactionCount(addr);
+        };
+        errdefer if (managed_nonce) |n| {
+            _ = self.nonce_manager.?.onFailure(n);
         };
 
         // Auto-fill gas fees
@@ -176,10 +202,26 @@ test "Wallet.init sets fields correctly" {
 
     try std.testing.expect(wallet.chain_id == null);
     try std.testing.expect(wallet.provider == &provider);
+    // Nonce manager is opt-in; default preserves per-send RPC behavior.
+    try std.testing.expect(wallet.nonce_manager == null);
 
     const expected_address = try hex.hexToBytesFixed(20, "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const addr = try wallet.address();
     try std.testing.expectEqualSlices(u8, &expected_address, &addr);
+}
+
+test "Wallet accepts an optional nonce manager without breaking init" {
+    const hex = @import("hex.zig");
+    const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    defer transport.deinit();
+    var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
+    var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
+
+    var nonces = nonce_manager_mod.NonceManager.init(&provider, try wallet.address());
+    wallet.nonce_manager = &nonces;
+    try std.testing.expect(wallet.nonce_manager.? == &nonces);
 }
 
 test "Wallet.signTransaction produces valid signed bytes" {

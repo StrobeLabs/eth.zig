@@ -67,9 +67,18 @@ pub const Provider = struct {
         return parseHexU256(result_str);
     }
 
-    /// Returns the number of transactions sent from the given address (nonce).
+    /// Returns the number of transactions sent from the given address (nonce)
+    /// at the latest block.
     pub fn getTransactionCount(self: *Provider, address: [20]u8) !u64 {
-        const params = try self.formatAddressAndBlock(address, "latest");
+        return self.getTransactionCountAt(address, .latest);
+    }
+
+    /// Returns the transaction count (nonce) for an address at a specific
+    /// block tag. Use `.pending` to include transactions still in the mempool
+    /// -- this is what nonce managers seed from so they do not reuse a nonce
+    /// that is already queued but not yet mined.
+    pub fn getTransactionCountAt(self: *Provider, address: [20]u8, tag: json_rpc.BlockTag) !u64 {
+        const params = try self.formatAddressAndBlock(address, tag.toString());
         defer self.allocator.free(params);
 
         const raw = try self.rpcCall(json_rpc.Method.eth_getTransactionCount, params);
