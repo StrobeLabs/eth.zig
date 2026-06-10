@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Minimum supported Zig version is now 0.16.0. Transports (HTTP, WebSocket, SSE), retry backoff, and receipt polling were migrated to the new `std.Io` interface; the library constructs a default blocking `std.Io` internally, so public signatures are unchanged. This is a breaking change for Zig 0.15 users
+- New `eth.runtime` module exposes the library's default `std.Io` (`defaultIo()`) plus `milliTimestamp()` and `sleepMs()` helpers replacing the removed `std.time.milliTimestamp` and `std.Thread.sleep`
+
 ### Added
 - `log_watcher`: block-scoped log watching (#36). `LogWatcher.pollOnce()` drives per-block `eth_getLogs` from a `newHeads` subscription, back-fills blocks missed across reconnects, and re-fetches reorged ranges on parent-hash mismatch; `watchLogs` offers a callback loop
 - `provider.parseBlockHeaderObject`: parse a `BlockHeader` from a bare JSON object

@@ -27,10 +27,10 @@ const ANVIL_CHAIN_ID: u64 = 31337;
 /// Check if Anvil is reachable by opening a TCP connection to 127.0.0.1:8545.
 /// This avoids going through the HTTP client which can crash on connection refused.
 fn isAnvilAvailable() bool {
-    const addr = std.net.Address.parseIp4(ANVIL_HOST, ANVIL_PORT) catch return false;
-    const stream = std.posix.socket(addr.any.family, std.posix.SOCK.STREAM, 0) catch return false;
-    defer std.posix.close(stream);
-    std.posix.connect(stream, &addr.any, addr.getOsSockLen()) catch return false;
+    const io = eth.runtime.defaultIo();
+    const addr = std.Io.net.IpAddress.parse(ANVIL_HOST, ANVIL_PORT) catch return false;
+    const stream = addr.connect(io, .{ .mode = .stream }) catch return false;
+    stream.close(io);
     return true;
 }
 

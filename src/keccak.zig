@@ -16,7 +16,10 @@ pub const Keccak256 = StdlibKeccak256;
 /// Works at both comptime and runtime.
 pub fn hash(data: []const u8) Hash {
     if (@inComptime()) {
-        @setEvalBranchQuota(10000);
+        // Zig 0.16's stdlib Keccak permutation exceeds the default 1000-branch
+        // comptime quota even for a single short input (e.g. comptime function
+        // selectors), so raise it for the comptime path only.
+        @setEvalBranchQuota(100000);
         var result: Hash = undefined;
         StdlibKeccak256.hash(data, &result, .{});
         return result;

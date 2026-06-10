@@ -74,6 +74,7 @@ pub const chains = @import("chains/chain.zig");
 // -- Utilities --
 pub const units = @import("utils/units.zig");
 pub const constants = @import("utils/constants.zig");
+pub const runtime = @import("runtime.zig");
 
 // Re-export common types for convenience
 pub const Address = primitives.Address;
@@ -143,6 +144,7 @@ test {
     _ = @import("ens/reverse.zig");
     // Utils
     _ = @import("utils/units.zig");
+    _ = @import("runtime.zig");
     // DEX Math
     _ = @import("dex/v2.zig");
     _ = @import("dex/v3.zig");

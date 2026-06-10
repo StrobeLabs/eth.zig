@@ -1,5 +1,6 @@
 const std = @import("std");
 const provider_mod = @import("provider.zig");
+const runtime = @import("runtime.zig");
 const block_mod = @import("block.zig");
 const receipt_mod = @import("receipt.zig");
 const json_rpc = @import("json_rpc.zig");
@@ -45,7 +46,9 @@ pub const RetryingProvider = struct {
     /// Initialise a RetryingProvider wrapping the given Provider.
     /// Seeds the PRNG from a cryptographically random value.
     pub fn init(inner: *Provider, opts: RetryOpts) RetryingProvider {
-        const seed = std.crypto.random.int(u64);
+        var seed_bytes: [8]u8 = undefined;
+        runtime.defaultIo().random(&seed_bytes);
+        const seed = std.mem.readInt(u64, &seed_bytes, .little);
         return .{
             .inner = inner,
             .opts = opts,
@@ -219,7 +222,7 @@ const RetryState = struct {
 
         const jitter_ms: u64 = @intFromFloat(@as(f64, @floatFromInt(self.backoff_ms)) * self.provider.opts.jitter);
         const extra = if (jitter_ms > 0) self.provider.prng.random().int(u64) % jitter_ms else 0;
-        std.time.sleep((self.backoff_ms + extra) * std.time.ns_per_ms);
+        runtime.sleepMs(self.backoff_ms + extra);
 
         const next_backoff: u64 = @intFromFloat(
             @as(f64, @floatFromInt(self.backoff_ms)) * self.provider.opts.backoff_multiplier,
@@ -251,6 +254,14 @@ fn isRetryable(err: anyerror, opts: RetryOpts) bool {
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "RetryingProvider.init seeds the jitter PRNG" {
+    var fake_inner: Provider = undefined;
+    var rp = RetryingProvider.init(&fake_inner, .{});
+    try std.testing.expectEqual(@as(u32, 3), rp.opts.max_attempts);
+    // The PRNG must be usable.
+    _ = rp.prng.random().int(u64);
+}
 
 test "RetryOpts - defaults" {
     const opts = RetryOpts{};

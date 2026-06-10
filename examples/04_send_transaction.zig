@@ -8,10 +8,10 @@ const eth = @import("eth");
 
 pub fn main() !void {
     var buf: [4096]u8 = undefined;
-    var stdout_impl = std.fs.File.stdout().writer(&buf);
+    var stdout_impl = std.Io.File.stdout().writerStreaming(eth.runtime.defaultIo(), &buf);
     const stdout = &stdout_impl.interface;
 
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -38,7 +38,7 @@ pub fn main() !void {
     // Send 0.1 ETH to account #1
     const recipient = try eth.primitives.addressFromHex("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
     const recipient_checksum = eth.primitives.addressToChecksum(&recipient);
-    const value = eth.units.parseEther(0.1);
+    const value = eth.units.parseEther(0.1) orelse return error.InvalidAmount;
 
     try stdout.print("Sending 0.1 ETH\n", .{});
     try stdout.print("  From: {s}\n", .{sender_checksum});

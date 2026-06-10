@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 const ws_transport = @import("ws_transport.zig");
 const subscription = @import("subscription.zig");
 const json_rpc = @import("json_rpc.zig");
@@ -104,7 +105,7 @@ pub const WsClient = struct {
     next_id: u64,
     opts: Opts,
     state: State,
-    /// `std.time.milliTimestamp()` of the last received frame.
+    /// `runtime.milliTimestamp()` of the last received frame.
     last_activity_ms: i64,
     /// Sentinel for an in-flight ping.
     pending_pong: bool,
@@ -135,10 +136,10 @@ pub const WsClient = struct {
             .next_id = 1,
             .opts = opts,
             .state = .connected,
-            .last_activity_ms = std.time.milliTimestamp(),
+            .last_activity_ms = runtime.milliTimestamp(),
             .pending_pong = false,
             .ping_sent_ms = 0,
-            .rng = std.Random.DefaultPrng.init(@bitCast(std.time.milliTimestamp())),
+            .rng = std.Random.DefaultPrng.init(@bitCast(runtime.milliTimestamp())),
         };
         return self;
     }
@@ -378,7 +379,7 @@ pub const WsClient = struct {
             const t = &self.transport.?;
             const frames_before = t.frames_received;
 
-            const now = std.time.milliTimestamp();
+            const now = runtime.milliTimestamp();
 
             // Pong-timeout check.
             if (self.pending_pong and now - self.ping_sent_ms >= @as(i64, @intCast(self.opts.pong_timeout_ms))) {
@@ -390,7 +391,7 @@ pub const WsClient = struct {
                 const elapsed_idle = now - self.last_activity_ms;
                 if (elapsed_idle >= @as(i64, @intCast(self.opts.ping_interval_ms))) {
                     var nonce: [8]u8 = undefined;
-                    std.crypto.random.bytes(&nonce);
+                    runtime.defaultIo().random(&nonce);
                     t.sendPing(&nonce) catch return error.WriteError;
                     self.ping_sent_ms = now;
                     self.pending_pong = true;
@@ -407,7 +408,7 @@ pub const WsClient = struct {
 
             const maybe_frame = t.readMessageDeadline(deadline_ms) catch return error.ReadError;
             if (maybe_frame) |frame| {
-                self.last_activity_ms = std.time.milliTimestamp();
+                self.last_activity_ms = runtime.milliTimestamp();
                 self.pending_pong = false;
                 return frame;
             }
@@ -415,7 +416,7 @@ pub const WsClient = struct {
             // we were waiting for a data frame, we are still alive. Otherwise
             // loop, which will either send a ping or trip pong-timeout.
             if (t.frames_received != frames_before) {
-                self.last_activity_ms = std.time.milliTimestamp();
+                self.last_activity_ms = runtime.milliTimestamp();
                 self.pending_pong = false;
             }
         }
@@ -472,7 +473,7 @@ pub const WsClient = struct {
             const delay = applyJitter(base, self.opts.jitter_pct, self.rng.random());
 
             if (self.opts.on_reconnect) |cb| cb(attempt, delay);
-            std.Thread.sleep(delay * std.time.ns_per_ms);
+            runtime.sleepMs(delay);
 
             const maybe_t = WsTransport.connect(self.allocator, self.url);
             if (maybe_t) |t_val| {
@@ -480,7 +481,7 @@ pub const WsClient = struct {
                 if (self.resubscribeAll(&t)) |_| {
                     self.transport = t;
                     self.state = .connected;
-                    self.last_activity_ms = std.time.milliTimestamp();
+                    self.last_activity_ms = runtime.milliTimestamp();
                     return;
                 } else |_| {
                     t.close();

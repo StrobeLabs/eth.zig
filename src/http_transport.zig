@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 
 /// HTTP JSON-RPC transport layer.
 ///
@@ -13,7 +14,7 @@ pub const HttpTransport = struct {
         return .{
             .url = url,
             .allocator = allocator,
-            .client = .{ .allocator = allocator },
+            .client = .{ .allocator = allocator, .io = runtime.defaultIo() },
         };
     }
 

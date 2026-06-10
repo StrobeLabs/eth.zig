@@ -1,4 +1,5 @@
 const std = @import("std");
+const runtime = @import("runtime.zig");
 
 // ============================================================================
 // Types
@@ -196,7 +197,7 @@ pub fn subscribe(
     parser: *SseParser,
     callback: *const fn (event: SseEvent) void,
 ) !void {
-    var client = std.http.Client{ .allocator = allocator };
+    var client = std.http.Client{ .allocator = allocator, .io = runtime.defaultIo() };
     defer client.deinit();
 
     const uri = try std.Uri.parse(url);
@@ -297,9 +298,7 @@ pub fn subscribeWithReconnect(
         // Use server-specified retry delay if available, otherwise exponential backoff.
         const delay = parser.retry_ms orelse backoff_ms;
         if (opts.on_reconnect) |cb| cb(delay);
-        // Cap before converting to nanoseconds to prevent u64 overflow.
-        const max_sleep_ms: u64 = std.math.maxInt(u64) / std.time.ns_per_ms;
-        std.Thread.sleep(@min(delay, max_sleep_ms) * std.time.ns_per_ms);
+        runtime.sleepMs(delay);
 
         // Only advance exponential backoff when server hasn't specified retry.
         if (parser.retry_ms == null) {

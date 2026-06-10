@@ -1,5 +1,6 @@
 const std = @import("std");
 const signer_mod = @import("signer.zig");
+const runtime = @import("runtime.zig");
 const provider_mod = @import("provider.zig");
 const http_transport_mod = @import("http_transport.zig");
 const transaction_mod = @import("transaction.zig");
@@ -139,7 +140,7 @@ pub const Wallet = struct {
             if (try self.provider.getTransactionReceipt(tx_hash)) |receipt| {
                 return receipt;
             }
-            std.Thread.sleep(1_000_000_000); // 1 second
+            runtime.sleepMs(1_000); // 1 second
         }
         return null;
     }
