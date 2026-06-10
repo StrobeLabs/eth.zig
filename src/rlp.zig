@@ -155,16 +155,19 @@ pub fn encodeInto(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value:
                 try encodeList(allocator, list, &value);
             }
         },
-        .@"struct" => |s| {
-            // Pre-calculate payload length to avoid temp ArrayList
+        .@"struct" => {
+            // Pre-calculate payload length to avoid temp ArrayList.
+            // std.meta.fieldNames is portable across the 0.16/0.17-dev
+            // Type.Struct layout change.
+            const field_names = comptime std.meta.fieldNames(@TypeOf(value));
             var payload_len: usize = 0;
-            inline for (s.fields) |field| {
-                payload_len += encodedLength(@field(value, field.name));
+            inline for (field_names) |field_name| {
+                payload_len += encodedLength(@field(value, field_name));
             }
 
             try encodeLength(allocator, list, payload_len, 0xc0);
-            inline for (s.fields) |field| {
-                try encodeInto(allocator, list, @field(value, field.name));
+            inline for (field_names) |field_name| {
+                try encodeInto(allocator, list, @field(value, field_name));
             }
         },
         .optional => {
