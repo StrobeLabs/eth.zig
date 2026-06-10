@@ -80,6 +80,7 @@ pub fn selectEndpoint(
     health: []const EndpointHealth,
     now_ms: i64,
     opts: FallbackOpts,
+    tried: []const bool, // endpoints already attempted this request
 ) ?usize
 ```
 
@@ -142,4 +143,4 @@ Give each thread its own `FallbackProvider`.
 | `error.RpcError` | Real answer -- returned to caller, never failed over |
 | Mark unhealthy | After `failover_threshold` consecutive transport failures |
 | Recovery | Probe an unhealthy endpoint `recovery_probe_ms` after its last failure |
-| Selection | Pure `selectEndpoint(health, now_ms, opts)` -- testable with injected time |
+| Selection | Pure `selectEndpoint(health, now_ms, opts, tried)` -- testable with injected time |
