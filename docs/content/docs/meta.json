@@ -12,6 +12,7 @@
     "comptime",
     "ens",
     "websockets",
+    "mev-share",
     "batch-calls",
     "dex-math",
     "---Reference---",

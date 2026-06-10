@@ -322,7 +322,11 @@ pub const Relay = struct {
 
     // -- Internal --
 
-    fn authenticatedRequest(self: *Relay, method: []const u8, params_json: []const u8) ![]u8 {
+    /// Send a signed JSON-RPC request to the relay and return the raw
+    /// response body. Exposed for sibling modules (e.g. mev_share) that
+    /// implement additional Flashbots RPC methods on top of Relay.
+    /// Caller owns the returned slice.
+    pub fn authenticatedRequest(self: *Relay, method: []const u8, params_json: []const u8) ![]u8 {
         const id = self.next_id;
         self.next_id += 1;
 
@@ -509,7 +513,10 @@ fn buildCallBundleParams(allocator: std.mem.Allocator, opts: CallBundleOpts) ![]
     return buf.toOwnedSlice(allocator);
 }
 
-fn buildMevSendBundleParams(allocator: std.mem.Allocator, opts: MevSendBundleOpts) ![]u8 {
+/// Build the params array for mev_sendBundle: `[{bundle}]`.
+/// Also reused by mev_share.simulateBundle, which splices simulation
+/// options into the array. Caller owns the returned slice.
+pub fn buildMevSendBundleParams(allocator: std.mem.Allocator, opts: MevSendBundleOpts) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
 

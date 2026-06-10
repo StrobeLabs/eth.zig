@@ -52,6 +52,7 @@ pub const ens_reverse = @import("ens/reverse.zig");
 // -- Layer 8: Client --
 pub const wallet = @import("wallet.zig");
 pub const flashbots = @import("flashbots.zig");
+pub const mev_share = @import("mev_share.zig");
 pub const contract = @import("contract.zig");
 pub const multicall = @import("multicall.zig");
 pub const event = @import("event.zig");
@@ -122,6 +123,7 @@ test {
     // Layer 7: Client
     _ = @import("wallet.zig");
     _ = @import("flashbots.zig");
+    _ = @import("mev_share.zig");
     _ = @import("contract.zig");
     _ = @import("multicall.zig");
     _ = @import("event.zig");

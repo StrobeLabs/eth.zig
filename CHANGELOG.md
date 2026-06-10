@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `mev_share` module: MEV-Share client mirroring `mev-share-client-ts` -- `sendTransaction` (eth_sendPrivateTransaction via `flashbots.Relay`), `simulateBundle` (mev_simBundle with `SimBundleOpts`/`SimBundleResult`), blocking SSE event stream subscription (`MevShareClient.on` with `PendingEvent`/`PendingTransaction`/`PendingBundle` and pure `parseEventData`), and `getEventHistory` (GET /api/v1/history) (#34)
 - `eth_sendPrivateTransaction` (MEV-Share private transactions) on `flashbots.Relay`: submit a single private transaction with hint preferences (calldata, contract_address, logs, function_selector), builder selection, fast mode, and max inclusion block (#40)
 
 ## [0.5.0] - 2026-06-10
