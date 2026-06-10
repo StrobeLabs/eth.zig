@@ -849,7 +849,7 @@ pub fn parseSingleTransaction(allocator: std.mem.Allocator, obj: std.json.Object
     const block_hash = try parseOptionalHash(jsonGetString(obj, "blockHash"));
     const block_number = try parseOptionalHexU64(jsonGetString(obj, "blockNumber"));
     const tx_index: ?u32 = if (jsonGetString(obj, "transactionIndex")) |s|
-        parseHexU32(s) catch null
+        try parseHexU32(s)
     else
         null;
 
@@ -868,11 +868,13 @@ pub fn parseSingleTransaction(allocator: std.mem.Allocator, obj: std.json.Object
     const input = try parseHexBytes(allocator, input_str);
     errdefer allocator.free(input);
 
-    const v = try parseHexU256(jsonGetString(obj, "v") orelse "0x0");
+    // Typed transactions may report only `yParity`; `v` is a legacy alias.
+    const v_str = jsonGetString(obj, "v") orelse jsonGetString(obj, "yParity") orelse return error.InvalidResponse;
+    const v = try parseHexU256(v_str);
     const r = try parseHash(jsonGetString(obj, "r") orelse return error.InvalidResponse);
     const s = try parseHash(jsonGetString(obj, "s") orelse return error.InvalidResponse);
 
-    const type_val = parseHexU8(jsonGetString(obj, "type") orelse "0x0") catch 0;
+    const type_val: u8 = if (jsonGetString(obj, "type")) |t| try parseHexU8(t) else 0;
     const chain_id = try parseOptionalHexU64(jsonGetString(obj, "chainId"));
 
     return rpc_transaction_mod.RpcTransaction{
@@ -1446,6 +1448,69 @@ test "parseSingleTransaction - data alias falls back when input missing" {
     defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
 
     try std.testing.expectEqualSlices(u8, &.{ 0xfe, 0xed }, tx.input);
+}
+
+test "parseSingleTransaction - yParity accepted when v missing" {
+    const allocator = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x0",
+        \\ "from":"0x1111111111111111111111111111111111111111",
+        \\ "to":"0x2222222222222222222222222222222222222222",
+        \\ "value":"0x0",
+        \\ "gas":"0x5208",
+        \\ "maxFeePerGas":"0x1",
+        \\ "maxPriorityFeePerGas":"0x1",
+        \\ "input":"0x",
+        \\ "yParity":"0x1",
+        \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        \\ "type":"0x2"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(allocator, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(allocator, tx);
+
+    try std.testing.expectEqual(@as(u256, 1), tx.v);
+}
+
+test "parseSingleTransaction - malformed fields are rejected" {
+    const allocator = std.testing.allocator;
+    // Base object is valid; each case corrupts or removes one field.
+    const cases = [_]struct { field: []const u8, value: ?[]const u8 }{
+        .{ .field = "transactionIndex", .value = "\"not-hex\"" },
+        .{ .field = "type", .value = "\"zz\"" },
+        .{ .field = "v", .value = null }, // removed entirely (no yParity either)
+    };
+    for (cases) |case| {
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(allocator);
+        try buf.appendSlice(allocator,
+            \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            \\ "nonce":"0x0",
+            \\ "from":"0x1111111111111111111111111111111111111111",
+            \\ "value":"0x0",
+            \\ "gas":"0x5208",
+            \\ "input":"0x",
+            \\ "r":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            \\ "s":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        );
+        if (!std.mem.eql(u8, case.field, "v")) {
+            try buf.appendSlice(allocator, ",\"v\":\"0x1\"");
+        }
+        if (case.value) |val| {
+            try buf.appendSlice(allocator, ",\"");
+            try buf.appendSlice(allocator, case.field);
+            try buf.appendSlice(allocator, "\":");
+            try buf.appendSlice(allocator, val);
+        }
+        try buf.appendSlice(allocator, "}");
+
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, buf.items, .{});
+        defer parsed.deinit();
+        try std.testing.expectError(error.InvalidResponse, parseSingleTransaction(allocator, parsed.value.object));
+    }
 }
 
 test "parseTransactionFromNotification - end-to-end pending tx" {
