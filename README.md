@@ -251,6 +251,7 @@ The [`examples/`](examples/) directory contains self-contained programs demonstr
 | `05_read_erc20` | ERC-20 module API showcase | Yes |
 | `06_hd_wallet` | BIP-44 HD wallet derivation | No |
 | `07_comptime_selectors` | Comptime function selectors | No |
+| `08_mev_share_backrunner` | MEV-Share backrunner bot (SSE stream + bundle) | No (dry-run) |
 
 Run any example:
 

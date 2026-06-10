@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Benchmark comparison refreshed against current alloy crates (alloy-primitives 1.6.0, alloy-sol-types 1.6.0, alloy-dyn-abi 1.6.0, alloy-consensus 2.0.5, alloy-signer 2.0.5, alloy-rlp 0.3.15); bench/alloy-bench migrated from alloy-primitives 0.8 / alloy 0.6. New score: eth.zig wins 18/26 (alloy improved Keccak on larger inputs, hex encoding, RLP u256 decoding, and UniswapV4-style swap math)
 
 ### Added
+- MEV-Share backrunner example (`examples/08_mev_share_backrunner.zig`): a teaching bot that matches the MEV-Share SSE event stream against comptime-computed Uniswap V2/V3 swap selectors and composes a backrun bundle (user tx hash + signed EIP-1559 backrun tx), with a safe `DRY_RUN` default that prints the `mev_sendBundle` params instead of submitting (#38)
 - `mev_share` module: MEV-Share client mirroring `mev-share-client-ts` -- `sendTransaction` (eth_sendPrivateTransaction via `flashbots.Relay`), `simulateBundle` (mev_simBundle with `SimBundleOpts`/`SimBundleResult`), blocking SSE event stream subscription (`MevShareClient.on` with `PendingEvent`/`PendingTransaction`/`PendingBundle` and pure `parseEventData`), and `getEventHistory` (GET /api/v1/history) (#34)
 - `eth_sendPrivateTransaction` (MEV-Share private transactions) on `flashbots.Relay`: submit a single private transaction with hint preferences (calldata, contract_address, logs, function_selector), builder selection, fast mode, and max inclusion block (#40)
+
+### Fixed
+- `sse_transport.SseParser.feedLine`: replaced the removed `std.mem.trimRight` with `std.mem.trimEnd` and gave the line-parse result an explicit struct type. These were latent Zig 0.16 migration misses that only surfaced when `feedLine` was semantically analyzed (it is not referenced by the unit-test root), and broke any consumer of `MevShareClient.on` -- surfaced while building the MEV-Share backrunner example (#38)
 
 ## [0.5.0] - 2026-06-10
 
