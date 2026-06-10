@@ -318,7 +318,6 @@ test "mnemonicToString" {
 }
 
 test "BIP-39 TREZOR passphrase exact seed vector" {
-    if (true) return error.SkipZigTest; // quarantined: seed vector mismatch, see #82
     const hex_mod = @import("hex.zig");
     const words = [_][]const u8{
         "abandon", "abandon", "abandon", "abandon",
@@ -326,11 +325,11 @@ test "BIP-39 TREZOR passphrase exact seed vector" {
         "abandon", "abandon", "abandon", "about",
     };
     const seed = try toSeed(&words, "TREZOR");
-    // First 32 bytes of the known BIP-39 test vector
-    const expected_first32 = try hex_mod.hexToBytesFixed(32, "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e7e24052f0b7c87c2");
+    // Canonical Trezor BIP-39 vector for all-zero (0x000...0) entropy + "TREZOR":
+    // c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04
+    const expected_first32 = try hex_mod.hexToBytesFixed(32, "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e5349553");
     try std.testing.expectEqualSlices(u8, &expected_first32, seed[0..32]);
-    // Last 32 bytes
-    const expected_last32 = try hex_mod.hexToBytesFixed(32, "3758f2f0de3f11ae174a810db40ab2d489cfb1412b145f51585fd05da5a1b6ae");
+    const expected_last32 = try hex_mod.hexToBytesFixed(32, "1f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04");
     try std.testing.expectEqualSlices(u8, &expected_last32, seed[32..64]);
 }
 
