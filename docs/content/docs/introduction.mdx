@@ -1,31 +1,32 @@
 ---
 title: eth.zig
-description: The fastest Ethereum library. Beats Rust on 23 of 26 benchmarks.
+description: The fastest Ethereum library. Beats Rust on 18 of 26 benchmarks.
 ---
 
-**The fastest Ethereum library.** Beats alloy.rs on 23 of 26 benchmarks.
+**The fastest Ethereum library.** Beats alloy.rs on 18 of 26 benchmarks.
 
 eth.zig provides everything you need to interact with Ethereum from Zig -- signing transactions, encoding ABI calls, managing HD wallets, reading ERC-20 tokens, talking to nodes over JSON-RPC, and more.
 
 ## Why eth.zig?
 
-- **Faster than Rust** -- eth.zig [beats alloy.rs](/benchmarks) (Rust's leading Ethereum library, backed by Paradigm) on **23 out of 26 benchmarks**, including secp256k1 signing (2.10x), ABI decoding (8.00x), mulDiv (1.71x), Keccak-256 hashing, and all u256 arithmetic.
+- **Faster than Rust** -- eth.zig [beats alloy.rs](/benchmarks) (Rust's leading Ethereum library, backed by Paradigm) on **18 out of 26 benchmarks**, including secp256k1 signing (2.34x), ABI decoding (8.41x), mulDiv (1.82x), u256 division (3.43x), and Keccak-256 hashing of small inputs.
 - **Comptime-first** -- Function selectors and event topics are computed at compile time with zero runtime cost. The compiler does the hashing so your program doesn't have to.
 
 ## Performance vs alloy.rs
 
-eth.zig wins **23/26 benchmarks** against [alloy.rs](https://alloy.rs). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
+eth.zig wins **18/26 benchmarks** against [alloy.rs](https://alloy.rs) (alloy-primitives 1.6.0, alloy-consensus 2.0.5; run 2026-06-10). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust).
 
 | Operation | eth.zig | alloy.rs | Winner |
 |-----------|---------|----------|--------|
-| secp256k1 sign | 24,609 ns | 51,738 ns | **zig 2.10x** |
-| secp256k1 sign+recover | 54,221 ns | 218,790 ns | **zig 4.04x** |
-| ABI decode (dynamic) | 32 ns | 256 ns | **zig 8.00x** |
-| ABI encode (static) | 24 ns | 97 ns | **zig 4.04x** |
+| secp256k1 sign | 22,033 ns | 51,490 ns | **zig 2.34x** |
+| secp256k1 sign+recover | 52,095 ns | 220,150 ns | **zig 4.23x** |
+| ABI decode (dynamic) | 32 ns | 269 ns | **zig 8.41x** |
+| ABI encode (static) | 25 ns | 97 ns | **zig 3.88x** |
+| RLP encode (EIP-1559 tx) | 3 ns | 73 ns | **zig 24.33x** |
 | u256 division | 7 ns | 24 ns | **zig 3.43x** |
-| u256 mulDiv (512-bit) | 17 ns | 29 ns | **zig 1.71x** |
-| Keccak-256 (32B) | 259 ns | 336 ns | **zig 1.30x** |
-| TX hash (EIP-1559) | 328 ns | 402 ns | **zig 1.23x** |
+| u256 mulDiv (512-bit) | 17 ns | 31 ns | **zig 1.82x** |
+| Keccak-256 (32B) | 263 ns | 319 ns | **zig 1.21x** |
+| TX hash (EIP-1559) | 271 ns | 361 ns | **zig 1.33x** |
 
 See the [full benchmark results](/benchmarks) for all 26 operations.
 

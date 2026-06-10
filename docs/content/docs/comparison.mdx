@@ -5,17 +5,17 @@ description: How eth.zig compares to alloy.rs, Zabi, and other Ethereum librarie
 
 ## Performance vs alloy.rs (Rust)
 
-[alloy.rs](https://alloy.rs) is the leading Rust Ethereum library, backed by Paradigm. eth.zig outperforms it on 23 of 26 benchmarks.
+[alloy.rs](https://alloy.rs) is the leading Rust Ethereum library, backed by Paradigm. eth.zig outperforms it on 18 of 26 benchmarks (alloy-primitives 1.6.0, alloy-consensus 2.0.5; run 2026-06-10).
 
 | Category | eth.zig | alloy.rs |
 |----------|---------|----------|
-| Benchmarks won | **23/26** | 1/26 |
-| secp256k1 signing | Faster (2.10-4.04x) | -- |
-| ABI encoding/decoding | Faster (1.89-8.00x) | -- |
-| Hashing (Keccak) | Faster (1.21-1.30x) | -- |
-| u256 arithmetic | Faster on all ops (1.10-3.43x) | -- |
-| UniswapV4 mulDiv | Faster (1.71x) | -- |
-| Hex operations | Faster (1.22x) | Faster on hex parsing (1.36x, SIMD) |
+| Benchmarks won | **18/26** | 5/26 |
+| secp256k1 signing | Faster (2.34-4.23x) | -- |
+| ABI encoding/decoding | Faster (1.96-8.41x) | -- |
+| Hashing (Keccak) | Faster on small inputs (1.19-1.21x) | Within ~2% on 256B-1KB |
+| u256 arithmetic | Faster on mul/div (2.00-3.43x) | UniswapV4 swap (1.07x) |
+| UniswapV4 mulDiv | Faster (1.82x) | -- |
+| Hex operations | Faster decoding (1.17x) | Faster encoding (1.08x) and parsing (1.55x, SIMD) |
 
 See [full benchmark results](/benchmarks) for details.
 
@@ -39,7 +39,7 @@ See [full benchmark results](/benchmarks) for details.
 
 ### Key Differences
 
-**Performance**: eth.zig beats alloy.rs (Rust) on 23 of 26 benchmarks, including secp256k1 signing (2.10x faster), ABI decoding (8.00x), and u256 mulDiv (1.71x).
+**Performance**: eth.zig beats alloy.rs (Rust) on 18 of 26 benchmarks, including secp256k1 signing (2.34x faster), ABI decoding (8.41x), and u256 mulDiv (1.82x).
 
 **Comptime selectors**: eth.zig computes function selectors and event topics at compile time. This is unique to eth.zig and eliminates runtime hashing overhead. See [Comptime Selectors](/comptime).
 

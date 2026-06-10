@@ -13,9 +13,9 @@ Zig >= 0.15.2. The library tracks Zig stable releases and is also tested against
 
 ## How does secp256k1 signing compare to alloy.rs?
 
-eth.zig wins on secp256k1 signing -- 2.10x faster than alloy.rs for signing and 4.04x faster for sign+recover.
+eth.zig wins on secp256k1 signing -- 2.34x faster than alloy.rs for signing and 4.23x faster for sign+recover (measured 2026-06-10 against alloy-primitives 1.6 / alloy 2.0).
 
-eth.zig wins 23 of 26 benchmarks overall. alloy.rs wins only on address hex parsing (1.36x, SIMD).
+eth.zig wins 18 of 26 benchmarks overall. alloy.rs wins on address hex parsing (1.55x, SIMD), hex encoding (1.08x), UniswapV4 swap (1.07x), and Keccak-256 at 256B/1KB inputs (within ~2%).
 
 ## Does eth.zig support all Ethereum transaction types?
 
@@ -40,7 +40,7 @@ Any EVM-compatible chain works -- these are just convenience configurations.
 
 ## Can I use eth.zig for MEV / HFT?
 
-Yes, that's a primary use case. eth.zig beats alloy.rs on 23/26 benchmarks, with the biggest wins in secp256k1 signing (2.10x), ABI decoding (8.00x), u256 arithmetic (up to 3.43x), mulDiv (1.71x), and comptime selectors (zero-cost at runtime).
+Yes, that's a primary use case. eth.zig beats alloy.rs on 18/26 benchmarks (alloy 1.6/2.0, run 2026-06-10), with the biggest wins in RLP transaction encoding (24.33x), ABI decoding (8.41x), secp256k1 sign+recover (4.23x), secp256k1 signing (2.34x), u256 division (3.43x), and mulDiv (1.82x), plus comptime selectors (zero-cost at runtime).
 
 ## How do I report a security vulnerability?
 
