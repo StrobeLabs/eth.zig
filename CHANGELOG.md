@@ -5,6 +5,11 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `keystore` module: encrypted JSON keystore support (Web3 Secret Storage v3), the on-disk format used by geth/ethers/foundry/MyEtherWallet (#65). `decrypt(allocator, json, password)` parses a v3 document, derives the key via either KDF (`scrypt` or `pbkdf2`-HMAC-SHA256), verifies `MAC = keccak256(derived_key[16..32] ++ ciphertext)` in constant time (`std.crypto.timing_safe.eql`, returning `error.InvalidPassword` on mismatch), and AES-128-CTR decrypts to recover the 32-byte private key. `encrypt(allocator, key, password, opts)` produces a v3 JSON string (defaulting to scrypt N=2^18 + aes-128-ctr, with a v4 UUID and a random salt/IV drawn from the runtime `Io`). All derived keys, the plaintext key copy, and the ciphertext buffer are wiped with `secureZero` on exit. Verified against the canonical Web3 Secret Storage scrypt and pbkdf2 test vectors (both decrypt to `7a28b5ba...fe9d`), proving interop with geth/ethers/foundry
+
 ## [0.6.0] - 2026-06-10
 
 ### Added

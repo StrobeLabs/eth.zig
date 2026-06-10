@@ -9,6 +9,7 @@
     "contracts",
     "tokens",
     "hd-wallets",
+    "keystore",
     "comptime",
     "ens",
     "websockets",

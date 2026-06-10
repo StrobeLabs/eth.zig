@@ -51,6 +51,7 @@ pub const ens_reverse = @import("ens/reverse.zig");
 
 // -- Layer 8: Client --
 pub const wallet = @import("wallet.zig");
+pub const keystore = @import("keystore.zig");
 pub const nonce_manager = @import("nonce_manager.zig");
 pub const flashbots = @import("flashbots.zig");
 pub const mev_share = @import("mev_share.zig");
@@ -123,6 +124,7 @@ test {
     _ = @import("retry_provider.zig");
     // Layer 7: Client
     _ = @import("wallet.zig");
+    _ = @import("keystore.zig");
     _ = @import("nonce_manager.zig");
     _ = @import("flashbots.zig");
     _ = @import("mev_share.zig");
