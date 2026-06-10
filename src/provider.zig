@@ -942,6 +942,7 @@ fn parseAuthorizationList(
         // yParity is the canonical key; tolerate `v` as an alias.
         const yp_str = jsonGetString(ao, "yParity") orelse jsonGetString(ao, "v") orelse return error.InvalidResponse;
         const y_parity = try parseHexU8(yp_str);
+        if (y_parity > 1) return error.InvalidResponse; // EIP-7702 y_parity is 0 or 1
         const r = try parseHash(jsonGetString(ao, "r") orelse return error.InvalidResponse);
         const s = try parseHash(jsonGetString(ao, "s") orelse return error.InvalidResponse);
         out[i] = .{
