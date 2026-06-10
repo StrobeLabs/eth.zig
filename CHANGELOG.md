@@ -5,6 +5,15 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `log_watcher`: block-scoped log watching (#36). `LogWatcher.pollOnce()` drives per-block `eth_getLogs` from a `newHeads` subscription, back-fills blocks missed across reconnects, and re-fetches reorged ranges on parent-hash mismatch; `watchLogs` offers a callback loop
+- `provider.parseBlockHeaderObject`: parse a `BlockHeader` from a bare JSON object
+
+### Fixed
+- `subscription.parseBlockFromNotification` referenced `std.json.stringifyAlloc`, which does not exist in Zig 0.15.2; it now parses the notification object directly without a stringify round-trip
+
 ## [0.4.0] - 2026-06-09
 
 ### Added

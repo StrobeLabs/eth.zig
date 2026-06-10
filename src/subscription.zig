@@ -197,15 +197,9 @@ pub fn parseBlockFromNotification(allocator: std.mem.Allocator, raw: []const u8)
     defer parsed.deinit();
 
     const result_val = getNotificationResult(parsed.value) orelse return error.InvalidNotification;
+    if (result_val != .object) return error.InvalidNotification;
 
-    // Serialize result back and wrap as {"result":...} for reuse with parseBlockHeader.
-    const result_json = try std.json.stringifyAlloc(allocator, result_val, .{});
-    defer allocator.free(result_json);
-
-    const wrapped = try std.fmt.allocPrint(allocator, "{{\"result\":{s}}}", .{result_json});
-    defer allocator.free(wrapped);
-
-    return (try provider_mod.parseBlockHeader(allocator, wrapped)) orelse error.NullResult;
+    return try provider_mod.parseBlockHeaderObject(allocator, result_val.object);
 }
 
 /// Parse a `logs` notification payload into a Log.
