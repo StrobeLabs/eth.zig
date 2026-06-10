@@ -965,8 +965,12 @@ pub fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_m
     if (result_val == .null) return null;
     if (result_val != .object) return error.InvalidResponse;
 
-    const obj = result_val.object;
+    return try parseBlockHeaderObject(allocator, result_val.object);
+}
 
+/// Parse a BlockHeader from a bare JSON object, as found in the `result`
+/// of eth_getBlockByNumber or a newHeads subscription notification.
+pub fn parseBlockHeaderObject(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !block_mod.BlockHeader {
     // Parse required fields
     const number = try parseHexU64(jsonGetString(obj, "number") orelse return error.InvalidResponse);
     const hash = try parseHash(jsonGetString(obj, "hash") orelse return error.InvalidResponse);

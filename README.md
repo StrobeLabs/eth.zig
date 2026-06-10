@@ -174,6 +174,23 @@ while (true) {
 
 Lower-level building blocks remain available: `ws_transport.WsTransport` for raw frames and `ws_transport.connectWithReconnect()` for a callback-style reconnect loop without subscription state.
 
+### Block-scoped log watching (keepers and searchers)
+
+`log_watcher.LogWatcher` packages the canonical bot loop -- on each new head, fetch filtered logs for that block -- on top of `WsClient` + `eth_getLogs`. Blocks missed across reconnects are back-filled and reorged ranges are re-fetched automatically:
+
+```zig
+var watcher = try eth.log_watcher.LogWatcher.init(allocator, &provider, client, .{
+    .address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+}, .{});
+defer watcher.deinit();
+
+while (true) {
+    const logs = try watcher.pollOnce(); // blocks until the next head
+    defer eth.log_watcher.freeLogs(allocator, logs);
+    for (logs) |log| { /* liquidate, arb, ... */ }
+}
+```
+
 ## Built with eth.zig
 
 Real production bots and SDKs built on eth.zig:

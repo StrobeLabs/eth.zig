@@ -70,3 +70,44 @@ wss://host:port/path   -- TLS encrypted (recommended)
 ```
 
 Default ports: 80 for `ws://`, 443 for `wss://`.
+
+## Watching Logs Per Block (LogWatcher)
+
+The pattern "on each new block, fetch filtered logs and process them" is the core
+of most on-chain bots (liquidation keepers, arbitrage, searchers). `log_watcher`
+packages it: a `newHeads` subscription drives block-scoped `eth_getLogs` calls,
+blocks missed across reconnects are back-filled, and reorgs (parent-hash mismatch
+on sequential heads) re-fetch the replaced range.
+
+```zig
+const eth = @import("eth");
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+defer transport.deinit();
+var provider = eth.provider.Provider.init(allocator, &transport);
+
+const client = try eth.ws_client.WsClient.connect(allocator, "wss://rpc.example.com/ws", .{});
+defer client.deinit();
+
+var watcher = try eth.log_watcher.LogWatcher.init(allocator, &provider, client, .{
+    .address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH
+    .topics = &.{ "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef" }, // Transfer
+}, .{ .start_block_lag = 0, .handle_reorgs = true });
+defer watcher.deinit();
+
+while (true) {
+    const logs = try watcher.pollOnce(); // blocks until the next head
+    defer eth.log_watcher.freeLogs(allocator, logs);
+    for (logs) |log| {
+        // process log.address / log.topics / log.data
+    }
+}
+```
+
+Notes:
+
+- On reorgs, logs for the replaced range are **re-delivered**; key your processing
+  on `(block_hash, log_index)` to deduplicate.
+- `start_block_lag` lets the first poll start N blocks behind the first observed
+  head (useful for warm-up).
+- A callback-style wrapper `eth.log_watcher.watchLogs(...)` is also available.

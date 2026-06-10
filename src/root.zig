@@ -55,6 +55,7 @@ pub const flashbots = @import("flashbots.zig");
 pub const contract = @import("contract.zig");
 pub const multicall = @import("multicall.zig");
 pub const event = @import("event.zig");
+pub const log_watcher = @import("log_watcher.zig");
 pub const erc20 = @import("erc20.zig");
 pub const erc721 = @import("erc721.zig");
 
@@ -123,6 +124,7 @@ test {
     _ = @import("contract.zig");
     _ = @import("multicall.zig");
     _ = @import("event.zig");
+    _ = @import("log_watcher.zig");
     _ = @import("erc20.zig");
     _ = @import("erc721.zig");
     // Layer 9

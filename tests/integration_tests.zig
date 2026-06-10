@@ -562,3 +562,35 @@ test "WsClient subscribe pending full streams an RpcTransaction" {
     }
     if (!found) return error.NoPendingTxObserved;
 }
+
+// ---------------------------------------------------------------------------
+// LogWatcher: block-scoped log watching (issue #36)
+// ---------------------------------------------------------------------------
+
+test "LogWatcher pollOnce tracks mined blocks" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, .{ .ping_interval_ms = 0 });
+    defer client.deinit();
+
+    var watcher = try eth.log_watcher.LogWatcher.init(allocator, &provider, client, .{}, .{});
+    defer watcher.deinit();
+
+    try anvilMineOne(allocator);
+    const logs = try watcher.pollOnce();
+    defer eth.log_watcher.freeLogs(allocator, logs);
+
+    // An empty mined block carries no logs, but the cursor must advance.
+    try std.testing.expectEqual(@as(usize, 0), logs.len);
+    const first = watcher.cursor.?;
+
+    try anvilMineOne(allocator);
+    const logs2 = try watcher.pollOnce();
+    defer eth.log_watcher.freeLogs(allocator, logs2);
+    try std.testing.expectEqual(first.number + 1, watcher.cursor.?.number);
+}
