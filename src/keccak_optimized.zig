@@ -18,24 +18,13 @@ const RC = [24]u64{
 // Rotation offsets for rho step (indexed by pi permutation order)
 const RHO = [25]u6{ 0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14 };
 
-// Lane complementing mask: lanes {1,2,8,12,17,20} are complemented.
-// This converts the chi step's NOT+AND into ANDN (single instruction on ARM/x86).
-const COMPLEMENT_LANES = [25]bool{
-    false, true,  true,  false, false,
-    false, false, false, true,  false,
-    false, false, true,  false, false,
-    false, false, true,  false, false,
-    true,  false, false, false, false,
-};
-
-/// Optimized Keccak-256 hash. Lane complementing + interleaved rounds.
+/// Pure-Zig Keccak-256 hash (no C backend). This is a straightforward,
+/// spec-faithful Keccak-f[1600] implementation kept as a fallback for the
+/// XKCP-accelerated path in `keccak.zig`. The standard chi step (`~a & b`)
+/// lowers to a single ANDN on modern targets, so it stays fast without the
+/// error-prone lane-complementing bookkeeping a previous version attempted.
 pub fn keccak256(data: []const u8) [32]u8 {
     var state: [25]u64 = @as([25]u64, @splat(0));
-
-    // Apply lane complement to initial zero state (complement of 0 = ~0)
-    inline for (0..25) |i| {
-        if (COMPLEMENT_LANES[i]) state[i] = ~@as(u64, 0);
-    }
 
     // Absorb
     var offset: usize = 0;
@@ -53,12 +42,10 @@ pub fn keccak256(data: []const u8) [32]u8 {
     xorBlock(&state, &last);
     keccakF(&state);
 
-    // Squeeze 32 bytes, removing lane complement
+    // Squeeze 32 bytes
     var out: [32]u8 = undefined;
     inline for (0..4) |i| {
-        var lane = state[i];
-        if (COMPLEMENT_LANES[i]) lane = ~lane;
-        mem.writeInt(u64, out[i * 8 ..][0..8], lane, .little);
+        mem.writeInt(u64, out[i * 8 ..][0..8], state[i], .little);
     }
     return out;
 }
@@ -108,14 +95,7 @@ inline fn round(a: *[25]u64, rc: u64) void {
         b[PI_DST[i]] = math.rotl(u64, a[i] ^ d[i % 5], RHO[i]);
     }
 
-    // Chi with lane complementing.
-    // Standard chi: a[i] = b[i] ^ (~b[i+1] & b[i+2])
-    // With lane complementing, some b values are already complemented,
-    // allowing us to use AND/ANDN/OR patterns instead of NOT+AND.
-    //
-    // For each row (y*5 .. y*5+4), the pattern depends on which of the
-    // 3 operands (b[x], b[x+1], b[x+2]) are complemented.
-    // Patterns: ~b&c -> ANDN, b&~c -> ANDN, ~b|c -> ORN, b|~c -> ORN
+    // Chi: a[i] = b[i] ^ (~b[i+1] & b[i+2]), per 5-lane row.
     inline for (0..5) |y| {
         const base = y * 5;
         const b0 = b[base + 0];
@@ -124,53 +104,15 @@ inline fn round(a: *[25]u64, rc: u64) void {
         const b3 = b[base + 3];
         const b4 = b[base + 4];
 
-        const c0 = COMPLEMENT_LANES[base + 0];
-        const c1 = COMPLEMENT_LANES[base + 1];
-        const c2 = COMPLEMENT_LANES[base + 2];
-        const c3 = COMPLEMENT_LANES[base + 3];
-        const c4 = COMPLEMENT_LANES[base + 4];
-
-        // a[base+x] = b[x] ^ chi_op(b[x+1], b[x+2])
-        // chi_op depends on complement status of b[x+1]:
-        //   if b[x+1] complemented: chi_op = b[x+1] & b[x+2]  (NOT already applied)
-        //   if b[x+1] NOT complemented: chi_op = ~b[x+1] & b[x+2]
-        // But we also need to maintain the complement invariant for the output lane.
-        //
-        a[base + 0] = chiLane(b0, b1, b2, c1, c2);
-        a[base + 1] = chiLane(b1, b2, b3, c2, c3);
-        a[base + 2] = chiLane(b2, b3, b4, c3, c4);
-        a[base + 3] = chiLane(b3, b4, b0, c4, c0);
-        a[base + 4] = chiLane(b4, b0, b1, c0, c1);
+        a[base + 0] = b0 ^ (~b1 & b2);
+        a[base + 1] = b1 ^ (~b2 & b3);
+        a[base + 2] = b2 ^ (~b3 & b4);
+        a[base + 3] = b3 ^ (~b4 & b0);
+        a[base + 4] = b4 ^ (~b0 & b1);
     }
 
     // Iota
     a[0] ^= rc;
-}
-
-inline fn chiLane(
-    bx: u64,
-    bx1: u64,
-    bx2: u64,
-    comptime cx1: bool,
-    comptime cx2: bool,
-) u64 {
-    // Chi step with lane complementing (XKCP opt64).
-    // The operation depends on the complement status of bx1 and bx2:
-    //   (false, false): ~bx1 & bx2           -> standard ANDN
-    //   (true, false):  bx1 & bx2            -> AND (bx1 already ~'d)
-    //   (false, true):  ~bx1 | bx2           -> ORN (De Morgan)
-    //   (true, true):   bx1 | bx2            -> OR  (both ~'d: De Morgan)
-    //
-    const chi_term = if (!cx1 and !cx2)
-        ~bx1 & bx2
-    else if (cx1 and !cx2)
-        bx1 & bx2
-    else if (!cx1 and cx2)
-        ~bx1 | bx2
-    else // cx1 and cx2
-        bx1 | bx2;
-
-    return bx ^ chi_term;
 }
 
 // ============================================================================
@@ -186,7 +128,6 @@ fn stdlibHash(data: []const u8) [32]u8 {
 }
 
 test "optimized keccak256 empty input" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const result = keccak256("");
     const expected = stdlibHash("");
     try std.testing.expectEqualSlices(u8, &expected, &result);
@@ -197,7 +138,6 @@ test "optimized keccak256 empty input" {
 }
 
 test "optimized keccak256 abc" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const result = keccak256("abc");
     const expected = stdlibHash("abc");
     try std.testing.expectEqualSlices(u8, &expected, &result);
@@ -207,7 +147,6 @@ test "optimized keccak256 abc" {
 }
 
 test "optimized keccak256 Hello World" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const result = keccak256("Hello, World!");
     const expected = stdlibHash("Hello, World!");
     try std.testing.expectEqualSlices(u8, &expected, &result);
@@ -217,7 +156,6 @@ test "optimized keccak256 Hello World" {
 }
 
 test "optimized keccak256 testing" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const result = keccak256("testing");
     const expected = stdlibHash("testing");
     try std.testing.expectEqualSlices(u8, &expected, &result);
@@ -227,7 +165,6 @@ test "optimized keccak256 testing" {
 }
 
 test "optimized keccak256 exactly 1 block (136 bytes)" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const data = @as([136]u8, @splat(0x42));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
@@ -235,7 +172,6 @@ test "optimized keccak256 exactly 1 block (136 bytes)" {
 }
 
 test "optimized keccak256 rate-1 boundary (135 bytes)" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const data = @as([135]u8, @splat(0xAB));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
@@ -243,7 +179,6 @@ test "optimized keccak256 rate-1 boundary (135 bytes)" {
 }
 
 test "optimized keccak256 rate+1 boundary (137 bytes)" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const data = @as([137]u8, @splat(0xCD));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
@@ -251,7 +186,6 @@ test "optimized keccak256 rate+1 boundary (137 bytes)" {
 }
 
 test "optimized keccak256 multi-block 256 bytes" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const data = @as([256]u8, @splat(0xAB));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
@@ -259,7 +193,6 @@ test "optimized keccak256 multi-block 256 bytes" {
 }
 
 test "optimized keccak256 multi-block 1KB" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const data = @as([1024]u8, @splat(0xAB));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
@@ -267,7 +200,6 @@ test "optimized keccak256 multi-block 1KB" {
 }
 
 test "optimized keccak256 multi-block 4KB" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const data = @as([4096]u8, @splat(0x42));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
@@ -275,7 +207,6 @@ test "optimized keccak256 multi-block 4KB" {
 }
 
 test "optimized keccak256 large input 64KB" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     const data = @as([65536]u8, @splat(0xFF));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
@@ -283,7 +214,6 @@ test "optimized keccak256 large input 64KB" {
 }
 
 test "optimized keccak256 cross-validation sweep" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     // Test every size from 0 to 299 against stdlib
     var data: [300]u8 = undefined;
     for (&data, 0..) |*b, i| b.* = @truncate(i *% 137 +% 42);
@@ -296,7 +226,6 @@ test "optimized keccak256 cross-validation sweep" {
 }
 
 test "optimized keccak256 DeFi selectors" {
-    if (true) return error.SkipZigTest; // quarantined: broken fallback, see #80
     // transfer(address,uint256) -> 0xa9059cbb
     const transfer = keccak256("transfer(address,uint256)");
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0xa9, 0x05, 0x9c, 0xbb }, transfer[0..4]);
