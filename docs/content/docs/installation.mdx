@@ -13,7 +13,7 @@ description: How to add eth.zig to your Zig project.
 **One-liner:**
 
 ```bash
-zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.4.0
+zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.5.0
 ```
 
 **Or add manually** to your `build.zig.zon`:
@@ -21,7 +21,7 @@ zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.4.0
 ```zig
 .dependencies = .{
     .eth = .{
-        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.4.0",
+        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.5.0",
         .hash = "...", // run `zig build` and it will tell you the expected hash
     },
 },

@@ -5,7 +5,7 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-06-10
 
 ### Changed
 - Minimum supported Zig version is now 0.16.0. Transports (HTTP, WebSocket, SSE), retry backoff, and receipt polling were migrated to the new `std.Io` interface; the library constructs a default blocking `std.Io` internally, so public signatures are unchanged. This is a breaking change for Zig 0.15 users
