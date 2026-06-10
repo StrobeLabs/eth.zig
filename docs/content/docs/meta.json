@@ -14,6 +14,7 @@
     "ens",
     "websockets",
     "nonce-manager",
+    "fallback-provider",
     "mev-share",
     "batch-calls",
     "dex-math",

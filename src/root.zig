@@ -43,6 +43,9 @@ pub const provider = @import("provider.zig");
 pub const retry_provider = @import("retry_provider.zig");
 pub const RetryingProvider = retry_provider.RetryingProvider;
 pub const RetryOpts = retry_provider.RetryOpts;
+pub const fallback_provider = @import("fallback_provider.zig");
+pub const FallbackProvider = fallback_provider.FallbackProvider;
+pub const FallbackOpts = fallback_provider.FallbackOpts;
 
 // -- Layer 7: ENS --
 pub const ens_namehash = @import("ens/namehash.zig");
@@ -122,6 +125,7 @@ test {
     _ = @import("state_overrides.zig");
     _ = @import("provider.zig");
     _ = @import("retry_provider.zig");
+    _ = @import("fallback_provider.zig");
     // Layer 7: Client
     _ = @import("wallet.zig");
     _ = @import("keystore.zig");

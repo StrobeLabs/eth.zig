@@ -1,0 +1,146 @@
+---
+title: Fallback Provider
+description: Fail over across multiple RPC endpoints on connection failures, with per-endpoint health tracking and automatic recovery.
+---
+
+Production bots never trust a single RPC endpoint. `RetryingProvider` retries
+*one* endpoint; it cannot route around an endpoint that is down. `FallbackProvider`
+holds an **ordered list of endpoints** and fails over between them: on a
+transport/connection failure it advances to the next healthy endpoint, marks a
+repeatedly-failing endpoint unhealthy, and periodically probes it back to life --
+always preferring the primary so a recovered endpoint is reclaimed automatically.
+
+It exposes the same read method surface as `Provider`, so it is a drop-in
+replacement.
+
+## The multi-RPC use case
+
+```zig
+const eth = @import("eth");
+
+var fb = try eth.fallback_provider.FallbackProvider.init(allocator, &.{
+    "https://primary.example.com",
+    "https://backup-a.example.com",
+    "https://backup-b.example.com",
+}, .{});
+defer fb.deinit();
+
+// Same surface as Provider. If the primary's connection fails, this call
+// transparently retries against backup-a, then backup-b.
+const block_num = try fb.getBlockNumber();
+const balance = try fb.getBalance(some_address);
+```
+
+`FallbackProvider` owns one `HttpTransport` and one `Provider` per endpoint;
+`deinit` tears them all down. The endpoint URLs are referenced (not copied), so
+they must outlive the provider -- exactly like `HttpTransport.init`.
+
+## What triggers failover -- and what does NOT
+
+This is the single most important behavior to understand.
+
+Failover fires **only on transport/connection errors** -- the request never
+reached a node, or the HTTP layer rejected it:
+
+- `error.ConnectionFailed`, `error.HttpError`
+- raw socket errors: `error.ConnectionRefused`, `error.ConnectionTimedOut`,
+  `error.ConnectionResetByPeer`, `error.BrokenPipe`, `error.NetworkUnreachable`,
+  `error.WouldBlock`, `error.UnexpectedEof`
+
+Failover does **NOT** fire on `error.RpcError`. An RPC error means the node
+**answered** the request: a contract revert, an unsupported method, a JSON-RPC
+rate-limit error. That is a real answer, and it is returned to the caller
+unchanged. Re-sending it to a different endpoint would produce the same answer --
+or, for `sendRawTransaction`, risk a double submission. Likewise, local errors
+(`error.InvalidResponse`, `error.NullResult`, `error.OutOfMemory`) are not an
+endpoint-health signal and are never failed over.
+
+This classification lives in one pure function:
+
+```zig
+pub fn isFailoverError(err: anyerror) bool
+```
+
+## Health state machine
+
+Each endpoint carries a small health record:
+
+| Field | Meaning |
+|-------|---------|
+| `consecutive_failures` | Transport failures since the last success |
+| `last_success_ms` | Wall-clock time of the last good response |
+| `last_failure_ms` | Wall-clock time of the most recent failure |
+
+The selection logic is a **pure function** over `(health, now_ms, opts)`, which
+makes the whole failover/recovery state machine unit-testable with injected
+timestamps -- no clock, no network:
+
+```zig
+pub fn selectEndpoint(
+    health: []const EndpointHealth,
+    now_ms: i64,
+    opts: FallbackOpts,
+    tried: []const bool, // endpoints already attempted this request
+) ?usize
+```
+
+Selection order:
+
+1. **The lowest-index healthy endpoint** (`consecutive_failures < failover_threshold`).
+   Lower-index endpoints are the preferred ones, so once a primary's failure
+   streak clears it is picked again automatically.
+2. Otherwise, **the first unhealthy endpoint whose recovery probe is due** --
+   at least `recovery_probe_ms` has elapsed since its last failure. This is the
+   probe that lets a downed endpoint come back.
+3. Otherwise **`null`**: every endpoint is unhealthy and none is probe-ready. The
+   request surfaces the last transport error instead of hammering a dead pool.
+
+A successful response resets `consecutive_failures` to 0; a transport failure
+increments it and stamps `last_failure_ms`.
+
+## Configuration
+
+```zig
+pub const FallbackOpts = struct {
+    failover_threshold: u32 = 3,     // consecutive failures before "unhealthy"
+    recovery_probe_ms: i64 = 30_000, // wait before re-probing a failed endpoint
+};
+```
+
+```zig
+var fb = try eth.fallback_provider.FallbackProvider.init(allocator, endpoints, .{
+    .failover_threshold = 5,
+    .recovery_probe_ms = 10_000,
+});
+```
+
+## Method surface
+
+`FallbackProvider` mirrors the common `Provider` read/execute methods, with
+identical signatures: `getChainId`, `getBlockNumber`, `getBalance`,
+`getTransactionCount`, `getTransactionCountAt`, `getCode`, `getStorageAt`,
+`getGasPrice`, `getMaxPriorityFee`, `call`, `estimateGas`, `sendRawTransaction`,
+`getTransactionReceipt`, `getBlock`, and `getLogs`. Each one delegates to the
+selected endpoint's `Provider` and runs the failover loop.
+
+`sendRawTransaction` is safe to fail over on a connection error: a signed
+transaction is nonce-protected, so resubmitting the same bytes to another
+endpoint is a no-op once mined. An `error.RpcError` like "nonce too low" or
+"already known" is the node's real answer and is returned, not retried.
+
+## Threading
+
+Single-threaded, like `Provider`. The health counters are plain integers (not
+atomics) and each endpoint's underlying `std.http.Client` is not thread-safe.
+Give each thread its own `FallbackProvider`.
+
+## Summary
+
+| Concept | Behavior |
+|---------|----------|
+| Endpoint order | Lower index = more preferred; primary reclaimed on recovery |
+| Failover trigger | Transport errors only (`isFailoverError`) |
+| `error.RpcError` | Real answer -- returned to caller, never failed over |
+| Mark unhealthy | After `failover_threshold` consecutive transport failures |
+| Recovery | Probe an unhealthy endpoint `recovery_probe_ms` after its last failure |
+| Selection | Pure `selectEndpoint(health, now_ms, opts, tried)` -- testable with injected time |
