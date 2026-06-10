@@ -14,16 +14,23 @@ pub fn build(b: *std.Build) void {
     addXkcp(b, eth_module, target);
     addSecp256k1(b, eth_module);
 
-    // Unit tests
+    // Unit tests. Root the test artifact at src/root.zig so its test block
+    // (which direct-imports every module file) actually collects and runs the
+    // per-module `test` blocks. Aggregating via `_ = eth.module` field access
+    // only forces semantic analysis -- it does NOT collect those tests, so the
+    // previous tests-aggregator-rooted artifact compiled assertions without
+    // ever executing them. The C backends (XKCP, secp256k1) must be re-attached
+    // because this is a fresh module, not the published `eth` module.
+    const unit_test_module = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    addXkcp(b, unit_test_module, target);
+    addSecp256k1(b, unit_test_module);
     const unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tests/unit_tests.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "eth", .module = eth_module },
-            },
-        }),
+        .root_module = unit_test_module,
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
@@ -123,7 +130,12 @@ pub fn build(b: *std.Build) void {
 
 /// Add XKCP keccak C sources to a module with CPU-appropriate backend selection.
 fn addXkcp(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
-    const c_flags = &.{"-O3"};
+    // -fno-sanitize=undefined: the XKCP permutation does intentional unaligned
+    // 64-bit loads (portable optimized C). In Debug builds Zig links the C UBSan
+    // runtime, which traps those well-defined accesses; disable it for this
+    // vendored third-party code. Production/benchmarks use ReleaseFast where
+    // UBSan is off anyway.
+    const c_flags = &.{ "-O3", "-fno-sanitize=undefined" };
 
     // Common include paths
     module.addIncludePath(b.path("src/crypto/xkcp/common"));
@@ -195,6 +207,8 @@ fn addSecp256k1(b: *std.Build, module: *std.Build.Module) void {
         "-DCOMB_TEETH=6",
         "-O2",
         "-Wno-unused-function",
+        // Vendored audited C with intentional unaligned access; see addXkcp.
+        "-fno-sanitize=undefined",
     };
 
     module.addIncludePath(b.path("src/crypto/secp256k1/include"));
