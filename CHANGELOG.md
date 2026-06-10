@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- DEX `getAmountIn`/`getAmountOut` are correct standard Uniswap V2; the `getAmountIn inverse` round-trip test used unrealistic tiny-reserve parameters where flooring a small output legitimately breaks the within-2-units invariant. Corrected the test to balanced reserves and un-quarantined it (#83). The full unit suite now runs with zero skips.
 - BIP-39 seed derivation (`mnemonic.toSeed`) was correct; its Trezor passphrase test had a wrong expected vector. Corrected the test to the canonical vector (verified against `std.crypto` PBKDF2) and un-quarantined it (#82).
 - `mulDiv` now returns the correct result when the intermediate product overflows u256 with a full-width divisor, e.g. `mulDiv(MAX, MAX, MAX)` (#81). The limb-native Knuth-D divider mis-handled this boundary; the rare overflow path now computes exactly in native u512 (the benchmarked u128 fast path is unchanged).
 - Pure-Zig Keccak-256 fallback (`keccak_optimized.zig`) now produces correct digests (#80): replaced the broken lane-complementing chi optimization with the standard chi step (which lowers to ANDN anyway). Verified against pinned vectors and cross-validated with stdlib across all block sizes.
