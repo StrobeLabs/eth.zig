@@ -1,0 +1,144 @@
+---
+title: Nonce Manager
+description: Hand out collision-free nonces to concurrent transaction senders with an atomic local cache and gap recovery.
+---
+
+When a bot fires transactions from multiple threads, each thread that calls
+`eth_getTransactionCount` independently can read the *same* on-chain nonce, build
+two transactions with that nonce, and have one rejected as a duplicate.
+`eth.nonce_manager.NonceManager` fixes this with a local atomic nonce cache: it
+seeds once from the chain and then hands out strictly increasing nonces with a
+single atomic operation -- no RPC and no lock on the hot path.
+
+## The concurrent-bot use case
+
+```zig
+const eth = @import("eth");
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+defer transport.deinit();
+var provider = eth.provider.Provider.init(allocator, &transport);
+
+const sender = try wallet.address();
+
+// No RPC happens here. The first `next()` seeds from the pending count.
+var nonces = eth.nonce_manager.NonceManager.init(&provider, sender);
+
+// Each worker thread allocates its own nonce; two threads never collide.
+fn worker(nm: *eth.nonce_manager.NonceManager, w: *eth.wallet.Wallet) !void {
+    const nonce = try nm.next();
+    _ = try w.sendTransaction(.{
+        .to = some_target,
+        .value = 0,
+        .nonce = nonce, // pass the managed nonce explicitly
+    });
+}
+```
+
+`next()` returns the nonce to use and atomically advances the counter. Because it
+is a single `fetchAdd`, concurrent callers always receive **distinct, contiguous**
+values -- never the same nonce twice.
+
+### Attaching it to a Wallet
+
+`Wallet` has an optional `nonce_manager` field (default `null`). When set, every
+`sendTransaction` that does not specify an explicit `nonce` draws one from the
+manager instead of making a per-send `eth_getTransactionCount` call:
+
+```zig
+var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+var nonces = eth.nonce_manager.NonceManager.init(&provider, try wallet.address());
+wallet.nonce_manager = &nonces; // opt-in; leaving it null keeps the old behavior
+
+// Now concurrent sends auto-fill collision-free nonces.
+_ = try wallet.sendTransaction(.{ .to = some_target, .value = 0 });
+```
+
+This is fully backward compatible: a wallet with no manager attached behaves
+exactly as before (one pending-count RPC per send). When a manager is attached and
+a send fails before the transaction reaches the mempool (gas estimation, signing,
+or broadcast), the wallet automatically returns the drawn nonce via `onFailure`, so
+a failed send does not burn a nonce. Sharing one `Wallet` across threads is
+otherwise the caller's responsibility; the nonce source itself is thread-safe.
+
+## Seeding
+
+`init` performs no I/O. The manager seeds itself on the first `next()` (or an
+explicit `resync()`) by reading `eth_getTransactionCount(address, "pending")`. The
+`pending` tag is important: it counts transactions still in the mempool, so the
+manager will not reuse a nonce that is already queued but not yet mined.
+
+Seeding is race-safe. The first time several threads call `next()` at once, exactly
+one performs the RPC (guarded by a mutex with double-checked locking); the others
+block briefly and then observe the freshly stored base. After that, the seeding
+mutex is never taken again -- every subsequent `next()` is purely atomic.
+
+## Peeking
+
+```zig
+const upcoming = nonces.peek(); // next nonce, without advancing
+```
+
+`peek()` never does I/O. Before the manager is seeded it returns
+`eth.nonce_manager.UNSEEDED` (the `u64` sentinel `maxInt(u64)`), because without a
+round-trip it cannot know the real base. Call `next()` or `resync()` first if you
+need a concrete value.
+
+## Failure and gap recovery -- read this carefully
+
+Ethereum requires an account's nonces to be consumed **contiguously**. That makes
+nonce recovery subtle, so the API is deliberately conservative.
+
+### `onFailure(nonce)` -- reuse only the last one
+
+```zig
+const n = try nonces.next();
+const ok = w.sendTransaction(.{ .nonce = n, ... }) catch |err| {
+    // The broadcast failed before the tx entered the mempool.
+    if (nonces.onFailure(n)) {
+        // n was the most recently issued nonce: it is now back in the pool
+        // and the next `next()` will hand it out again.
+    }
+    return err;
+};
+```
+
+`onFailure(nonce)` rolls the counter back by one **only** when `nonce` is the
+highest nonce issued so far (`nonce == peek() - 1`). It returns `true` when the
+rollback happened and `false` otherwise.
+
+Why only the last one? Suppose you handed out `N` then `N+1` and `N` failed. You
+**cannot** reuse `N`: `N+1` is already in flight, and on chain `N+1` can never
+confirm until `N` is filled. Reinjecting the middle nonce `N` here would let a
+later `next()` return a value below one already broadcast, producing a
+duplicate-nonce collision. So for any nonce that is not the current high-water
+mark, `onFailure` is a documented **no-op** that returns `false`.
+
+The rollback is a compare-and-swap, so it is also safe against a concurrent
+`next()`: if another thread advanced the counter between your failure and your
+`onFailure` call, the CAS fails and the manager correctly declines to roll back.
+
+### `resync()` / `reset()` -- recover from a real gap
+
+When a transaction is dropped or replaced and leaves a gap the manager cannot
+reason about locally, re-seed from the chain:
+
+```zig
+const new_base = try nonces.resync(); // re-reads the pending count
+```
+
+`resync()` (and its alias `reset()`) **discards all local state** and re-fetches
+the authoritative pending count. Any nonces handed out but not yet mined are
+abandoned, so only call it once you are sure no `next()`-issued transaction is
+still expected to land -- otherwise an in-flight transaction may collide with a
+re-issued nonce.
+
+## Summary
+
+| Method | Does RPC? | Effect |
+|--------|-----------|--------|
+| `init` | no | Construct; seeds lazily |
+| `next()` | once (first call) | Return current nonce, then advance (atomic) |
+| `peek()` | no | Next nonce without advancing (`UNSEEDED` if not seeded) |
+| `onFailure(n)` | no | Roll back only if `n` is the last issued nonce |
+| `resync()` / `reset()` | yes | Discard local state, re-seed from `pending` |
