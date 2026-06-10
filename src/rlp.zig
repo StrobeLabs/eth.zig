@@ -654,7 +654,7 @@ test "encode-decode roundtrip u256 max" {
 
 test "encode long string 56 bytes" {
     const allocator = std.testing.allocator;
-    const data: [56]u8 = .{0xAA} ** 56;
+    const data: [56]u8 = @splat(0xAA);
     const result = try encode(allocator, @as([]const u8, &data));
     defer allocator.free(result);
     // Long string: prefix = 0xb8 (0x80 + 55 + 1), length byte = 0x38 (56)
@@ -664,7 +664,7 @@ test "encode long string 56 bytes" {
 
 test "encode long string 256 bytes" {
     const allocator = std.testing.allocator;
-    const data: [256]u8 = .{0xBB} ** 256;
+    const data: [256]u8 = @splat(0xBB);
     const result = try encode(allocator, @as([]const u8, &data));
     defer allocator.free(result);
     // Long string: prefix = 0xb9 (0x80 + 55 + 2), length = 256 = 0x01 0x00

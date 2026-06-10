@@ -219,7 +219,7 @@ test "ERC20 Approval topic matches known value" {
 }
 
 test "ERC20.init sets address correctly" {
-    const token_addr = [_]u8{0xaa} ** 20;
+    const token_addr = @as([20]u8, @splat(0xaa));
     var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
     defer transport.deinit();
     var prov = provider_mod.Provider.init(std.testing.allocator, &transport);
@@ -231,7 +231,7 @@ test "ERC20.init sets address correctly" {
 test "ERC20 transfer encodes correctly" {
     // Verify the encoding that transfer would produce
     const allocator = std.testing.allocator;
-    var to_addr: [20]u8 = [_]u8{0} ** 20;
+    var to_addr: [20]u8 = @as([20]u8, @splat(0));
     to_addr[19] = 0x01;
 
     const args = [_]AbiValue{ .{ .address = to_addr }, .{ .uint256 = 1000 } };
@@ -245,7 +245,7 @@ test "ERC20 transfer encodes correctly" {
 
 test "ERC20 balanceOf encodes correctly" {
     const allocator = std.testing.allocator;
-    var holder: [20]u8 = [_]u8{0} ** 20;
+    var holder: [20]u8 = @as([20]u8, @splat(0));
     holder[0] = 0xd8;
     holder[19] = 0x45;
 
@@ -259,7 +259,7 @@ test "ERC20 balanceOf encodes correctly" {
 
 test "ERC20 approve encodes correctly" {
     const allocator = std.testing.allocator;
-    var spender: [20]u8 = [_]u8{0} ** 20;
+    var spender: [20]u8 = @as([20]u8, @splat(0));
     spender[19] = 0x02;
 
     const args = [_]AbiValue{ .{ .address = spender }, .{ .uint256 = 500 } };
@@ -272,9 +272,9 @@ test "ERC20 approve encodes correctly" {
 
 test "ERC20 transferFrom encodes correctly" {
     const allocator = std.testing.allocator;
-    var from: [20]u8 = [_]u8{0} ** 20;
+    var from: [20]u8 = @as([20]u8, @splat(0));
     from[19] = 0x01;
-    var to: [20]u8 = [_]u8{0} ** 20;
+    var to: [20]u8 = @as([20]u8, @splat(0));
     to[19] = 0x02;
 
     const args = [_]AbiValue{ .{ .address = from }, .{ .address = to }, .{ .uint256 = 100 } };
@@ -288,9 +288,9 @@ test "ERC20 transferFrom encodes correctly" {
 
 test "ERC20 allowance encodes correctly" {
     const allocator = std.testing.allocator;
-    var owner: [20]u8 = [_]u8{0} ** 20;
+    var owner: [20]u8 = @as([20]u8, @splat(0));
     owner[19] = 0x01;
-    var spender: [20]u8 = [_]u8{0} ** 20;
+    var spender: [20]u8 = @as([20]u8, @splat(0));
     spender[19] = 0x02;
 
     const args = [_]AbiValue{ .{ .address = owner }, .{ .address = spender } };

@@ -141,7 +141,7 @@ pub const Multicall = struct {
         // Tuple bodies
         for (self.calls.items) |c| {
             // address (left-padded to 32 bytes)
-            var addr_word: [32]u8 = [_]u8{0} ** 32;
+            var addr_word: [32]u8 = @as([32]u8, @splat(0));
             @memcpy(addr_word[12..32], &c.target);
             try buf.appendSlice(self.allocator, &addr_word);
 
@@ -271,7 +271,7 @@ test "Multicall.init and deinit" {
     var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
-    const multicall_addr = [_]u8{0xca} ** 20;
+    const multicall_addr = @as([20]u8, @splat(0xca));
 
     var mc = Multicall.init(allocator, &provider, multicall_addr);
     defer mc.deinit();
@@ -286,11 +286,11 @@ test "Multicall.addCall adds calls" {
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
-    var mc = Multicall.init(allocator, &provider, [_]u8{0xca} ** 20);
+    var mc = Multicall.init(allocator, &provider, @as([20]u8, @splat(0xca)));
     defer mc.deinit();
 
-    const target1 = [_]u8{0x11} ** 20;
-    const target2 = [_]u8{0x22} ** 20;
+    const target1 = @as([20]u8, @splat(0x11));
+    const target2 = @as([20]u8, @splat(0x22));
     const calldata1 = [_]u8{ 0xa9, 0x05, 0x9c, 0xbb };
     const calldata2 = [_]u8{ 0x70, 0xa0, 0x82, 0x31 };
 
@@ -310,11 +310,11 @@ test "Multicall.reset clears calls" {
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
-    var mc = Multicall.init(allocator, &provider, [_]u8{0xca} ** 20);
+    var mc = Multicall.init(allocator, &provider, @as([20]u8, @splat(0xca)));
     defer mc.deinit();
 
-    try mc.addCall([_]u8{0x11} ** 20, &.{0x01}, false);
-    try mc.addCall([_]u8{0x22} ** 20, &.{0x02}, true);
+    try mc.addCall(@as([20]u8, @splat(0x11)), &.{0x01}, false);
+    try mc.addCall(@as([20]u8, @splat(0x22)), &.{0x02}, true);
     try std.testing.expectEqual(@as(usize, 2), mc.calls.items.len);
 
     mc.reset();
@@ -327,10 +327,10 @@ test "Multicall.encodeAggregate3 produces valid ABI encoding" {
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
-    var mc = Multicall.init(allocator, &provider, [_]u8{0xca} ** 20);
+    var mc = Multicall.init(allocator, &provider, @as([20]u8, @splat(0xca)));
     defer mc.deinit();
 
-    const target = [_]u8{0x11} ** 20;
+    const target = @as([20]u8, @splat(0x11));
     const calldata = [_]u8{ 0x70, 0xa0, 0x82, 0x31 }; // balanceOf selector
 
     try mc.addCall(target, &calldata, false);
@@ -358,11 +358,11 @@ test "Multicall.encodeAggregate3 with multiple calls" {
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
-    var mc = Multicall.init(allocator, &provider, [_]u8{0xca} ** 20);
+    var mc = Multicall.init(allocator, &provider, @as([20]u8, @splat(0xca)));
     defer mc.deinit();
 
-    const target1 = [_]u8{0x11} ** 20;
-    const target2 = [_]u8{0x22} ** 20;
+    const target1 = @as([20]u8, @splat(0x11));
+    const target2 = @as([20]u8, @splat(0x22));
     const calldata1 = [_]u8{ 0x70, 0xa0, 0x82, 0x31 };
     const calldata2 = [_]u8{ 0xa9, 0x05, 0x9c, 0xbb, 0x00 }; // 5 bytes
 
@@ -388,10 +388,10 @@ test "Multicall.encodeAggregate3 with empty calldata" {
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
-    var mc = Multicall.init(allocator, &provider, [_]u8{0xca} ** 20);
+    var mc = Multicall.init(allocator, &provider, @as([20]u8, @splat(0xca)));
     defer mc.deinit();
 
-    try mc.addCall([_]u8{0x11} ** 20, &.{}, true);
+    try mc.addCall(@as([20]u8, @splat(0x11)), &.{}, true);
 
     const encoded = try mc.encodeAggregate3();
     defer allocator.free(encoded);
@@ -412,7 +412,7 @@ test "decodeAggregate3Results decodes single result" {
     //   word 4: offset to bytes = 0x40
     //   word 5: bytes length = 4
     //   word 6: bytes data (0x00000064 + padding)
-    var data: [7 * 32]u8 = [_]u8{0} ** (7 * 32);
+    var data: [7 * 32]u8 = @splat(0);
 
     // word 0: offset = 0x20
     data[31] = 0x20;
@@ -445,7 +445,7 @@ test "decodeAggregate3Results decodes failed result" {
     const allocator = std.testing.allocator;
 
     // Build output for: [(false, 0x)]
-    var data: [6 * 32]u8 = [_]u8{0} ** (6 * 32);
+    var data: [6 * 32]u8 = @splat(0);
 
     // word 0: offset = 0x20
     data[31] = 0x20;
@@ -490,11 +490,11 @@ test "Multicall.encodeAggregate3 address encoding" {
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
-    var mc = Multicall.init(allocator, &provider, [_]u8{0xca} ** 20);
+    var mc = Multicall.init(allocator, &provider, @as([20]u8, @splat(0xca)));
     defer mc.deinit();
 
     // Use a known address to verify left-padding
-    var target: [20]u8 = [_]u8{0} ** 20;
+    var target: [20]u8 = @as([20]u8, @splat(0));
     target[0] = 0xde;
     target[1] = 0xad;
     target[18] = 0xbe;

@@ -30,7 +30,7 @@ const COMPLEMENT_LANES = [25]bool{
 
 /// Optimized Keccak-256 hash. Lane complementing + interleaved rounds.
 pub fn keccak256(data: []const u8) [32]u8 {
-    var state: [25]u64 = [_]u64{0} ** 25;
+    var state: [25]u64 = @as([25]u64, @splat(0));
 
     // Apply lane complement to initial zero state (complement of 0 = ~0)
     inline for (0..25) |i| {
@@ -45,7 +45,7 @@ pub fn keccak256(data: []const u8) [32]u8 {
     }
 
     // Final block with padding (Keccak: 0x01 || 0x00...0x00 || 0x80)
-    var last: [RATE]u8 = [_]u8{0} ** RATE;
+    var last: [RATE]u8 = @as([RATE]u8, @splat(0));
     const remaining = data.len - offset;
     @memcpy(last[0..remaining], data[offset..][0..remaining]);
     last[remaining] = 0x01;
@@ -223,49 +223,49 @@ test "optimized keccak256 testing" {
 }
 
 test "optimized keccak256 exactly 1 block (136 bytes)" {
-    const data = [_]u8{0x42} ** 136;
+    const data = @as([136]u8, @splat(0x42));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "optimized keccak256 rate-1 boundary (135 bytes)" {
-    const data = [_]u8{0xAB} ** 135;
+    const data = @as([135]u8, @splat(0xAB));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "optimized keccak256 rate+1 boundary (137 bytes)" {
-    const data = [_]u8{0xCD} ** 137;
+    const data = @as([137]u8, @splat(0xCD));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "optimized keccak256 multi-block 256 bytes" {
-    const data = [_]u8{0xAB} ** 256;
+    const data = @as([256]u8, @splat(0xAB));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "optimized keccak256 multi-block 1KB" {
-    const data = [_]u8{0xAB} ** 1024;
+    const data = @as([1024]u8, @splat(0xAB));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "optimized keccak256 multi-block 4KB" {
-    const data = [_]u8{0x42} ** 4096;
+    const data = @as([4096]u8, @splat(0x42));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "optimized keccak256 large input 64KB" {
-    const data = [_]u8{0xFF} ** 65536;
+    const data = @as([65536]u8, @splat(0xFF));
     const result = keccak256(&data);
     const expected = stdlibHash(&data);
     try std.testing.expectEqualSlices(u8, &expected, &result);

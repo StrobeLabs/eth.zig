@@ -240,7 +240,7 @@ test "decode single uint256" {
     const allocator = testing.allocator;
 
     // Encode uint256(100) = 32 zero bytes with 0x64 at position 31
-    var data: [32]u8 = [_]u8{0} ** 32;
+    var data: [32]u8 = @as([32]u8, @splat(0));
     data[31] = 0x64;
 
     const types = [_]AbiType{.uint256};
@@ -255,7 +255,7 @@ test "decode single address" {
     const allocator = testing.allocator;
 
     // Address is left-padded: 12 zero bytes + 20 address bytes
-    var data: [32]u8 = [_]u8{0} ** 32;
+    var data: [32]u8 = @as([32]u8, @splat(0));
     data[12] = 0xdE;
     data[13] = 0xAD;
     data[30] = 0xBE;
@@ -275,7 +275,7 @@ test "decode single address" {
 test "decode bool true and false" {
     const allocator = testing.allocator;
 
-    var true_data: [32]u8 = [_]u8{0} ** 32;
+    var true_data: [32]u8 = @as([32]u8, @splat(0));
     true_data[31] = 1;
 
     const types = [_]AbiType{.bool};
@@ -283,7 +283,7 @@ test "decode bool true and false" {
     defer freeValues(true_values, allocator);
     try testing.expect(true_values[0].boolean);
 
-    var false_data: [32]u8 = [_]u8{0} ** 32;
+    var false_data: [32]u8 = @as([32]u8, @splat(0));
     const false_values = try decodeValues(&false_data, &types, allocator);
     defer freeValues(false_values, allocator);
     try testing.expect(!false_values[0].boolean);
@@ -293,7 +293,7 @@ test "decode int256 negative" {
     const allocator = testing.allocator;
 
     // -1 in two's complement = all 0xff bytes
-    var data: [32]u8 = [_]u8{0xff} ** 32;
+    var data: [32]u8 = @as([32]u8, @splat(0xff));
 
     const types = [_]AbiType{.int256};
     const values = try decodeValues(&data, &types, allocator);
@@ -305,7 +305,7 @@ test "decode int256 negative" {
 test "decode fixed bytes4" {
     const allocator = testing.allocator;
 
-    var data: [32]u8 = [_]u8{0} ** 32;
+    var data: [32]u8 = @as([32]u8, @splat(0));
     data[0] = 0xde;
     data[1] = 0xad;
     data[2] = 0xbe;
@@ -326,7 +326,7 @@ test "decode multiple static values" {
     const allocator = testing.allocator;
 
     // address, uint256, bool
-    var data: [96]u8 = [_]u8{0} ** 96;
+    var data: [96]u8 = @as([96]u8, @splat(0));
     // Address at word 0
     data[31] = 0x01;
     // uint256(100) at word 1
@@ -351,7 +351,7 @@ test "decode dynamic bytes" {
     // Word 0: offset = 32 (0x20)
     // Word 1: length = 5
     // Word 2: "hello" + padding
-    var data: [96]u8 = [_]u8{0} ** 96;
+    var data: [96]u8 = @as([96]u8, @splat(0));
     data[31] = 0x20; // offset = 32
     data[63] = 0x05; // length = 5
     data[64] = 'h';
@@ -371,7 +371,7 @@ test "decode dynamic bytes" {
 test "decode string" {
     const allocator = testing.allocator;
 
-    var data: [96]u8 = [_]u8{0} ** 96;
+    var data: [96]u8 = @as([96]u8, @splat(0));
     data[31] = 0x20; // offset = 32
     data[63] = 0x0b; // length = 11
     @memcpy(data[64..75], "hello world");
@@ -387,7 +387,7 @@ test "decode string" {
 test "decode empty bytes" {
     const allocator = testing.allocator;
 
-    var data: [64]u8 = [_]u8{0} ** 64;
+    var data: [64]u8 = @as([64]u8, @splat(0));
     data[31] = 0x20; // offset = 32
     // length = 0 (all zeros)
 
@@ -407,7 +407,7 @@ test "decode mixed static and dynamic" {
     // Word 2: 7
     // Word 3: string length = 2
     // Word 4: "hi" padded
-    var data: [160]u8 = [_]u8{0} ** 160;
+    var data: [160]u8 = @as([160]u8, @splat(0));
     data[31] = 42; // uint256(42)
     data[63] = 0x60; // offset = 96
     data[95] = 7; // uint256(7)
@@ -428,7 +428,7 @@ test "decode mixed static and dynamic" {
 test "decode too short data returns error" {
     const allocator = testing.allocator;
 
-    const data = [_]u8{0} ** 16; // Only 16 bytes, need at least 32
+    const data = @as([16]u8, @splat(0)); // Only 16 bytes, need at least 32
     const types = [_]AbiType{.uint256};
     const result = decodeValues(&data, &types, allocator);
     try testing.expectError(error.DataTooShort, result);
@@ -436,7 +436,7 @@ test "decode too short data returns error" {
 
 test "decode empty types returns empty slice" {
     const allocator = testing.allocator;
-    const data = [_]u8{0} ** 32;
+    const data = @as([32]u8, @splat(0));
     const types = [_]AbiType{};
     const values = try decodeValues(&data, &types, allocator);
     defer freeValues(values, allocator);
@@ -446,7 +446,7 @@ test "decode empty types returns empty slice" {
 test "decode invalid bool returns error" {
     const allocator = testing.allocator;
 
-    var data: [32]u8 = [_]u8{0} ** 32;
+    var data: [32]u8 = @as([32]u8, @splat(0));
     data[31] = 2; // Invalid bool value
 
     const types = [_]AbiType{.bool};
@@ -458,7 +458,7 @@ test "encode then decode roundtrip - static types" {
     const allocator = testing.allocator;
     const encode_mod = @import("abi_encode.zig");
 
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[0] = 0xdE;
     addr[1] = 0xAD;
     addr[19] = 0xEF;
@@ -522,7 +522,7 @@ test "encode then decode roundtrip - mixed static and dynamic" {
     const allocator = testing.allocator;
     const encode_mod = @import("abi_encode.zig");
 
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[0] = 0xAB;
 
     const original = [_]AbiValue{
@@ -572,7 +572,7 @@ test "decodeFunctionReturn works same as decodeValues" {
     const allocator = testing.allocator;
 
     // Encode a simple return: bool(true)
-    var data: [32]u8 = [_]u8{0} ** 32;
+    var data: [32]u8 = @as([32]u8, @splat(0));
     data[31] = 1;
 
     const types = [_]AbiType{.bool};
@@ -585,7 +585,7 @@ test "decodeFunctionReturn works same as decodeValues" {
 test "decode uint8 and uint128" {
     const allocator = testing.allocator;
 
-    var data: [64]u8 = [_]u8{0} ** 64;
+    var data: [64]u8 = @as([64]u8, @splat(0));
     data[31] = 0xFF; // uint8 max = 255
     data[47] = 0x01; // uint128 = 1 << 120
     // rest zeros
@@ -690,7 +690,7 @@ test "decode large dynamic bytes 100 bytes" {
     // Word 1: length = 100 (0x64)
     // Words 2-5: 100 bytes of 0xAA + 28 bytes zero padding = 128 bytes
     // Total: 32 + 32 + 128 = 192 bytes
-    var data: [192]u8 = [_]u8{0} ** 192;
+    var data: [192]u8 = @as([192]u8, @splat(0));
     data[31] = 0x20; // offset = 32
     data[63] = 0x64; // length = 100
     for (64..164) |i| {
@@ -714,7 +714,7 @@ test "decode large string 128 bytes" {
     // Word 1: length = 128 (0x80)
     // Words 2-5: 128 bytes of 'B' (0x42), exactly 4 words, no padding needed
     // Total: 32 + 32 + 128 = 192 bytes
-    var data: [192]u8 = [_]u8{0} ** 192;
+    var data: [192]u8 = @as([192]u8, @splat(0));
     data[31] = 0x20; // offset = 32
     data[62] = 0x00;
     data[63] = 0x80; // length = 128
@@ -736,7 +736,7 @@ test "decode offset out of bounds" {
     const allocator = testing.allocator;
 
     // 64-byte buffer where word 0 has offset pointing to position 200
-    var data: [64]u8 = [_]u8{0} ** 64;
+    var data: [64]u8 = @as([64]u8, @splat(0));
     data[31] = 200; // offset = 200 (way past end of 64-byte buffer)
 
     const types = [_]AbiType{.bytes};
@@ -748,7 +748,7 @@ test "decode length out of bounds" {
     const allocator = testing.allocator;
 
     // 96-byte buffer: word 0 = offset 0x20, word 1 = length 9999
-    var data: [96]u8 = [_]u8{0} ** 96;
+    var data: [96]u8 = @as([96]u8, @splat(0));
     data[31] = 0x20; // offset = 32
     data[62] = 0x27; // 9999 = 0x270F
     data[63] = 0x0F;
@@ -764,7 +764,7 @@ test "decode bytes exact 32-byte alignment" {
     // 64 bytes of data = exactly 2 words, no padding needed
     // Word 0: offset = 0x20, Word 1: length = 64, Words 2-3: 64 bytes of 0xBB
     // Total: 32 + 32 + 64 = 128 bytes
-    var data: [128]u8 = [_]u8{0} ** 128;
+    var data: [128]u8 = @as([128]u8, @splat(0));
     data[31] = 0x20; // offset = 32
     data[63] = 0x40; // length = 64
     for (64..128) |i| {

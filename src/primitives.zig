@@ -8,7 +8,7 @@ const keccak = @import("keccak.zig");
 pub const Address = [20]u8;
 
 /// Zero address (0x0000...0000).
-pub const ZERO_ADDRESS: Address = [_]u8{0} ** 20;
+pub const ZERO_ADDRESS: Address = @as([20]u8, @splat(0));
 
 /// Parse an address from a hex string (with optional "0x" prefix).
 pub fn addressFromHex(hex_str: []const u8) hex_mod.HexError!Address {
@@ -75,7 +75,7 @@ pub const Hash = [32]u8;
 pub const Bytes32 = [32]u8;
 
 /// Zero hash.
-pub const ZERO_HASH: Hash = [_]u8{0} ** 32;
+pub const ZERO_HASH: Hash = @as([32]u8, @splat(0));
 
 /// Parse a Hash/Bytes32 from a hex string.
 pub fn hashFromHex(hex_str: []const u8) hex_mod.HexError!Hash {
@@ -172,7 +172,7 @@ test "addressFromHex wrong length error" {
 }
 
 test "addressToHex all-0xFF roundtrip" {
-    const addr: Address = [_]u8{0xFF} ** 20;
+    const addr: Address = @as([20]u8, @splat(0xFF));
     const hex = addressToHex(&addr);
     try std.testing.expectEqualStrings("0xffffffffffffffffffffffffffffffffffffffff", &hex);
 

@@ -236,7 +236,7 @@ pub fn main() !void {
     const stdout = &w.interface;
 
     try stdout.print("\n{s:<32} {s:>12} {s:>14}\n", .{ "Benchmark", "ns/op", "iters" });
-    try stdout.print("{s}\n", .{"-" ** 62});
+    try stdout.print("{s}\n", .{"" ++ @as([62]u8, @splat('-'))});
 
     try runAndPrint("u256_add", benchAdd, stdout);
     try runAndPrint("u256_mul_small", benchMulSmall, stdout);

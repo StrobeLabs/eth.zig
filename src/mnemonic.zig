@@ -118,7 +118,7 @@ pub fn validate(words: []const []const u8) MnemonicError!void {
     const checksum_bits = entropy_size.checksumBits();
 
     // Convert words to 11-bit indices
-    var bits: [33]u8 = [_]u8{0} ** 33; // max 264 bits = 33 bytes
+    var bits: [33]u8 = @as([33]u8, @splat(0)); // max 264 bits = 33 bytes
 
     for (words, 0..) |word, i| {
         const index = wordToIndex(word) orelse return error.InvalidWord;
@@ -294,7 +294,7 @@ test "validate rejects bad checksum" {
 
 test "entropyToMnemonic known vector" {
     // All-zero entropy should produce "abandon" x 11 + "about"
-    const entropy = [_]u8{0} ** 16;
+    const entropy = @as([16]u8, @splat(0));
     const words = entropyToMnemonic(.@"128", &entropy);
     for (0..11) |i| {
         try std.testing.expectEqualStrings("abandon", words[i]);
@@ -327,7 +327,7 @@ test "BIP-39 TREZOR passphrase exact seed vector" {
 }
 
 test "BIP-39 all-ones entropy produces zoo...wrong" {
-    const entropy = [_]u8{0xFF} ** 16;
+    const entropy = @as([16]u8, @splat(0xFF));
     const words = entropyToMnemonic(.@"128", &entropy);
     for (0..11) |i| {
         try std.testing.expectEqualStrings("zoo", words[i]);

@@ -53,7 +53,7 @@ test "BLOB_SIZE is 128 KiB" {
 }
 
 test "computeVersionedHash sets version byte" {
-    const commitment = [_]u8{0xaa} ** 48;
+    const commitment = @as([48]u8, @splat(0xaa));
     const versioned = computeVersionedHash(commitment);
 
     // First byte must be 0x01 (KZG version)
@@ -65,22 +65,22 @@ test "computeVersionedHash sets version byte" {
 }
 
 test "computeVersionedHash deterministic" {
-    const commitment = [_]u8{0x42} ** 48;
+    const commitment = @as([48]u8, @splat(0x42));
     const h1 = computeVersionedHash(commitment);
     const h2 = computeVersionedHash(commitment);
     try std.testing.expectEqualSlices(u8, &h1, &h2);
 }
 
 test "computeVersionedHash different commitments produce different hashes" {
-    const c1 = [_]u8{0x01} ** 48;
-    const c2 = [_]u8{0x02} ** 48;
+    const c1 = @as([48]u8, @splat(0x01));
+    const c2 = @as([48]u8, @splat(0x02));
     const h1 = computeVersionedHash(c1);
     const h2 = computeVersionedHash(c2);
     try std.testing.expect(!std.mem.eql(u8, &h1, &h2));
 }
 
 test "isValidVersionedHash" {
-    const commitment = [_]u8{0xbb} ** 48;
+    const commitment = @as([48]u8, @splat(0xbb));
     const valid = computeVersionedHash(commitment);
     try std.testing.expect(isValidVersionedHash(valid));
 
@@ -91,24 +91,24 @@ test "isValidVersionedHash" {
 }
 
 test "verifyVersionedHash" {
-    const commitment = [_]u8{0xcc} ** 48;
+    const commitment = @as([48]u8, @splat(0xcc));
     const h = computeVersionedHash(commitment);
 
     try std.testing.expect(verifyVersionedHash(h, commitment));
 
     // Wrong commitment
-    const wrong_commitment = [_]u8{0xdd} ** 48;
+    const wrong_commitment = @as([48]u8, @splat(0xdd));
     try std.testing.expect(!verifyVersionedHash(h, wrong_commitment));
 }
 
 test "BlobSidecar struct layout" {
     // Verify the struct can be instantiated (mostly a compile-time check).
     // Use a small stack check - don't actually allocate a full blob on the stack in release.
-    const commitment = [_]u8{0x11} ** 48;
-    const proof = [_]u8{0x22} ** 48;
+    const commitment = @as([48]u8, @splat(0x11));
+    const proof = @as([48]u8, @splat(0x22));
 
     _ = BlobSidecar{
-        .blob = [_]u8{0} ** BLOB_SIZE,
+        .blob = @as([BLOB_SIZE]u8, @splat(0)),
         .commitment = commitment,
         .proof = proof,
     };

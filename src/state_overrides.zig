@@ -245,7 +245,7 @@ test "StateOverrides - balance only" {
     var ov = StateOverrides.init(allocator);
     defer ov.deinit();
 
-    const addr = [_]u8{0xaa} ** 20;
+    const addr = @as([20]u8, @splat(0xaa));
     try ov.setBalance(addr, 0x1234);
 
     const json = try ov.serializeJson(allocator);
@@ -261,7 +261,7 @@ test "StateOverrides - nonce, code, balance combined for one address" {
     var ov = StateOverrides.init(allocator);
     defer ov.deinit();
 
-    const addr = [_]u8{0xbb} ** 20;
+    const addr = @as([20]u8, @splat(0xbb));
     try ov.setBalance(addr, 100);
     try ov.setNonce(addr, 7);
     try ov.setCode(addr, &.{ 0x60, 0x80 });
@@ -279,12 +279,12 @@ test "StateOverrides - stateDiff merges multiple slots" {
     var ov = StateOverrides.init(allocator);
     defer ov.deinit();
 
-    const addr = [_]u8{0xcc} ** 20;
-    var slot1: [32]u8 = .{0} ** 32;
+    const addr = @as([20]u8, @splat(0xcc));
+    var slot1: [32]u8 = @splat(0);
     slot1[31] = 0x01;
-    var slot2: [32]u8 = .{0} ** 32;
+    var slot2: [32]u8 = @splat(0);
     slot2[31] = 0x02;
-    var val: [32]u8 = .{0} ** 32;
+    var val: [32]u8 = @splat(0);
     val[31] = 0xff;
 
     try ov.setStorageAt(addr, slot1, val);
@@ -305,10 +305,10 @@ test "StateOverrides - full state replacement uses state not stateDiff" {
     var ov = StateOverrides.init(allocator);
     defer ov.deinit();
 
-    const addr = [_]u8{0xdd} ** 20;
-    var slot: [32]u8 = .{0} ** 32;
+    const addr = @as([20]u8, @splat(0xdd));
+    var slot: [32]u8 = @splat(0);
     slot[31] = 0x05;
-    var val: [32]u8 = .{0} ** 32;
+    var val: [32]u8 = @splat(0);
     val[31] = 0x42;
     try ov.setFullStorage(addr, slot, val);
 
@@ -324,7 +324,7 @@ test "StateOverrides - setCode replaces previous bytecode without leak" {
     var ov = StateOverrides.init(allocator);
     defer ov.deinit();
 
-    const addr = [_]u8{0xee} ** 20;
+    const addr = @as([20]u8, @splat(0xee));
     try ov.setCode(addr, &.{ 0x01, 0x02 });
     try ov.setCode(addr, &.{ 0xab, 0xcd, 0xef });
     // The testing allocator catches leaks; this asserts that the first
@@ -340,7 +340,7 @@ test "StateOverrides - setBalance is idempotent on the same address" {
     var ov = StateOverrides.init(allocator);
     defer ov.deinit();
 
-    const addr = [_]u8{0xff} ** 20;
+    const addr = @as([20]u8, @splat(0xff));
     try ov.setBalance(addr, 1);
     try ov.setBalance(addr, 2);
     try ov.setBalance(addr, 3);
@@ -355,8 +355,8 @@ test "StateOverrides - multiple addresses round-trip" {
     var ov = StateOverrides.init(allocator);
     defer ov.deinit();
 
-    const addr_a = [_]u8{0x11} ** 20;
-    const addr_b = [_]u8{0x22} ** 20;
+    const addr_a = @as([20]u8, @splat(0x11));
+    const addr_b = @as([20]u8, @splat(0x22));
     try ov.setBalance(addr_a, 5);
     try ov.setBalance(addr_b, 7);
 

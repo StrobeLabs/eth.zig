@@ -244,7 +244,7 @@ test "Signer with Hardhat account #4" {
 }
 
 test "hashPersonalMessage with 100-byte message" {
-    const message: [100]u8 = [_]u8{'A'} ** 100;
+    const message: [100]u8 = @as([100]u8, @splat('A'));
     const hash = Signer.hashPersonalMessage(&message);
 
     // The prefix for a 100-byte message includes "100" (3 chars)
