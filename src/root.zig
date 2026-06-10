@@ -22,6 +22,7 @@ pub const eip155 = @import("eip155.zig");
 // -- Layer 4: Types --
 pub const access_list = @import("access_list.zig");
 pub const transaction = @import("transaction.zig");
+pub const rpc_transaction = @import("rpc_transaction.zig");
 pub const receipt = @import("receipt.zig");
 pub const block = @import("block.zig");
 pub const blob = @import("blob.zig");
@@ -99,6 +100,7 @@ test {
     // Layer 4
     _ = @import("access_list.zig");
     _ = @import("transaction.zig");
+    _ = @import("rpc_transaction.zig");
     _ = @import("receipt.zig");
     _ = @import("block.zig");
     _ = @import("blob.zig");

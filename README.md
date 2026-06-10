@@ -152,6 +152,8 @@ const transfers = try client.subscribe(.{ .logs = .{
     .address = usdc_address,
     .topics = &.{transfer_event_topic},
 } });
+// MEV searchers: stream full pending transactions (geth-style).
+const pending = try client.subscribe(.{ .new_pending_transactions = .{ .full = true } });
 
 while (true) {
     const event = try client.next();
@@ -162,6 +164,10 @@ while (true) {
     } else if (event.sub == transfers) {
         const log = try eth.subscription.parseLogFromNotification(allocator, event.payload);
         // ... handle Transfer log
+    } else if (event.sub == pending) {
+        const tx = try eth.subscription.parseTransactionFromNotification(allocator, event.payload);
+        defer eth.rpc_transaction.freeRpcTransaction(allocator, tx);
+        // ... evaluate the pending tx (sandwich, backrun, ...)
     }
 }
 ```
