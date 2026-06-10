@@ -7,7 +7,7 @@ const inter = Inter({
   subsets: ['latin'],
 });
 
-const SEO_DESCRIPTION = 'The fastest Ethereum library. Pure Zig. Zero dependencies. Beats alloy.rs on 19/26 benchmarks.';
+const SEO_DESCRIPTION = 'The fastest Ethereum library. Pure Zig. Zero dependencies. Beats alloy.rs on 18/26 benchmarks.';
 
 const webSiteSchema = JSON.stringify({
   '@context': 'https://schema.org',
