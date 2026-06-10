@@ -27,7 +27,7 @@ pub const AbiValue = union(enum) {
     tuple: []const AbiValue,
 
     pub const FixedBytes = struct {
-        data: [32]u8 = [_]u8{0} ** 32,
+        data: [32]u8 = @as([32]u8, @splat(0)),
         len: u8,
     };
 
@@ -179,17 +179,17 @@ fn encodeStaticValueNoAlloc(buf: *std.ArrayList(u8), val: AbiValue) void {
             writeUint256NoAlloc(buf, unsigned);
         },
         .address => |v| {
-            var word: [32]u8 = [_]u8{0} ** 32;
+            var word: [32]u8 = @as([32]u8, @splat(0));
             @memcpy(word[12..32], &v);
             buf.appendSliceAssumeCapacity(&word);
         },
         .boolean => |v| {
-            var word: [32]u8 = [_]u8{0} ** 32;
+            var word: [32]u8 = @as([32]u8, @splat(0));
             if (v) word[31] = 1;
             buf.appendSliceAssumeCapacity(&word);
         },
         .fixed_bytes => |v| {
-            var word: [32]u8 = [_]u8{0} ** 32;
+            var word: [32]u8 = @as([32]u8, @splat(0));
             const size: usize = @intCast(v.len);
             @memcpy(word[0..size], v.data[0..size]);
             buf.appendSliceAssumeCapacity(&word);
@@ -419,7 +419,7 @@ test "encode single uint256" {
 
 test "encode single address" {
     const allocator = testing.allocator;
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[0] = 0xde;
     addr[1] = 0xad;
     addr[18] = 0xbe;
@@ -569,7 +569,7 @@ test "encode dynamic array" {
 
 test "encode multiple static values" {
     const allocator = testing.allocator;
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[19] = 0x01;
 
     const values = [_]AbiValue{
@@ -594,7 +594,7 @@ test "encode multiple static values" {
 
 test "encode mixed static and dynamic" {
     const allocator = testing.allocator;
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[19] = 0x01;
 
     const values = [_]AbiValue{
@@ -635,7 +635,7 @@ test "encodeFunctionCall - transfer(address,uint256)" {
     const selector = [_]u8{ 0xa9, 0x05, 0x9c, 0xbb };
 
     // transfer(0x000...0001, 100)
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[19] = 0x01;
 
     const values = [_]AbiValue{
@@ -667,7 +667,7 @@ test "encodeFunctionCall - full transfer encoding" {
     const sel = keccak_mod.selector("transfer(address,uint256)");
     try testing.expectEqualSlices(u8, &.{ 0xa9, 0x05, 0x9c, 0xbb }, &sel);
 
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[0] = 0xdE;
     addr[1] = 0xAD;
 
@@ -766,7 +766,7 @@ test "encode int256 min value" {
 
 test "encode bytes exactly 32 bytes - no padding needed" {
     const allocator = testing.allocator;
-    const data = [_]u8{0xab} ** 32;
+    const data = @as([32]u8, @splat(0xab));
     const values = [_]AbiValue{.{ .bytes = &data }};
     const encoded = try encodeValues(allocator, &values);
     defer allocator.free(encoded);
@@ -849,7 +849,7 @@ test "encodeFunctionCall - balanceOf(address)" {
     const sel = keccak_mod.selector("balanceOf(address)");
     try testing.expectEqualSlices(u8, &.{ 0x70, 0xa0, 0x82, 0x31 }, &sel);
 
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[0] = 0xd8;
     addr[1] = 0xdA;
     addr[19] = 0x45;
@@ -1047,7 +1047,7 @@ test "encode ERC20 approve exact bytes" {
 
 test "encode large string 100 bytes" {
     const allocator = testing.allocator;
-    const data = [_]u8{'A'} ** 100;
+    const data = @as([100]u8, @splat('A'));
     const values = [_]AbiValue{.{ .string = &data }};
     const encoded = try encodeValues(allocator, &values);
     defer allocator.free(encoded);

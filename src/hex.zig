@@ -10,7 +10,7 @@ pub const HexError = error{
 /// Comptime-generated lookup table for hex decoding.
 /// Maps ASCII byte -> nibble value (0-15), or 0xFF for invalid characters.
 const hex_lut: [256]u8 = blk: {
-    var table: [256]u8 = .{0xFF} ** 256;
+    var table: [256]u8 = @splat(0xFF);
     for ('0'..('9' + 1)) |c| table[c] = c - '0';
     for ('a'..('f' + 1)) |c| table[c] = c - 'a' + 10;
     for ('A'..('F' + 1)) |c| table[c] = c - 'A' + 10;

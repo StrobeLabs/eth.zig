@@ -668,9 +668,9 @@ test "cloneParams + freeOwnedParams - new_heads" {
 
 test "cloneParams + freeOwnedParams - logs with topics deep copied" {
     const alloc = std.testing.allocator;
-    var local = [_]?[32]u8{ [_]u8{0xAA} ** 32, null };
+    var local = [_]?[32]u8{ @as([32]u8, @splat(0xAA)), null };
     const params = SubscriptionParams{ .logs = .{
-        .address = [_]u8{0xCC} ** 20,
+        .address = @as([20]u8, @splat(0xCC)),
         .topics = local[0..],
     } };
     const cloned = try cloneParams(alloc, params);
@@ -678,7 +678,7 @@ test "cloneParams + freeOwnedParams - logs with topics deep copied" {
     // Mutating the original must not change the clone.
     local[0] = null;
     try std.testing.expect(cloned.logs.topics.?[0] != null);
-    try std.testing.expectEqualSlices(u8, &([_]u8{0xAA} ** 32), &cloned.logs.topics.?[0].?);
+    try std.testing.expectEqualSlices(u8, &(@as([32]u8, @splat(0xAA))), &cloned.logs.topics.?[0].?);
 }
 
 test "Opts defaults" {

@@ -149,7 +149,7 @@ pub fn deriveEthAccount(seed: [64]u8, account_index: u32) HdWalletError!Extended
 
 // Tests
 test "masterKeyFromSeed produces deterministic results" {
-    const seed = [_]u8{0x01} ** 64;
+    const seed = @as([64]u8, @splat(0x01));
     const key1 = try masterKeyFromSeed(seed);
     const key2 = try masterKeyFromSeed(seed);
     try std.testing.expectEqualSlices(u8, &key1.key, &key2.key);
@@ -157,7 +157,7 @@ test "masterKeyFromSeed produces deterministic results" {
 }
 
 test "deriveChild produces different keys for different indices" {
-    const seed = [_]u8{0x42} ** 64;
+    const seed = @as([64]u8, @splat(0x42));
     const master = try masterKeyFromSeed(seed);
     const child0 = try deriveChild(master, HARDENED);
     const child1 = try deriveChild(master, 1 | HARDENED);
@@ -165,21 +165,21 @@ test "deriveChild produces different keys for different indices" {
 }
 
 test "derivePath m/44'/60'/0'/0/0" {
-    const seed = [_]u8{0xab} ** 64;
+    const seed = @as([64]u8, @splat(0xab));
     const key_path = try derivePath(seed, "m/44'/60'/0'/0/0");
     const key_manual = try deriveEthAccount(seed, 0);
     try std.testing.expectEqualSlices(u8, &key_path.key, &key_manual.key);
 }
 
 test "derivePath just m returns master key" {
-    const seed = [_]u8{0xcd} ** 64;
+    const seed = @as([64]u8, @splat(0xcd));
     const master = try masterKeyFromSeed(seed);
     const key_m = try derivePath(seed, "m");
     try std.testing.expectEqualSlices(u8, &master.key, &key_m.key);
 }
 
 test "toAddress produces 20-byte address" {
-    const seed = [_]u8{0xef} ** 64;
+    const seed = @as([64]u8, @splat(0xef));
     const key = try deriveEthAccount(seed, 0);
     const addr = try key.toAddress();
     // Just verify it's not all zeros
@@ -194,7 +194,7 @@ test "toAddress produces 20-byte address" {
 }
 
 test "different accounts produce different addresses" {
-    const seed = [_]u8{0x11} ** 64;
+    const seed = @as([64]u8, @splat(0x11));
     const key0 = try deriveEthAccount(seed, 0);
     const key1 = try deriveEthAccount(seed, 1);
     const addr0 = try key0.toAddress();
@@ -234,7 +234,7 @@ test "known BIP-39 mnemonic to address" {
 test "BIP-32 master key from known seed" {
     const hex_mod = @import("hex.zig");
     // Known 64-byte seed (first 32 bytes from hex, rest zero)
-    var seed: [64]u8 = [_]u8{0} ** 64;
+    var seed: [64]u8 = @as([64]u8, @splat(0));
     const first_half = try hex_mod.hexToBytesFixed(32, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
     @memcpy(seed[0..32], &first_half);
 

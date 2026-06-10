@@ -77,13 +77,13 @@ pub fn freeRpcTransaction(allocator: std.mem.Allocator, tx: RpcTransaction) void
 
 test "RpcTransaction struct layout" {
     const tx = RpcTransaction{
-        .hash = [_]u8{0xaa} ** 32,
+        .hash = @as([32]u8, @splat(0xaa)),
         .nonce = 5,
         .block_hash = null,
         .block_number = null,
         .transaction_index = null,
-        .from = [_]u8{0x11} ** 20,
-        .to = [_]u8{0x22} ** 20,
+        .from = @as([20]u8, @splat(0x11)),
+        .to = @as([20]u8, @splat(0x22)),
         .value = 1_000_000_000_000_000_000,
         .gas = 21_000,
         .gas_price = 20_000_000_000,
@@ -92,8 +92,8 @@ test "RpcTransaction struct layout" {
         .max_fee_per_blob_gas = null,
         .input = &.{},
         .v = 27,
-        .r = [_]u8{0x33} ** 32,
-        .s = [_]u8{0x44} ** 32,
+        .r = @as([32]u8, @splat(0x33)),
+        .s = @as([32]u8, @splat(0x44)),
         .type_ = 0,
         .chain_id = 1,
     };
@@ -110,12 +110,12 @@ test "freeRpcTransaction frees the input slice" {
     const input = try allocator.alloc(u8, 4);
     @memcpy(input, "abcd");
     const tx = RpcTransaction{
-        .hash = [_]u8{0} ** 32,
+        .hash = @as([32]u8, @splat(0)),
         .nonce = 0,
         .block_hash = null,
         .block_number = null,
         .transaction_index = null,
-        .from = [_]u8{0} ** 20,
+        .from = @as([20]u8, @splat(0)),
         .to = null,
         .value = 0,
         .gas = 0,
@@ -125,8 +125,8 @@ test "freeRpcTransaction frees the input slice" {
         .max_fee_per_blob_gas = null,
         .input = input,
         .v = 0,
-        .r = [_]u8{0} ** 32,
-        .s = [_]u8{0} ** 32,
+        .r = @as([32]u8, @splat(0)),
+        .s = @as([32]u8, @splat(0)),
         .type_ = 2,
         .chain_id = null,
     };

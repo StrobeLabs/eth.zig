@@ -987,7 +987,7 @@ pub fn parseBlockHeader(allocator: std.mem.Allocator, raw: []const u8) !?block_m
     const gas_limit = try parseHexU64(jsonGetString(obj, "gasLimit") orelse return error.InvalidResponse);
     const gas_used = try parseHexU64(jsonGetString(obj, "gasUsed") orelse return error.InvalidResponse);
     const timestamp = try parseHexU64(jsonGetString(obj, "timestamp") orelse return error.InvalidResponse);
-    const mix_hash = try parseHash(jsonGetString(obj, "mixHash") orelse "0x" ++ "00" ** 32);
+    const mix_hash = try parseHash(jsonGetString(obj, "mixHash") orelse "0x" ++ @as([64]u8, @splat('0')));
 
     // Parse extraData
     const extra_data_str = jsonGetString(obj, "extraData") orelse "0x";
@@ -1551,7 +1551,7 @@ test "parseBlockHeader - basic block" {
     const allocator = std.testing.allocator;
 
     // Build a bloom of 256 zero bytes = "0x" + 512 '0' chars
-    const bloom_hex = "0x" ++ "00" ** 256;
+    const bloom_hex = "0x" ++ @as([512]u8, @splat('0'));
 
     const raw = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{" ++
         "\"number\":\"0x1036640\"," ++
@@ -1662,8 +1662,8 @@ test "BatchCaller.addCall accumulates" {
     var batch = BatchCaller.init(allocator, &prov);
     defer batch.deinit();
 
-    const idx0 = try batch.addCall([_]u8{0x11} ** 20, &.{ 0x01, 0x02 });
-    const idx1 = try batch.addCall([_]u8{0x22} ** 20, &.{ 0x03, 0x04 });
+    const idx0 = try batch.addCall(@as([20]u8, @splat(0x11)), &.{ 0x01, 0x02 });
+    const idx1 = try batch.addCall(@as([20]u8, @splat(0x22)), &.{ 0x03, 0x04 });
 
     try std.testing.expectEqual(@as(usize, 0), idx0);
     try std.testing.expectEqual(@as(usize, 1), idx1);
@@ -1678,7 +1678,7 @@ test "BatchCaller.reset clears" {
     var batch = BatchCaller.init(allocator, &prov);
     defer batch.deinit();
 
-    _ = try batch.addCall([_]u8{0x11} ** 20, &.{0x01});
+    _ = try batch.addCall(@as([20]u8, @splat(0x11)), &.{0x01});
     try std.testing.expectEqual(@as(usize, 1), batch.targets.items.len);
     batch.reset();
     try std.testing.expectEqual(@as(usize, 0), batch.targets.items.len);

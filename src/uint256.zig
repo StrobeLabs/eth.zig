@@ -706,7 +706,7 @@ test "fromHex max u256" {
 
 test "fromHex overflow" {
     // 65 hex chars = 260 bits > 256 bits
-    const too_big = "0x1" ++ "0" ** 64;
+    const too_big = "0x1" ++ @as([64]u8, @splat('0'));
     try std.testing.expectError(error.Overflow, fromHex(too_big));
 }
 
@@ -867,7 +867,7 @@ test "fromHex toHex roundtrip comprehensive" {
 }
 
 test "fromBigEndianBytes zero" {
-    const zero_bytes = [_]u8{0} ** 32;
+    const zero_bytes = @as([32]u8, @splat(0));
     try std.testing.expectEqual(@as(u256, 0), fromBigEndianBytes(zero_bytes));
 }
 

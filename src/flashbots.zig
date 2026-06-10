@@ -802,7 +802,7 @@ test "buildSendBundleParams - with optional fields" {
     const allocator = std.testing.allocator;
     const tx = &[_]u8{0xff};
     const txs = [_][]const u8{tx};
-    const hash = [_]u8{0xaa} ** 32;
+    const hash = @as([32]u8, @splat(0xaa));
     const hashes = [_][32]u8{hash};
 
     const params = try buildSendBundleParams(allocator, .{
@@ -873,7 +873,7 @@ test "buildMevSendBundleParams - basic" {
 
 test "buildMevSendBundleParams - with hash body and privacy" {
     const allocator = std.testing.allocator;
-    const hash = [_]u8{0xbb} ** 32;
+    const hash = @as([32]u8, @splat(0xbb));
     const body = [_]MevBundleBody{
         .{ .hash = hash },
     };
@@ -926,7 +926,7 @@ test "parseBundleHashResult - success" {
     ;
 
     const result = try parseBundleHashResult(std.testing.allocator, raw);
-    const expected = [_]u8{0xaa} ** 32;
+    const expected = @as([32]u8, @splat(0xaa));
     try std.testing.expectEqualSlices(u8, &expected, &result.bundle_hash);
 }
 
@@ -951,7 +951,7 @@ test "parseCallBundleResult - success with decimal strings" {
     ;
 
     const result = try parseCallBundleResult(std.testing.allocator, raw);
-    const expected_hash = [_]u8{0xbb} ** 32;
+    const expected_hash = @as([32]u8, @splat(0xbb));
     try std.testing.expectEqualSlices(u8, &expected_hash, &result.bundle_hash);
     try std.testing.expectEqual(@as(u256, 476190476193), result.bundle_gas_price);
     try std.testing.expectEqual(@as(u256, 20000000000126000), result.coinbase_diff);

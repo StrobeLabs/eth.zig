@@ -168,7 +168,7 @@ test "reverseNameOf produces correct format" {
 
 test "reverseNameOf length is always 53" {
     const allocator = std.testing.allocator;
-    const addr: Address = [_]u8{0xff} ** 20;
+    const addr: Address = @as([20]u8, @splat(0xff));
     const result = try reverseNameOf(allocator, addr);
     defer allocator.free(result);
 

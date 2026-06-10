@@ -58,8 +58,8 @@ pub const Signature = struct {
 
 test "Signature toBytes and fromBytes roundtrip" {
     const sig = Signature{
-        .r = [_]u8{0} ** 31 ++ [_]u8{0x01},
-        .s = [_]u8{0} ** 31 ++ [_]u8{0x02},
+        .r = @as([31]u8, @splat(0)) ++ [_]u8{0x01},
+        .s = @as([31]u8, @splat(0)) ++ [_]u8{0x02},
         .v = 1,
     };
 
@@ -128,7 +128,7 @@ test "Signature eql" {
 }
 
 test "Signature fromBytes with zero signature" {
-    const bytes = [_]u8{0} ** 65;
+    const bytes = @as([65]u8, @splat(0));
     const sig = Signature.fromBytes(bytes);
 
     try std.testing.expectEqual(@as(u256, 0), sig.toRSV().r);

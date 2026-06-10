@@ -278,11 +278,11 @@ fn generateRfc6979Nonce(private_key: [32]u8, message_hash: [32]u8) Scalar {
 
     // Step a: h1 = message_hash (already provided, 32 bytes)
     // Step b: V = 0x01 0x01 ... 0x01 (32 bytes of 0x01)
-    var v: [32]u8 = [_]u8{0x01} ** 32;
+    var v: [32]u8 = @as([32]u8, @splat(0x01));
     defer secureZero(&v);
 
     // Step c: K = 0x00 0x00 ... 0x00 (32 bytes of 0x00)
-    var k: [32]u8 = [_]u8{0x00} ** 32;
+    var k: [32]u8 = @as([32]u8, @splat(0x00));
     defer secureZero(&k);
 
     // Step d: K = HMAC_K(V || 0x00 || int2octets(x) || bits2octets(h1))
@@ -345,7 +345,7 @@ fn reduceFieldElement(bytes: [32]u8) Scalar {
         return s;
     } else |_| {}
     // If the value >= order, reduce it using reduce64 with zero-padding
-    var padded: [64]u8 = [_]u8{0} ** 64;
+    var padded: [64]u8 = @as([64]u8, @splat(0));
     @memcpy(padded[32..64], &bytes);
     return Scalar.fromBytes(Secp256k1.scalar.reduce64(padded, .big), .big) catch unreachable;
 }
@@ -457,8 +457,8 @@ test "sign different messages produce different signatures" {
 
 test "recover fails with invalid recovery ID" {
     const sig = Signature{
-        .r = [_]u8{0} ** 31 ++ [_]u8{1},
-        .s = [_]u8{0} ** 31 ++ [_]u8{1},
+        .r = @as([31]u8, @splat(0)) ++ [_]u8{1},
+        .s = @as([31]u8, @splat(0)) ++ [_]u8{1},
         .v = 2,
     };
     const hash = keccak.hash("test");
@@ -467,8 +467,8 @@ test "recover fails with invalid recovery ID" {
 
 test "recover fails with zero r" {
     const sig = Signature{
-        .r = [_]u8{0} ** 32,
-        .s = [_]u8{0} ** 31 ++ [_]u8{1},
+        .r = @as([32]u8, @splat(0)),
+        .s = @as([31]u8, @splat(0)) ++ [_]u8{1},
         .v = 0,
     };
     const hash = keccak.hash("test");
@@ -477,8 +477,8 @@ test "recover fails with zero r" {
 
 test "recover fails with zero s" {
     const sig = Signature{
-        .r = [_]u8{0} ** 31 ++ [_]u8{1},
-        .s = [_]u8{0} ** 32,
+        .r = @as([31]u8, @splat(0)) ++ [_]u8{1},
+        .s = @as([32]u8, @splat(0)),
         .v = 0,
     };
     const hash = keccak.hash("test");
@@ -486,7 +486,7 @@ test "recover fails with zero s" {
 }
 
 test "sign rejects zero private key" {
-    const zero_key = [_]u8{0} ** 32;
+    const zero_key = @as([32]u8, @splat(0));
     const hash = keccak.hash("test");
     try std.testing.expectError(error.InvalidPrivateKey, sign(zero_key, hash));
 }
@@ -578,7 +578,7 @@ test "sign and recover with second test key" {
 
 test "sign with small private key (key=1)" {
     // Private key = 1 (31 zero bytes + 0x01)
-    var private_key: [32]u8 = [_]u8{0} ** 32;
+    var private_key: [32]u8 = @as([32]u8, @splat(0));
     private_key[31] = 0x01;
 
     const message_hash = keccak.hash("test");

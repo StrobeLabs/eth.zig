@@ -97,7 +97,7 @@ pub const Wallet = struct {
                 break :blk try self.provider.estimateGas(to_addr, tx.data, addr);
             } else {
                 // Contract deployment: estimate with zero address as placeholder
-                break :blk try self.provider.estimateGas([_]u8{0} ** 20, tx.data, addr);
+                break :blk try self.provider.estimateGas(@as([20]u8, @splat(0)), tx.data, addr);
             }
         };
 
@@ -197,7 +197,7 @@ test "Wallet.signTransaction produces valid signed bytes" {
         .max_priority_fee_per_gas = 1_500_000_000,
         .max_fee_per_gas = 30_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xcc} ** 20,
+        .to = @as([20]u8, @splat(0xcc)),
         .value = 1_000_000_000_000_000_000,
         .data = &.{},
         .access_list = &.{},
@@ -228,7 +228,7 @@ test "Wallet.signTransaction is deterministic" {
         .max_priority_fee_per_gas = 2_000_000_000,
         .max_fee_per_gas = 50_000_000_000,
         .gas_limit = 100_000,
-        .to = [_]u8{0xaa} ** 20,
+        .to = @as([20]u8, @splat(0xaa)),
         .value = 0,
         .data = &.{ 0xa9, 0x05, 0x9c, 0xbb },
         .access_list = &.{},
@@ -245,7 +245,7 @@ test "Wallet.signTransaction is deterministic" {
 
 test "SendTransactionOpts defaults" {
     const opts = SendTransactionOpts{
-        .to = [_]u8{0xbb} ** 20,
+        .to = @as([20]u8, @splat(0xbb)),
     };
 
     try std.testing.expectEqual(@as(u256, 0), opts.value);
@@ -267,7 +267,7 @@ test "SendTransactionOpts supports null to for deployment" {
 
 test "SendTransactionOpts with all fields" {
     const opts = SendTransactionOpts{
-        .to = [_]u8{0xcc} ** 20,
+        .to = @as([20]u8, @splat(0xcc)),
         .value = 1_000_000_000_000_000_000,
         .data = &.{ 0x01, 0x02, 0x03 },
         .gas_limit = 21000,

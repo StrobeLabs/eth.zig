@@ -136,7 +136,7 @@ pub fn recover(sig: Signature, message_hash: [32]u8) RecoverError![65]u8 {
     if (sig.v > 1) return error.InvalidRecoveryId;
 
     // Validate r and s are non-zero
-    const zero = [_]u8{0} ** 32;
+    const zero = @as([32]u8, @splat(0));
     if (std.mem.eql(u8, &sig.r, &zero) or std.mem.eql(u8, &sig.s, &zero)) {
         return error.InvalidSignature;
     }

@@ -51,12 +51,12 @@ pub fn logCount(receipt: TransactionReceipt) usize {
 
 test "TransactionReceipt struct layout" {
     const receipt = TransactionReceipt{
-        .transaction_hash = [_]u8{0xaa} ** 32,
-        .block_hash = [_]u8{0xbb} ** 32,
+        .transaction_hash = @as([32]u8, @splat(0xaa)),
+        .block_hash = @as([32]u8, @splat(0xbb)),
         .block_number = 12_345_678,
         .transaction_index = 42,
-        .from = [_]u8{0x11} ** 20,
-        .to = [_]u8{0x22} ** 20,
+        .from = @as([20]u8, @splat(0x11)),
+        .to = @as([20]u8, @splat(0x22)),
         .gas_used = 21000,
         .cumulative_gas_used = 500_000,
         .effective_gas_price = 20_000_000_000,
@@ -76,11 +76,11 @@ test "TransactionReceipt struct layout" {
 
 test "isSuccess" {
     var receipt = TransactionReceipt{
-        .transaction_hash = [_]u8{0} ** 32,
-        .block_hash = [_]u8{0} ** 32,
+        .transaction_hash = @as([32]u8, @splat(0)),
+        .block_hash = @as([32]u8, @splat(0)),
         .block_number = 0,
         .transaction_index = 0,
-        .from = [_]u8{0} ** 20,
+        .from = @as([20]u8, @splat(0)),
         .to = null,
         .gas_used = 0,
         .cumulative_gas_used = 0,
@@ -99,11 +99,11 @@ test "isSuccess" {
 
 test "isContractCreation" {
     var receipt = TransactionReceipt{
-        .transaction_hash = [_]u8{0} ** 32,
-        .block_hash = [_]u8{0} ** 32,
+        .transaction_hash = @as([32]u8, @splat(0)),
+        .block_hash = @as([32]u8, @splat(0)),
         .block_number = 0,
         .transaction_index = 0,
-        .from = [_]u8{0} ** 20,
+        .from = @as([20]u8, @splat(0)),
         .to = null,
         .gas_used = 0,
         .cumulative_gas_used = 0,
@@ -116,25 +116,25 @@ test "isContractCreation" {
 
     try std.testing.expect(!isContractCreation(receipt));
 
-    receipt.contract_address = [_]u8{0xff} ** 20;
+    receipt.contract_address = @as([20]u8, @splat(0xff));
     try std.testing.expect(isContractCreation(receipt));
 }
 
 test "Log struct layout" {
     const topics = [_][32]u8{
-        [_]u8{0xaa} ** 32,
-        [_]u8{0xbb} ** 32,
+        @as([32]u8, @splat(0xaa)),
+        @as([32]u8, @splat(0xbb)),
     };
 
     const log = Log{
-        .address = [_]u8{0x11} ** 20,
+        .address = @as([20]u8, @splat(0x11)),
         .topics = &topics,
         .data = &.{ 0x01, 0x02, 0x03 },
         .block_number = 100,
-        .transaction_hash = [_]u8{0xcc} ** 32,
+        .transaction_hash = @as([32]u8, @splat(0xcc)),
         .transaction_index = 5,
         .log_index = 12,
-        .block_hash = [_]u8{0xdd} ** 32,
+        .block_hash = @as([32]u8, @splat(0xdd)),
         .removed = false,
     };
 
@@ -147,7 +147,7 @@ test "Log struct layout" {
 test "logCount" {
     const logs = [_]Log{
         .{
-            .address = [_]u8{0} ** 20,
+            .address = @as([20]u8, @splat(0)),
             .topics = &.{},
             .data = &.{},
             .block_number = null,
@@ -158,7 +158,7 @@ test "logCount" {
             .removed = false,
         },
         .{
-            .address = [_]u8{0} ** 20,
+            .address = @as([20]u8, @splat(0)),
             .topics = &.{},
             .data = &.{},
             .block_number = null,
@@ -171,11 +171,11 @@ test "logCount" {
     };
 
     const receipt = TransactionReceipt{
-        .transaction_hash = [_]u8{0} ** 32,
-        .block_hash = [_]u8{0} ** 32,
+        .transaction_hash = @as([32]u8, @splat(0)),
+        .block_hash = @as([32]u8, @splat(0)),
         .block_number = 0,
         .transaction_index = 0,
-        .from = [_]u8{0} ** 20,
+        .from = @as([20]u8, @splat(0)),
         .to = null,
         .gas_used = 0,
         .cumulative_gas_used = 0,

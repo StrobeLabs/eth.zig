@@ -476,7 +476,7 @@ test "legacy tx serialization for signing (EIP-155, chain_id=1)" {
             .nonce = 9,
             .gas_price = 20_000_000_000, // 20 gwei
             .gas_limit = 21000,
-            .to = [_]u8{0x35} ** 20,
+            .to = @as([20]u8, @splat(0x35)),
             .value = 1_000_000_000_000_000_000, // 1 ETH in wei
             .data = &.{},
             .chain_id = 1,
@@ -505,7 +505,7 @@ test "legacy tx serialization without chain_id (pre-EIP-155)" {
         .nonce = 0,
         .gas_price = 1_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xaa} ** 20,
+        .to = @as([20]u8, @splat(0xaa)),
         .value = 0,
         .data = &.{},
         .chain_id = null,
@@ -515,7 +515,7 @@ test "legacy tx serialization without chain_id (pre-EIP-155)" {
         .nonce = 0,
         .gas_price = 1_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xaa} ** 20,
+        .to = @as([20]u8, @splat(0xaa)),
         .value = 0,
         .data = &.{},
         .chain_id = 1,
@@ -561,7 +561,7 @@ test "eip2930 tx serialization for signing" {
         .nonce = 0,
         .gas_price = 1_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xbb} ** 20,
+        .to = @as([20]u8, @splat(0xbb)),
         .value = 0,
         .data = &.{},
         .access_list = &.{},
@@ -586,7 +586,7 @@ test "eip1559 tx serialization for signing" {
             .max_priority_fee_per_gas = 1_500_000_000, // 1.5 gwei
             .max_fee_per_gas = 30_000_000_000, // 30 gwei
             .gas_limit = 21000,
-            .to = [_]u8{0xcc} ** 20,
+            .to = @as([20]u8, @splat(0xcc)),
             .value = 1_000_000_000_000_000_000,
             .data = &.{},
             .access_list = &.{},
@@ -603,7 +603,7 @@ test "eip1559 tx serialization for signing" {
 test "eip4844 tx serialization for signing" {
     const allocator = std.testing.allocator;
 
-    const hash1 = [_]u8{0x01} ++ [_]u8{0xaa} ** 31;
+    const hash1 = [_]u8{0x01} ++ @as([31]u8, @splat(0xaa));
 
     const hashes = [_][32]u8{hash1};
     const tx = Transaction{ .eip4844 = .{
@@ -612,7 +612,7 @@ test "eip4844 tx serialization for signing" {
         .max_priority_fee_per_gas = 1_000_000_000,
         .max_fee_per_gas = 50_000_000_000,
         .gas_limit = 100_000,
-        .to = [_]u8{0xdd} ** 20,
+        .to = @as([20]u8, @splat(0xdd)),
         .value = 0,
         .data = &.{},
         .access_list = &.{},
@@ -634,14 +634,14 @@ test "signed legacy tx serialization" {
         .nonce = 9,
         .gas_price = 20_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0x35} ** 20,
+        .to = @as([20]u8, @splat(0x35)),
         .value = 1_000_000_000_000_000_000,
         .data = &.{},
         .chain_id = 1,
     } };
 
-    const r = [_]u8{0x01} ** 32;
-    const s = [_]u8{0x02} ** 32;
+    const r = @as([32]u8, @splat(0x01));
+    const s = @as([32]u8, @splat(0x02));
     const v: u8 = 37; // chain_id=1 => v = 1*2 + 35 + 0 = 37
 
     const signed = try serializeSigned(allocator, tx, r, s, v);
@@ -661,14 +661,14 @@ test "signed eip1559 tx serialization" {
         .max_priority_fee_per_gas = 1_500_000_000,
         .max_fee_per_gas = 30_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xcc} ** 20,
+        .to = @as([20]u8, @splat(0xcc)),
         .value = 0,
         .data = &.{},
         .access_list = &.{},
     } };
 
-    const r = [_]u8{0xab} ** 32;
-    const s = [_]u8{0xcd} ** 32;
+    const r = @as([32]u8, @splat(0xab));
+    const s = @as([32]u8, @splat(0xcd));
     const v: u8 = 1;
 
     const signed = try serializeSigned(allocator, tx, r, s, v);
@@ -753,8 +753,8 @@ test "legacy tx known encoding (EIP-155)" {
 test "eip2930 with access list" {
     const allocator = std.testing.allocator;
 
-    const addr = [_]u8{0x11} ** 20;
-    const key = [_]u8{0x22} ** 32;
+    const addr = @as([20]u8, @splat(0x11));
+    const key = @as([32]u8, @splat(0x22));
 
     const keys = [_][32]u8{key};
     const items = [_]AccessListItem{.{
@@ -788,7 +788,7 @@ test "encodeU256Bytes strips leading zeros" {
     defer list.deinit(allocator);
 
     // Value with many leading zeros
-    var val = [_]u8{0} ** 32;
+    var val = @as([32]u8, @splat(0));
     val[31] = 0x42;
 
     try encodeU256Bytes(allocator, &list, &val);
@@ -802,7 +802,7 @@ test "encodeU256Bytes all zeros" {
     var list: std.ArrayList(u8) = .empty;
     defer list.deinit(allocator);
 
-    const val = [_]u8{0} ** 32;
+    const val = @as([32]u8, @splat(0));
     try encodeU256Bytes(allocator, &list, &val);
 
     // Should encode as RLP 0 = 0x80
@@ -816,7 +816,7 @@ test "hashForSigning produces different hashes for different txs" {
         .nonce = 0,
         .gas_price = 1_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xaa} ** 20,
+        .to = @as([20]u8, @splat(0xaa)),
         .value = 0,
         .data = &.{},
         .chain_id = 1,
@@ -826,7 +826,7 @@ test "hashForSigning produces different hashes for different txs" {
         .nonce = 1,
         .gas_price = 1_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xaa} ** 20,
+        .to = @as([20]u8, @splat(0xaa)),
         .value = 0,
         .data = &.{},
         .chain_id = 1,
@@ -907,13 +907,13 @@ test "eip1559 with specific parameters" {
 test "transaction with 256-byte data" {
     const allocator = std.testing.allocator;
 
-    const data = [_]u8{0x42} ** 256;
+    const data = @as([256]u8, @splat(0x42));
 
     const tx = Transaction{ .legacy = .{
         .nonce = 1,
         .gas_price = 30_000_000_000,
         .gas_limit = 500_000,
-        .to = [_]u8{0xAA} ** 20,
+        .to = @as([20]u8, @splat(0xAA)),
         .value = 0,
         .data = &data,
         .chain_id = 1,
@@ -929,17 +929,17 @@ test "transaction with 256-byte data" {
 test "access list with multiple entries" {
     const allocator = std.testing.allocator;
 
-    const key_aa = [_]u8{0xAA} ** 32;
-    const key_bb = [_]u8{0xBB} ** 32;
-    const key_cc = [_]u8{0xCC} ** 32;
+    const key_aa = @as([32]u8, @splat(0xAA));
+    const key_bb = @as([32]u8, @splat(0xBB));
+    const key_cc = @as([32]u8, @splat(0xCC));
 
     const keys_1 = [_][32]u8{ key_aa, key_bb };
     const keys_2 = [_][32]u8{key_cc};
 
     const items = [_]AccessListItem{
-        .{ .address = [_]u8{0x11} ** 20, .storage_keys = &keys_1 },
-        .{ .address = [_]u8{0x22} ** 20, .storage_keys = &keys_2 },
-        .{ .address = [_]u8{0x33} ** 20, .storage_keys = &.{} },
+        .{ .address = @as([20]u8, @splat(0x11)), .storage_keys = &keys_1 },
+        .{ .address = @as([20]u8, @splat(0x22)), .storage_keys = &keys_2 },
+        .{ .address = @as([20]u8, @splat(0x33)), .storage_keys = &.{} },
     };
 
     const tx = Transaction{ .eip2930 = .{
@@ -947,7 +947,7 @@ test "access list with multiple entries" {
         .nonce = 0,
         .gas_price = 1_000_000_000,
         .gas_limit = 100_000,
-        .to = [_]u8{0xFF} ** 20,
+        .to = @as([20]u8, @splat(0xFF)),
         .value = 0,
         .data = &.{},
         .access_list = &items,
@@ -972,7 +972,7 @@ test "eip1559 with large fees" {
             .max_priority_fee_per_gas = 100_000_000_000, // 100 gwei
             .max_fee_per_gas = 500_000_000_000, // 500 gwei
             .gas_limit = 21000,
-            .to = [_]u8{0xBB} ** 20,
+            .to = @as([20]u8, @splat(0xBB)),
             .value = 1_000_000_000_000_000_000, // 1 ETH
             .data = &.{},
             .access_list = &.{},
@@ -994,7 +994,7 @@ test "eip1559 with large fees" {
         .max_priority_fee_per_gas = 0,
         .max_fee_per_gas = 0,
         .gas_limit = 21000,
-        .to = [_]u8{0xBB} ** 20,
+        .to = @as([20]u8, @splat(0xBB)),
         .value = 0,
         .data = &.{},
         .access_list = &.{},
@@ -1009,9 +1009,9 @@ test "eip1559 with large fees" {
 test "eip4844 with three blob hashes" {
     const allocator = std.testing.allocator;
 
-    const hash1 = [_]u8{0x01} ++ [_]u8{0xAA} ** 31;
-    const hash2 = [_]u8{0x01} ++ [_]u8{0xBB} ** 31;
-    const hash3 = [_]u8{0x01} ++ [_]u8{0xCC} ** 31;
+    const hash1 = [_]u8{0x01} ++ @as([31]u8, @splat(0xAA));
+    const hash2 = [_]u8{0x01} ++ @as([31]u8, @splat(0xBB));
+    const hash3 = [_]u8{0x01} ++ @as([31]u8, @splat(0xCC));
 
     const three_hashes = [_][32]u8{ hash1, hash2, hash3 };
     const one_hash = [_][32]u8{hash1};
@@ -1023,7 +1023,7 @@ test "eip4844 with three blob hashes" {
             .max_priority_fee_per_gas = 1_000_000_000, // 1 gwei
             .max_fee_per_gas = 50_000_000_000, // 50 gwei
             .gas_limit = 100_000,
-            .to = [_]u8{0xDD} ** 20,
+            .to = @as([20]u8, @splat(0xDD)),
             .value = 0,
             .data = &.{},
             .access_list = &.{},
@@ -1038,7 +1038,7 @@ test "eip4844 with three blob hashes" {
         .max_priority_fee_per_gas = 1_000_000_000,
         .max_fee_per_gas = 50_000_000_000,
         .gas_limit = 100_000,
-        .to = [_]u8{0xDD} ** 20,
+        .to = @as([20]u8, @splat(0xDD)),
         .value = 0,
         .data = &.{},
         .access_list = &.{},
@@ -1067,14 +1067,14 @@ test "signed eip1559 tx structure" {
         .max_priority_fee_per_gas = 1_500_000_000,
         .max_fee_per_gas = 30_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xcc} ** 20,
+        .to = @as([20]u8, @splat(0xcc)),
         .value = 0,
         .data = &.{},
         .access_list = &.{},
     } };
 
-    const r = [_]u8{0x11} ** 32;
-    const s = [_]u8{0x22} ** 32;
+    const r = @as([32]u8, @splat(0x11));
+    const s = @as([32]u8, @splat(0x22));
     const v: u8 = 0;
 
     const signed = try serializeSigned(allocator, tx, r, s, v);
@@ -1098,7 +1098,7 @@ test "hashForSigning different chain IDs produce different hashes" {
         .nonce = 0,
         .gas_price = 20_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xaa} ** 20,
+        .to = @as([20]u8, @splat(0xaa)),
         .value = 1_000_000_000_000_000_000,
         .data = &.{},
         .chain_id = 1,
@@ -1108,7 +1108,7 @@ test "hashForSigning different chain IDs produce different hashes" {
         .nonce = 0,
         .gas_price = 20_000_000_000,
         .gas_limit = 21000,
-        .to = [_]u8{0xaa} ** 20,
+        .to = @as([20]u8, @splat(0xaa)),
         .value = 1_000_000_000_000_000_000,
         .data = &.{},
         .chain_id = 5,

@@ -77,16 +77,16 @@ pub fn decodeLog(log: *const receipt_mod.Log) DecodedLog {
 // ============================================================================
 
 test "logMatchesTopic matches correctly" {
-    const transfer_topic = [_]u8{0xdd} ** 32;
-    const approval_topic = [_]u8{0xaa} ** 32;
+    const transfer_topic = @as([32]u8, @splat(0xdd));
+    const approval_topic = @as([32]u8, @splat(0xaa));
 
     const topics = [_][32]u8{transfer_topic};
     const log = receipt_mod.Log{
-        .address = [_]u8{0x11} ** 20,
+        .address = @as([20]u8, @splat(0x11)),
         .topics = &topics,
         .data = &.{},
         .block_number = 100,
-        .transaction_hash = [_]u8{0xcc} ** 32,
+        .transaction_hash = @as([32]u8, @splat(0xcc)),
         .transaction_index = 0,
         .log_index = 0,
         .block_hash = null,
@@ -99,7 +99,7 @@ test "logMatchesTopic matches correctly" {
 
 test "logMatchesTopic returns false for empty topics" {
     const log = receipt_mod.Log{
-        .address = [_]u8{0x11} ** 20,
+        .address = @as([20]u8, @splat(0x11)),
         .topics = &.{},
         .data = &.{},
         .block_number = null,
@@ -110,17 +110,17 @@ test "logMatchesTopic returns false for empty topics" {
         .removed = false,
     };
 
-    try std.testing.expect(!logMatchesTopic(&log, [_]u8{0xaa} ** 32));
+    try std.testing.expect(!logMatchesTopic(&log, @as([32]u8, @splat(0xaa))));
 }
 
 test "getIndexedTopics extracts topics[1..]" {
-    const topic0 = [_]u8{0xdd} ** 32;
-    const topic1 = [_]u8{0x11} ** 32;
-    const topic2 = [_]u8{0x22} ** 32;
+    const topic0 = @as([32]u8, @splat(0xdd));
+    const topic1 = @as([32]u8, @splat(0x11));
+    const topic2 = @as([32]u8, @splat(0x22));
 
     const topics = [_][32]u8{ topic0, topic1, topic2 };
     const log = receipt_mod.Log{
-        .address = [_]u8{0x11} ** 20,
+        .address = @as([20]u8, @splat(0x11)),
         .topics = &topics,
         .data = &.{},
         .block_number = null,
@@ -138,9 +138,9 @@ test "getIndexedTopics extracts topics[1..]" {
 }
 
 test "getIndexedTopics returns empty for single topic" {
-    const topics = [_][32]u8{[_]u8{0xdd} ** 32};
+    const topics = [_][32]u8{@as([32]u8, @splat(0xdd))};
     const log = receipt_mod.Log{
-        .address = [_]u8{0x11} ** 20,
+        .address = @as([20]u8, @splat(0x11)),
         .topics = &topics,
         .data = &.{},
         .block_number = null,
@@ -157,7 +157,7 @@ test "getIndexedTopics returns empty for single topic" {
 
 test "getIndexedTopics returns empty for no topics" {
     const log = receipt_mod.Log{
-        .address = [_]u8{0x11} ** 20,
+        .address = @as([20]u8, @splat(0x11)),
         .topics = &.{},
         .data = &.{},
         .block_number = null,
@@ -175,41 +175,41 @@ test "getIndexedTopics returns empty for no topics" {
 test "filterLogsByTopic filters matching logs" {
     const allocator = std.testing.allocator;
 
-    const transfer_topic = [_]u8{0xdd} ** 32;
-    const approval_topic = [_]u8{0xaa} ** 32;
+    const transfer_topic = @as([32]u8, @splat(0xdd));
+    const approval_topic = @as([32]u8, @splat(0xaa));
 
     const transfer_topics = [_][32]u8{transfer_topic};
     const approval_topics = [_][32]u8{approval_topic};
 
     const logs = [_]receipt_mod.Log{
         .{
-            .address = [_]u8{0x11} ** 20,
+            .address = @as([20]u8, @splat(0x11)),
             .topics = &transfer_topics,
             .data = &.{ 0x01, 0x02 },
             .block_number = 100,
-            .transaction_hash = [_]u8{0xcc} ** 32,
+            .transaction_hash = @as([32]u8, @splat(0xcc)),
             .transaction_index = 0,
             .log_index = 0,
             .block_hash = null,
             .removed = false,
         },
         .{
-            .address = [_]u8{0x22} ** 20,
+            .address = @as([20]u8, @splat(0x22)),
             .topics = &approval_topics,
             .data = &.{ 0x03, 0x04 },
             .block_number = 100,
-            .transaction_hash = [_]u8{0xcc} ** 32,
+            .transaction_hash = @as([32]u8, @splat(0xcc)),
             .transaction_index = 0,
             .log_index = 1,
             .block_hash = null,
             .removed = false,
         },
         .{
-            .address = [_]u8{0x33} ** 20,
+            .address = @as([20]u8, @splat(0x33)),
             .topics = &transfer_topics,
             .data = &.{ 0x05, 0x06 },
             .block_number = 101,
-            .transaction_hash = [_]u8{0xdd} ** 32,
+            .transaction_hash = @as([32]u8, @splat(0xdd)),
             .transaction_index = 0,
             .log_index = 0,
             .block_hash = null,
@@ -221,20 +221,20 @@ test "filterLogsByTopic filters matching logs" {
     defer allocator.free(filtered);
 
     try std.testing.expectEqual(@as(usize, 2), filtered.len);
-    try std.testing.expectEqualSlices(u8, &([_]u8{0x11} ** 20), &filtered[0].address);
-    try std.testing.expectEqualSlices(u8, &([_]u8{0x33} ** 20), &filtered[1].address);
+    try std.testing.expectEqualSlices(u8, &(@as([20]u8, @splat(0x11))), &filtered[0].address);
+    try std.testing.expectEqualSlices(u8, &(@as([20]u8, @splat(0x33))), &filtered[1].address);
 }
 
 test "filterLogsByTopic returns empty for no matches" {
     const allocator = std.testing.allocator;
 
-    const transfer_topic = [_]u8{0xdd} ** 32;
-    const other_topic = [_]u8{0xff} ** 32;
+    const transfer_topic = @as([32]u8, @splat(0xdd));
+    const other_topic = @as([32]u8, @splat(0xff));
 
     const topics = [_][32]u8{transfer_topic};
     const logs = [_]receipt_mod.Log{
         .{
-            .address = [_]u8{0x11} ** 20,
+            .address = @as([20]u8, @splat(0x11)),
             .topics = &topics,
             .data = &.{},
             .block_number = null,
@@ -253,27 +253,27 @@ test "filterLogsByTopic returns empty for no matches" {
 }
 
 test "decodeLog extracts all fields" {
-    const topic0 = [_]u8{0xdd} ** 32;
-    const from_topic = [_]u8{0x11} ** 32;
-    const to_topic = [_]u8{0x22} ** 32;
+    const topic0 = @as([32]u8, @splat(0xdd));
+    const from_topic = @as([32]u8, @splat(0x11));
+    const to_topic = @as([32]u8, @splat(0x22));
 
     const topics = [_][32]u8{ topic0, from_topic, to_topic };
-    const data = [_]u8{0x00} ** 32;
+    const data = @as([32]u8, @splat(0x00));
     const log = receipt_mod.Log{
-        .address = [_]u8{0xaa} ** 20,
+        .address = @as([20]u8, @splat(0xaa)),
         .topics = &topics,
         .data = &data,
         .block_number = 12345,
-        .transaction_hash = [_]u8{0xbb} ** 32,
+        .transaction_hash = @as([32]u8, @splat(0xbb)),
         .transaction_index = 3,
         .log_index = 7,
-        .block_hash = [_]u8{0xcc} ** 32,
+        .block_hash = @as([32]u8, @splat(0xcc)),
         .removed = false,
     };
 
     const decoded = decodeLog(&log);
 
-    try std.testing.expectEqualSlices(u8, &([_]u8{0xaa} ** 20), &decoded.address);
+    try std.testing.expectEqualSlices(u8, &(@as([20]u8, @splat(0xaa))), &decoded.address);
     try std.testing.expectEqual(@as(usize, 2), decoded.indexed_values.len);
     try std.testing.expectEqualSlices(u8, &from_topic, &decoded.indexed_values[0]);
     try std.testing.expectEqualSlices(u8, &to_topic, &decoded.indexed_values[1]);
@@ -284,7 +284,7 @@ test "decodeLog extracts all fields" {
 
 test "DecodedLog struct default values" {
     const decoded = DecodedLog{
-        .address = [_]u8{0} ** 20,
+        .address = @as([20]u8, @splat(0)),
         .indexed_values = &.{},
         .data = &.{},
         .block_number = null,

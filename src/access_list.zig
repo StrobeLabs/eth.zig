@@ -108,7 +108,7 @@ test "empty access list encodes as empty RLP list" {
 
 test "access list with one item, no storage keys" {
     const allocator = std.testing.allocator;
-    const addr = [_]u8{0xaa} ** 20;
+    const addr = @as([20]u8, @splat(0xaa));
 
     const items = [_]AccessListItem{
         .{
@@ -134,8 +134,8 @@ test "access list with one item, no storage keys" {
 
 test "access list with one item and one storage key" {
     const allocator = std.testing.allocator;
-    const addr = [_]u8{0xbb} ** 20;
-    const key = [_]u8{0xcc} ** 32;
+    const addr = @as([20]u8, @splat(0xbb));
+    const key = @as([32]u8, @splat(0xcc));
 
     const keys = [_][32]u8{key};
     const items = [_]AccessListItem{
@@ -162,7 +162,7 @@ test "access list with one item and one storage key" {
 
 test "access list item struct has correct fields" {
     const item = AccessListItem{
-        .address = [_]u8{0} ** 20,
+        .address = @as([20]u8, @splat(0)),
         .storage_keys = &.{},
     };
     try std.testing.expectEqual(@as(usize, 20), item.address.len);

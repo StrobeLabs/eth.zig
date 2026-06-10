@@ -893,7 +893,7 @@ test "encodeFrame - empty payload" {
 
 test "encodeFrame - medium payload (126 bytes)" {
     const allocator = std.testing.allocator;
-    const payload = [_]u8{'A'} ** 200;
+    const payload = @as([200]u8, @splat('A'));
     const mask_key = [4]u8{ 0x01, 0x02, 0x03, 0x04 };
 
     const frame = try encodeFrame(allocator, .text, &payload, mask_key);
@@ -1126,8 +1126,8 @@ test "generateWebSocketKey - produces 24 base64 chars" {
 }
 
 test "generateWebSocketKey - different inputs produce different keys" {
-    const key1 = generateWebSocketKey([_]u8{0} ** 16);
-    const key2 = generateWebSocketKey([_]u8{1} ** 16);
+    const key1 = generateWebSocketKey(@as([16]u8, @splat(0)));
+    const key2 = generateWebSocketKey(@as([16]u8, @splat(1)));
     try std.testing.expect(!std.mem.eql(u8, &key1, &key2));
 }
 
@@ -1246,7 +1246,7 @@ test "encodeFrame then decodeFrameHeader roundtrip" {
 
 test "encodeFrame then decodeFrameHeader roundtrip - large payload" {
     const allocator = std.testing.allocator;
-    const payload = [_]u8{'X'} ** 300;
+    const payload = @as([300]u8, @splat('X'));
     const mask_key = [4]u8{ 0xAB, 0xCD, 0xEF, 0x01 };
 
     const frame = try encodeFrame(allocator, .binary, &payload, mask_key);
@@ -1270,7 +1270,7 @@ test "encodeFrame then decodeFrameHeader roundtrip - large payload" {
 
 test "encodeFrame - exactly 125 bytes (max short length)" {
     const allocator = std.testing.allocator;
-    const payload = [_]u8{'Z'} ** 125;
+    const payload = @as([125]u8, @splat('Z'));
     const mask_key = [4]u8{ 1, 2, 3, 4 };
 
     const frame = try encodeFrame(allocator, .text, &payload, mask_key);
@@ -1283,7 +1283,7 @@ test "encodeFrame - exactly 125 bytes (max short length)" {
 
 test "encodeFrame - exactly 126 bytes (triggers extended 16-bit length)" {
     const allocator = std.testing.allocator;
-    const payload = [_]u8{'Z'} ** 126;
+    const payload = @as([126]u8, @splat('Z'));
     const mask_key = [4]u8{ 1, 2, 3, 4 };
 
     const frame = try encodeFrame(allocator, .text, &payload, mask_key);

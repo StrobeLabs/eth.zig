@@ -260,7 +260,7 @@ test "ERC721 ApprovalForAll topic matches known value" {
 }
 
 test "ERC721.init sets address correctly" {
-    const nft_addr = [_]u8{0xbb} ** 20;
+    const nft_addr = @as([20]u8, @splat(0xbb));
     var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
     defer transport.deinit();
     var prov = provider_mod.Provider.init(std.testing.allocator, &transport);
@@ -271,9 +271,9 @@ test "ERC721.init sets address correctly" {
 
 test "ERC721 transferFrom encodes correctly" {
     const allocator = std.testing.allocator;
-    var from: [20]u8 = [_]u8{0} ** 20;
+    var from: [20]u8 = @as([20]u8, @splat(0));
     from[19] = 0x01;
-    var to: [20]u8 = [_]u8{0} ** 20;
+    var to: [20]u8 = @as([20]u8, @splat(0));
     to[19] = 0x02;
 
     const args = [_]AbiValue{ .{ .address = from }, .{ .address = to }, .{ .uint256 = 42 } };
@@ -297,7 +297,7 @@ test "ERC721 ownerOf encodes correctly" {
 
 test "ERC721 setApprovalForAll encodes correctly" {
     const allocator = std.testing.allocator;
-    var operator: [20]u8 = [_]u8{0} ** 20;
+    var operator: [20]u8 = @as([20]u8, @splat(0));
     operator[19] = 0x03;
 
     const args = [_]AbiValue{ .{ .address = operator }, .{ .boolean = true } };

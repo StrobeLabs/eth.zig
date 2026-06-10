@@ -88,7 +88,7 @@ test "keccak256 testing" {
 }
 
 test "keccak256 256 zero bytes" {
-    const zero_bytes = [_]u8{0} ** 256;
+    const zero_bytes = @as([256]u8, @splat(0));
     const result1 = hash(&zero_bytes);
     const result2 = hash(&zero_bytes);
     // Verify 32-byte output
@@ -98,7 +98,7 @@ test "keccak256 256 zero bytes" {
 }
 
 test "keccak256 4KB input" {
-    const big_input = [_]u8{0x42} ** 4096;
+    const big_input = @as([4096]u8, @splat(0x42));
     const result1 = hash(&big_input);
     const result2 = hash(&big_input);
     // Verify determinism

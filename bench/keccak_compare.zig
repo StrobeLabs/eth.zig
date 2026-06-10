@@ -2,10 +2,10 @@ const std = @import("std");
 const eth = @import("eth");
 
 // Test data
-const DATA_32: [32]u8 = .{0xAB} ** 32;
-const DATA_256: [256]u8 = .{0xAB} ** 256;
-const DATA_1K: [1024]u8 = .{0xAB} ** 1024;
-const DATA_4K: [4096]u8 = .{0xAB} ** 4096;
+const DATA_32: [32]u8 = @splat(0xAB);
+const DATA_256: [256]u8 = @splat(0xAB);
+const DATA_1K: [1024]u8 = @splat(0xAB);
+const DATA_4K: [4096]u8 = @splat(0xAB);
 
 // ============================================================================
 // Benchmark harness (same as bench.zig / u256_bench.zig)
@@ -115,7 +115,7 @@ pub fn main() !void {
     const stdout = &w.interface;
 
     try stdout.print("\n{s:<30} {s:>12} {s:>14}\n", .{ "Benchmark", "ns/op", "iters" });
-    try stdout.print("{s}\n", .{"-" ** 60});
+    try stdout.print("{s}\n", .{"" ++ @as([60]u8, @splat('-'))});
 
     // eth.zig
     try runAndPrint("eth.zig keccak empty", benchEthKeccakEmpty, stdout);

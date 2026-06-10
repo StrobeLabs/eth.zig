@@ -141,12 +141,12 @@ pub fn encodeData(
             return uint256_mod.toBigEndianBytes(as_u256);
         },
         .address => |v| {
-            var result: [32]u8 = [_]u8{0} ** 32;
+            var result: [32]u8 = @as([32]u8, @splat(0));
             @memcpy(result[12..32], &v);
             return result;
         },
         .bool_val => |v| {
-            var result: [32]u8 = [_]u8{0} ** 32;
+            var result: [32]u8 = @as([32]u8, @splat(0));
             if (v) result[31] = 1;
             return result;
         },
@@ -550,14 +550,14 @@ test "hashType - Mail type from EIP-712 spec" {
 test "encodeData - uint256" {
     const allocator = testing.allocator;
     const result = try encodeData(allocator, .{ .uint256 = 1 }, "uint256", &.{});
-    var expected: [32]u8 = [_]u8{0} ** 32;
+    var expected: [32]u8 = @as([32]u8, @splat(0));
     expected[31] = 1;
     try testing.expectEqualSlices(u8, &expected, &result);
 }
 
 test "encodeData - address" {
     const allocator = testing.allocator;
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[0] = 0xCC;
     addr[19] = 0xCC;
     const result = try encodeData(allocator, .{ .address = addr }, "address", &.{});
@@ -597,7 +597,7 @@ test "encodeData - int256 negative" {
     const allocator = testing.allocator;
     const result = try encodeData(allocator, .{ .int256 = -1 }, "int256", &.{});
     // -1 in two's complement is all 0xFF bytes
-    var expected: [32]u8 = [_]u8{0xFF} ** 32;
+    var expected: [32]u8 = @as([32]u8, @splat(0xFF));
     _ = &expected;
     try testing.expectEqualSlices(u8, &expected, &result);
 }
@@ -819,7 +819,7 @@ test "hashDomain - with salt" {
 
     const domain = DomainSeparator{
         .name = "Test",
-        .salt = [_]u8{0xAB} ** 32,
+        .salt = @as([32]u8, @splat(0xAB)),
     };
 
     const result = try hashDomain(allocator, domain);
@@ -852,7 +852,7 @@ test "encodeData - array of uint256" {
 
 test "encodeData - bytes32" {
     const allocator = testing.allocator;
-    var val: [32]u8 = [_]u8{0} ** 32;
+    var val: [32]u8 = @as([32]u8, @splat(0));
     val[0] = 0xDE;
     val[31] = 0xAD;
     const result = try encodeData(allocator, .{ .bytes32 = val }, "bytes32", &.{});
@@ -1080,7 +1080,7 @@ test "hashDomain with all 5 fields" {
         .version = "2",
         .chain_id = 137,
         .verifying_contract = try hex.hexToBytesFixed(20, "0x1234567890123456789012345678901234567890"),
-        .salt = [_]u8{0xAB} ** 32,
+        .salt = @as([32]u8, @splat(0xAB)),
     };
 
     const hash1 = try hashDomain(allocator, domain);

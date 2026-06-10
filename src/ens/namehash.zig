@@ -8,9 +8,9 @@ const keccak = @import("../keccak.zig");
 ///   namehash("eth") = keccak256(namehash("") ++ keccak256("eth"))
 ///   namehash("foo.eth") = keccak256(namehash("eth") ++ keccak256("foo"))
 pub fn namehash(name: []const u8) [32]u8 {
-    if (name.len == 0) return [_]u8{0} ** 32;
+    if (name.len == 0) return @as([32]u8, @splat(0));
 
-    var node: [32]u8 = [_]u8{0} ** 32;
+    var node: [32]u8 = @as([32]u8, @splat(0));
 
     // We need to process labels right-to-left. First, find all label boundaries.
     // Walk backwards through the name to find dot positions.
@@ -52,7 +52,7 @@ const hex = @import("../hex.zig");
 
 test "namehash empty string" {
     const result = namehash("");
-    const expected = [_]u8{0} ** 32;
+    const expected = @as([32]u8, @splat(0));
     try std.testing.expectEqualSlices(u8, &expected, &result);
 }
 
@@ -87,7 +87,7 @@ test "namehash deep subdomain" {
     // a.b.c.eth should process right-to-left: eth -> c -> b -> a
     const result = namehash("a.b.c.eth");
     // Verify it manually step by step
-    var node: [32]u8 = [_]u8{0} ** 32;
+    var node: [32]u8 = @as([32]u8, @splat(0));
     // eth
     const eth_label = keccak.hash("eth");
     node = keccak.hashConcat(&.{ &node, &eth_label });
@@ -119,7 +119,7 @@ test "labelhash is just keccak256 of the label" {
 test "namehash single label (no dots)" {
     // A single label like "eth" should produce: keccak256(0x00..00 ++ keccak256("eth"))
     const result = namehash("eth");
-    var node: [32]u8 = [_]u8{0} ** 32;
+    var node: [32]u8 = @as([32]u8, @splat(0));
     const eth_hash = keccak.hash("eth");
     node = keccak.hashConcat(&.{ &node, &eth_hash });
     try std.testing.expectEqualSlices(u8, &node, &result);
@@ -143,7 +143,7 @@ test "namehash vitalik.eth official" {
 
 test "namehash resolver.eth" {
     // Manually compute: node starts as zeros, then hash "eth", then hash "resolver"
-    var node: [32]u8 = [_]u8{0} ** 32;
+    var node: [32]u8 = @as([32]u8, @splat(0));
     const eth_label = keccak.hash("eth");
     node = keccak.hashConcat(&.{ &node, &eth_label });
     const resolver_label = keccak.hash("resolver");

@@ -164,7 +164,7 @@ test "getBlock for block 0 returns genesis" {
 
     try std.testing.expectEqual(@as(u64, 0), header.number);
     // Genesis block parent hash is all zeros.
-    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 32), &header.parent_hash);
+    try std.testing.expectEqualSlices(u8, &(@as([32]u8, @splat(0))), &header.parent_hash);
 }
 
 test "getBlock for non-existent block returns null" {
@@ -303,7 +303,7 @@ test "getTransactionReceipt for unknown hash returns null" {
     var provider = eth.provider.Provider.init(allocator, &transport);
 
     // A made-up transaction hash that does not exist.
-    const fake_hash = [_]u8{0xab} ** 32;
+    const fake_hash = @as([32]u8, @splat(0xab));
     const receipt = try provider.getTransactionReceipt(fake_hash);
     try std.testing.expect(receipt == null);
 }
@@ -359,7 +359,7 @@ test "callWithOverrides applies code + balance override" {
 
     // Returned 32 bytes encode the overridden balance.
     try std.testing.expectEqual(@as(usize, 32), result.len);
-    var expected = [_]u8{0} ** 32;
+    var expected = @as([32]u8, @splat(0));
     expected[28] = 0xde;
     expected[29] = 0xad;
     expected[30] = 0xbe;
@@ -381,9 +381,9 @@ test "callWithOverrides applies stateDiff (storage slot)" {
     // Returns storage slot 5 as a 32-byte word.
     const bytecode = [_]u8{ 0x60, 0x05, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3 };
 
-    var slot = [_]u8{0} ** 32;
+    var slot = @as([32]u8, @splat(0));
     slot[31] = 0x05;
-    var value = [_]u8{0} ** 32;
+    var value = @as([32]u8, @splat(0));
     value[30] = 0xab;
     value[31] = 0xcd;
 

@@ -530,7 +530,7 @@ test "buildSubscribeParams - newPendingTransactions full" {
 
 test "buildSubscribeParams - logs with address only" {
     const allocator = std.testing.allocator;
-    const addr = [_]u8{0xde} ** 20;
+    const addr = @as([20]u8, @splat(0xde));
     const params: SubscriptionParams = .{
         .logs = .{
             .address = addr,
@@ -548,7 +548,7 @@ test "buildSubscribeParams - logs with address only" {
 
 test "buildSubscribeParams - logs with topics" {
     const allocator = std.testing.allocator;
-    const topic1 = [_]u8{0xAA} ** 32;
+    const topic1 = @as([32]u8, @splat(0xAA));
     const topics = [_]?[32]u8{topic1};
     const params: SubscriptionParams = .{
         .logs = .{
@@ -580,9 +580,9 @@ test "buildSubscribeParams - logs with null topic" {
 
 test "buildSubscribeParams - logs with address and topics" {
     const allocator = std.testing.allocator;
-    const addr = [_]u8{0x11} ** 20;
-    const topic1 = [_]u8{0x22} ** 32;
-    const topic2 = [_]u8{0x33} ** 32;
+    const addr = @as([20]u8, @splat(0x11));
+    const topic1 = @as([32]u8, @splat(0x22));
+    const topic2 = @as([32]u8, @splat(0x33));
     const topics = [_]?[32]u8{ topic1, null, topic2 };
     const params: SubscriptionParams = .{
         .logs = .{
@@ -661,7 +661,7 @@ test "formatAddress" {
 }
 
 test "formatHash" {
-    const hash = [_]u8{0xAB} ** 32;
+    const hash = @as([32]u8, @splat(0xAB));
     const result = formatHash(hash);
     try std.testing.expect(result[0] == '0');
     try std.testing.expect(result[1] == 'x');

@@ -109,7 +109,7 @@ pub const Contract = struct {
 // ============================================================================
 
 test "Contract.init sets fields correctly" {
-    const contract_addr = [_]u8{0xaa} ** 20;
+    const contract_addr = @as([20]u8, @splat(0xaa));
     var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
@@ -128,7 +128,7 @@ test "Contract.readRaw encodes function call correctly" {
     // Simulate what readRaw does internally: encode a balanceOf(address) call
     const keccak = @import("keccak.zig");
     const selector = keccak.selector("balanceOf(address)");
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[0] = 0xd8;
     addr[19] = 0x45;
 
@@ -147,7 +147,7 @@ test "Contract.writeRaw encodes transfer call correctly" {
     const keccak = @import("keccak.zig");
 
     const selector = keccak.selector("transfer(address,uint256)");
-    var addr: [20]u8 = [_]u8{0} ** 20;
+    var addr: [20]u8 = @as([20]u8, @splat(0));
     addr[19] = 0x01;
 
     const values = [_]abi_encode.AbiValue{

@@ -114,19 +114,19 @@ fn benchKeccak32() void {
 }
 
 fn benchKeccak256b() void {
-    const data: [256]u8 = .{0xAB} ** 256;
+    const data: [256]u8 = @splat(0xAB);
     const result = eth.keccak.hash(&data);
     std.mem.doNotOptimizeAway(&result);
 }
 
 fn benchKeccak1k() void {
-    const data: [1024]u8 = .{0xAB} ** 1024;
+    const data: [1024]u8 = @splat(0xAB);
     const result = eth.keccak.hash(&data);
     std.mem.doNotOptimizeAway(&result);
 }
 
 fn benchKeccak4k() void {
-    const data: [4096]u8 = .{0xAB} ** 4096;
+    const data: [4096]u8 = @splat(0xAB);
     const result = eth.keccak.hash(&data);
     std.mem.doNotOptimizeAway(&result);
 }
@@ -475,7 +475,7 @@ pub fn main() !void {
     const stdout = &w.interface;
 
     try stdout.print("\n{s:<34} {s:>12} {s:>14}\n", .{ "Benchmark", "ns/op", "iters" });
-    try stdout.print("{s}\n", .{"-" ** 64});
+    try stdout.print("{s}\n", .{"" ++ @as([64]u8, @splat('-'))});
 
     // Keccak256
     try runAndPrint("keccak256_empty", benchKeccakEmpty, stdout);
