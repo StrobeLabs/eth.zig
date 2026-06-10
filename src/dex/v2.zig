@@ -164,16 +164,20 @@ test "getAmountOut result less than reserve" {
 }
 
 test "getAmountIn inverse" {
-    if (true) return error.SkipZigTest; // quarantined: round-trip assumption, see #83
     const amount_in: u256 = 1_000_000_000_000_000_000;
     const reserve_in: u256 = 100_000_000_000_000_000_000;
-    const reserve_out: u256 = 200_000_000_000;
+    // Reserves of comparable magnitude so the (floored) output is large. The
+    // round-trip invariant only holds when flooring the output discards less
+    // than the +1-unit ceiling getAmountIn adds back; with a tiny reserve_out
+    // the floored output loses far more than 2 units of input-equivalent and
+    // recovered_input legitimately falls below amount_in (Uniswap behaviour,
+    // not a bug).
+    const reserve_out: u256 = 200_000_000_000_000_000_000;
 
     const output = getAmountOut(amount_in, reserve_in, reserve_out, 997, 1000).?;
     const recovered_input = getAmountIn(output, reserve_in, reserve_out, 997, 1000) orelse unreachable;
 
-    // Due to ceiling division (+1), recovered_input >= amount_in
-    // Should be within 2 units
+    // Due to ceiling division (+1), recovered_input >= amount_in, within 2 units.
     try std.testing.expect(recovered_input >= amount_in);
     try std.testing.expect(recovered_input - amount_in <= 2);
 }
