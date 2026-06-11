@@ -62,6 +62,10 @@ pub const contract = @import("contract.zig");
 pub const multicall = @import("multicall.zig");
 pub const event = @import("event.zig");
 pub const log_watcher = @import("log_watcher.zig");
+pub const abigen = @import("abigen.zig");
+/// Comptime contract bindings: `const Weth = eth.bind(@embedFile("weth.json"));`
+/// produces a fully typed contract struct at compile time (#68).
+pub const bind = abigen.Bind;
 pub const erc20 = @import("erc20.zig");
 pub const erc721 = @import("erc721.zig");
 
@@ -136,6 +140,7 @@ test {
     _ = @import("multicall.zig");
     _ = @import("event.zig");
     _ = @import("log_watcher.zig");
+    _ = @import("abigen.zig");
     _ = @import("erc20.zig");
     _ = @import("erc721.zig");
     // Layer 9
