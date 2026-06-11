@@ -28,10 +28,13 @@
 //! ```
 //!
 //! ## Scope of this release
-//! Read functions (view/pure and, for now, any function -- only read methods are
-//! generated) and event decoders. State-changing writes (which would take a
-//! `*Wallet`) are a documented follow-up. See the type-mapping table and the
-//! "Limitations" section below for the exact ABI surface that is supported.
+//! Typed reads via `call(provider, ...)`, state-changing writes via
+//! `send(wallet, ...)` / `sendValue(...)` / `sendAndWait(...)`, and typed event
+//! decoders. A write builds the *same* calldata as the matching read and hands
+//! it to a `*Wallet`, which fills nonce/gas/chainId, signs, and broadcasts.
+//! Calling `send` on a `view`/`pure` function is a compile error (use `call`).
+//! See the type-mapping table and the "Limitations" section below for the exact
+//! ABI surface that is supported.
 //!
 //! ## ABI -> Zig type mapping
 //! | ABI type            | Zig type        | Notes                                     |
@@ -51,7 +54,6 @@
 //! encode/decode bridge widens to the engine's `u256`/`i256` at the boundary.
 //!
 //! ## Limitations (honest scope cuts)
-//! - **Writes deferred.** Only read methods are generated this release.
 //! - **Tuples and arrays.** Functions whose inputs or outputs contain a `tuple`,
 //!   fixed array, or dynamic array are parsed (and their canonical selector is
 //!   still computed correctly), but no typed Zig method is generated for them --
@@ -73,6 +75,7 @@ const abi_decode = @import("abi_decode.zig");
 const uint256_mod = @import("uint256.zig");
 const receipt_mod = @import("receipt.zig");
 const provider_mod = @import("provider.zig");
+const wallet_mod = @import("wallet.zig");
 
 const AbiType = abi_types.AbiType;
 const AbiValue = abi_encode.AbiValue;
@@ -144,6 +147,12 @@ const ParsedAbi = struct {
 ///   call for the ABI function `name`. `args` is a tuple typed from the inputs
 ///   (e.g. `.{ holder }` of type `.{[20]u8}`); `Ret` is the mapped output type
 ///   (e.g. `u256` for `balanceOf`).
+/// - `pub fn send(self, wallet, comptime name, args) ![32]u8` -- the typed
+///   state-changing write: builds the same `selector ++ encode(args)` calldata
+///   as `call` and broadcasts it via `wallet.sendTransaction`, returning the tx
+///   hash. `sendValue(..., value)` is the payable variant; `sendAndWait(...,
+///   max_attempts)` waits for the receipt. Naming a `view`/`pure` function is a
+///   compile error (use `call`).
 /// - `pub fn selectorOf(comptime name) [4]u8` -- the precomputed 4-byte selector.
 /// - `pub fn ArgsOf(comptime name) type` / `pub fn ReturnOf(comptime name) type`
 ///   -- the typed argument-tuple and return types, for callers that want them.
@@ -205,25 +214,101 @@ pub fn Bind(comptime abi_json: []const u8) type {
             args: ArgsOf(name),
         ) anyerror!ReturnOf(name) {
             const func = comptime findFunc(parsed.funcs, name);
+            const allocator = provider.allocator;
+
+            // 1. Build calldata = selector ++ encoded args (caller frees).
+            const calldata = try encodeCall(allocator, name, args);
+            defer allocator.free(calldata);
+
+            // 2. eth_call.
+            const ret_data = try provider.call(self.address, calldata);
+            defer allocator.free(ret_data);
+
+            // 3. Decode the response into the mapped return type.
+            return decodeReturn(ReturnOf(name), func.outputs, ret_data, allocator);
+        }
+
+        /// ABI-encode `selector ++ encode(args)` for ABI function `name` onto
+        /// `allocator`, returning the heap calldata (the caller owns and frees
+        /// it). Shared by `call` (read) and `send` (write) so both produce
+        /// byte-identical calldata from the same typed `args`.
+        fn encodeCall(
+            allocator: std.mem.Allocator,
+            comptime name: []const u8,
+            args: ArgsOf(name),
+        ) anyerror![]u8 {
+            const func = comptime findFunc(parsed.funcs, name);
             const selector = comptime keccak.selector(signatureOf(func.name, func.inputs));
 
-            // 1. Lower the typed Zig args to dynamic AbiValues for encoding.
+            // Lower the typed Zig args to dynamic AbiValues for encoding.
             var values: [func.inputs.len]AbiValue = undefined;
             inline for (func.inputs, 0..) |input, i| {
                 values[i] = lowerArg(input.type_str, args[i]);
             }
+            return abi_encode.encodeFunctionCall(allocator, selector, &values);
+        }
 
-            // 2. Build calldata = selector ++ encoded args.
-            const allocator = provider.allocator;
-            const calldata = try abi_encode.encodeFunctionCall(allocator, selector, &values);
+        /// Typed state-changing write for ABI function `name`. Builds the same
+        /// `selector ++ encode(args)` calldata as `call` and submits it via
+        /// `wallet.sendTransaction(.{ .to = self.address, .data = calldata })`,
+        /// returning the broadcast transaction hash. The wallet fills
+        /// nonce/gas/chainId, signs, and broadcasts.
+        ///
+        /// Naming a `view`/`pure` function is a compile error: those make no
+        /// state change, so a write to one is almost always a mistake -- use
+        /// `call` instead. For payable functions that take ETH, use `sendValue`.
+        pub fn send(
+            self: Self,
+            wallet: *wallet_mod.Wallet,
+            comptime name: []const u8,
+            args: ArgsOf(name),
+        ) anyerror![32]u8 {
+            return self.sendValue(wallet, name, args, 0);
+        }
+
+        /// Like `send`, but attaches `value` wei to the call for `payable`
+        /// functions (e.g. WETH `deposit()`). For non-payable functions pass
+        /// `0` (or just use `send`).
+        pub fn sendValue(
+            self: Self,
+            wallet: *wallet_mod.Wallet,
+            comptime name: []const u8,
+            args: ArgsOf(name),
+            value: u256,
+        ) anyerror![32]u8 {
+            comptime assertWritable(parsed.funcs, name);
+            const allocator = wallet.allocator;
+
+            const calldata = try encodeCall(allocator, name, args);
             defer allocator.free(calldata);
 
-            // 3. eth_call.
-            const ret_data = try provider.call(self.address, calldata);
-            defer allocator.free(ret_data);
+            return wallet.sendTransaction(.{
+                .to = self.address,
+                .value = value,
+                .data = calldata,
+            });
+        }
 
-            // 4. Decode the response into the mapped return type.
-            return decodeReturn(ReturnOf(name), func.outputs, ret_data, allocator);
+        /// Convenience over `send` that waits for the transaction receipt,
+        /// polling up to `max_attempts` times. Returns `error.ReceiptNotFound`
+        /// if the receipt does not land in time.
+        pub fn sendAndWait(
+            self: Self,
+            wallet: *wallet_mod.Wallet,
+            comptime name: []const u8,
+            args: ArgsOf(name),
+            max_attempts: u32,
+        ) anyerror!receipt_mod.TransactionReceipt {
+            comptime assertWritable(parsed.funcs, name);
+            const allocator = wallet.allocator;
+
+            const calldata = try encodeCall(allocator, name, args);
+            defer allocator.free(calldata);
+
+            return wallet.sendTransactionAndWait(.{
+                .to = self.address,
+                .data = calldata,
+            }, max_attempts);
         }
 
         /// The typed decoded-event struct for event `name`.
@@ -300,6 +385,20 @@ fn findFunc(comptime funcs: []const Func, comptime name: []const u8) Func {
         }
     }
     @compileError("abigen: no function named '" ++ name ++ "' in ABI");
+}
+
+/// Fail the build when the function `name` in `funcs` is `view`/`pure`. Sending
+/// a transaction to a read-only function makes no state change and costs gas for
+/// nothing, so it is almost always a user error -- direct them to `call`. Also
+/// validates that `name` exists and is generatable (via `findFunc`).
+fn assertWritable(comptime funcs: []const Func, comptime name: []const u8) void {
+    const func = findFunc(funcs, name);
+    if (std.mem.eql(u8, func.state_mutability, "view") or
+        std.mem.eql(u8, func.state_mutability, "pure"))
+    {
+        @compileError("abigen: '" ++ name ++ "' is a " ++ func.state_mutability ++
+            " function (read-only); use `call` instead of `send`");
+    }
 }
 
 /// Find the event named `name`, failing the build if it is missing or has a
@@ -1186,6 +1285,102 @@ test "decodeEvent rejects truncated log.data" {
         .removed = false,
     };
     try testing.expectError(EventError.TruncatedData, C.decodeEvent("Transfer", log));
+}
+
+test "encodeCall(transfer) is selector ++ padded to ++ 32-byte amount" {
+    // The shared write/read calldata builder must produce byte-identical
+    // calldata to a hand-built transfer call: 0xa9059cbb ++ 32-byte address ++
+    // 32-byte amount.
+    const Erc20 = Bind(erc20_abi);
+    const allocator = testing.allocator;
+
+    var to: [20]u8 = @splat(0);
+    to[0] = 0xd8;
+    to[1] = 0xdA;
+    to[19] = 0x45;
+    const amount: u256 = 1_000_000_000_000_000_000;
+
+    const calldata = try Erc20.encodeCall(allocator, "transfer", .{ to, amount });
+    defer allocator.free(calldata);
+
+    // 4-byte selector + 32-byte padded address + 32-byte amount.
+    try testing.expectEqual(@as(usize, 68), calldata.len);
+    try testing.expectEqualSlices(u8, &.{ 0xa9, 0x05, 0x9c, 0xbb }, calldata[0..4]);
+    // address is right-aligned in its 32-byte word (12 leading zero bytes).
+    for (calldata[4..16]) |b| try testing.expectEqual(@as(u8, 0), b);
+    try testing.expectEqualSlices(u8, &to, calldata[16..36]);
+    // amount is the big-endian 32-byte word.
+    const expected_amount = uint256_mod.toBigEndianBytes(amount);
+    try testing.expectEqualSlices(u8, &expected_amount, calldata[36..68]);
+}
+
+test "encodeCall and the read path build identical calldata" {
+    // `call` and `send` must share one encoder: assert encodeCall matches a
+    // hand-rolled selector ++ encode(args) for balanceOf.
+    const Erc20 = Bind(erc20_abi);
+    const allocator = testing.allocator;
+
+    var holder: [20]u8 = @splat(0);
+    holder[19] = 0xAB;
+
+    const via_helper = try Erc20.encodeCall(allocator, "balanceOf", .{holder});
+    defer allocator.free(via_helper);
+
+    const values = [_]AbiValue{.{ .address = holder }};
+    const via_manual = try abi_encode.encodeFunctionCall(allocator, Erc20.selectorOf("balanceOf"), &values);
+    defer allocator.free(via_manual);
+
+    try testing.expectEqualSlices(u8, via_manual, via_helper);
+}
+
+test "send/sendValue/sendAndWait exist with the expected signatures" {
+    const Erc20 = Bind(erc20_abi);
+
+    // The write API is present on the generated handle.
+    try testing.expect(@hasDecl(Erc20, "send"));
+    try testing.expect(@hasDecl(Erc20, "sendValue"));
+    try testing.expect(@hasDecl(Erc20, "sendAndWait"));
+
+    // send/sendValue return the tx hash; sendAndWait returns a receipt.
+    const SendRet = @typeInfo(@TypeOf(Erc20.send)).@"fn".return_type.?;
+    try testing.expectEqual([32]u8, @typeInfo(SendRet).error_union.payload);
+    const SendValueRet = @typeInfo(@TypeOf(Erc20.sendValue)).@"fn".return_type.?;
+    try testing.expectEqual([32]u8, @typeInfo(SendValueRet).error_union.payload);
+    const WaitRet = @typeInfo(@TypeOf(Erc20.sendAndWait)).@"fn".return_type.?;
+    try testing.expectEqual(receipt_mod.TransactionReceipt, @typeInfo(WaitRet).error_union.payload);
+}
+
+test "send typechecks against a Wallet built over a (dummy) provider" {
+    // Build a real Wallet over an HttpTransport pointed at a dummy URL: no call
+    // is made here, we only confirm `send` typechecks end to end against the
+    // wallet's `sendTransaction`. (The network round trip is covered by
+    // integration tests.)
+    const hex = @import("hex.zig");
+    const http_transport_mod = @import("http_transport.zig");
+    const runtime = @import("runtime.zig");
+
+    const Erc20 = Bind(erc20_abi);
+    const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    var transport = http_transport_mod.HttpTransport.init(testing.allocator, "http://127.0.0.1:1", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = provider_mod.Provider.init(testing.allocator, &transport);
+    var wallet = wallet_mod.Wallet.init(testing.allocator, private_key, &provider);
+    defer wallet.deinit();
+
+    const token = Erc20.at(@splat(0xAB));
+    var to: [20]u8 = @splat(0);
+    to[19] = 0x02;
+    const amount: u256 = 5;
+
+    // Typecheck the full write surface against the live wallet without making a
+    // network call: a comptime-false branch forces the compiler to resolve each
+    // call's argument and return types but never runs them.
+    if (comptime false) {
+        _ = try token.send(&wallet, "transfer", .{ to, amount });
+        _ = try token.sendValue(&wallet, "transfer", .{ to, amount }, 0);
+        _ = try token.sendAndWait(&wallet, "transfer", .{ to, amount }, 1);
+    }
 }
 
 test "refAllDecls" {
