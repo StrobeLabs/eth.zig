@@ -26,6 +26,7 @@ pub const rpc_transaction = @import("rpc_transaction.zig");
 pub const receipt = @import("receipt.zig");
 pub const block = @import("block.zig");
 pub const blob = @import("blob.zig");
+pub const kzg = @import("kzg.zig");
 
 // -- Layer 5: Accounts --
 pub const mnemonic = @import("mnemonic.zig");
@@ -116,6 +117,8 @@ test {
     _ = @import("receipt.zig");
     _ = @import("block.zig");
     _ = @import("blob.zig");
+    _ = @import("kzg.zig");
+    _ = @import("kzg_vectors_test.zig");
     // Layer 5
     _ = @import("mnemonic.zig");
     _ = @import("hd_wallet.zig");

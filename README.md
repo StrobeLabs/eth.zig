@@ -265,7 +265,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 |-------|---------|-------------|
 | **Primitives** | `primitives`, `uint256`, `hex` | Address, Hash, Bytes32, u256, hex encoding |
 | **Encoding** | `rlp`, `abi_encode`, `abi_decode`, `abi_types` | RLP and ABI encoding/decoding |
-| **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155` | ECDSA signing (RFC 6979), Keccak-256, EIP-155 |
+| **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155`, `kzg` | ECDSA signing (RFC 6979), Keccak-256, EIP-155, EIP-4844 KZG |
 | **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions |
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |
 | **Transport** | `http_transport`, `ws_transport`, `sse_transport`, `json_rpc`, `provider`, `subscription`, `ws_client` | HTTP, WebSocket, and SSE transports; resilient WS client with auto-reconnect |
@@ -284,6 +284,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | Keccak-256 hashing | Complete |
 | secp256k1 ECDSA signing (RFC 6979, EIP-2 low-S) | Complete |
 | Transaction types (Legacy, EIP-2930, EIP-1559, EIP-4844) | Complete |
+| EIP-4844 KZG (blob commitments/proofs, vendored c-kzg-4844 + blst) | Complete |
 | EIP-155 replay protection | Complete |
 | EIP-191 personal message signing | Complete |
 | EIP-712 typed structured data signing | Complete |

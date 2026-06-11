@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
     });
     addXkcp(b, eth_module, target);
     addSecp256k1(b, eth_module);
+    addKzg(b, eth_module);
 
     // Unit tests. Root the test artifact at src/root.zig so its test block
     // (which direct-imports every module file) actually collects and runs the
@@ -29,6 +30,7 @@ pub fn build(b: *std.Build) void {
     });
     addXkcp(b, unit_test_module, target);
     addSecp256k1(b, unit_test_module);
+    addKzg(b, unit_test_module);
     const unit_tests = b.addTest(.{
         .root_module = unit_test_module,
     });
@@ -62,6 +64,7 @@ pub fn build(b: *std.Build) void {
     });
     addXkcp(b, bench_module, target);
     addSecp256k1(b, bench_module);
+    addKzg(b, bench_module);
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
@@ -226,4 +229,45 @@ fn addSecp256k1(b: *std.Build, module: *std.Build.Module) void {
             .flags = c_flags,
         });
     }
+}
+
+/// Add c-kzg-4844 + blst C sources for real EIP-4844 KZG operations.
+///
+/// blst is built in portable no-assembly C mode (`-D__BLST_NO_ASM__`) so it
+/// uses its pure-C field arithmetic instead of per-arch assembly. This keeps
+/// the build robust across targets (no GAS-vs-clang assembler conflicts) at a
+/// modest performance cost, acceptable for sidecar construction. See
+/// src/crypto/c-kzg/VENDOR.md for pinned versions and rationale.
+fn addKzg(b: *std.Build, module: *std.Build.Module) void {
+    // blst: portable C backend. `__BLST_PORTABLE__` additionally disables the
+    // optional SHA CPU-intrinsics path in src/sha256.h. `-fno-sanitize=undefined`
+    // mirrors the other vendored C: blst does intentional unaligned accesses.
+    const blst_flags = &.{
+        "-D__BLST_NO_ASM__",
+        "-D__BLST_PORTABLE__",
+        "-O2",
+        "-fno-sanitize=undefined",
+        "-Wno-unused-function",
+    };
+    module.addIncludePath(b.path("src/crypto/blst/bindings"));
+    // server.c is blst's unity build: it #includes every other src/*.c.
+    module.addCSourceFile(.{
+        .file = b.path("src/crypto/blst/src/server.c"),
+        .flags = blst_flags,
+    });
+
+    // c-kzg-4844: ckzg.c is the unity build including every other c-kzg .c file.
+    // Needs its own src/ on the include path (so "common/...", "eip4844/..."
+    // resolve) plus blst's bindings for "blst.h".
+    const ckzg_flags = &.{
+        "-O2",
+        "-fno-sanitize=undefined",
+        "-Wno-unused-function",
+    };
+    module.addIncludePath(b.path("src/crypto/c-kzg/src"));
+    module.addIncludePath(b.path("src/crypto/blst/bindings"));
+    module.addCSourceFile(.{
+        .file = b.path("src/crypto/c-kzg/src/ckzg.c"),
+        .flags = ckzg_flags,
+    });
 }

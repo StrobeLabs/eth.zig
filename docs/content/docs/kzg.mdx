@@ -1,0 +1,76 @@
+---
+title: KZG / EIP-4844
+description: Build EIP-4844 blob-transaction sidecars - KZG commitments and proofs over raw blob data - using the vendored c-kzg-4844 and blst reference implementations with the mainnet trusted setup embedded.
+---
+
+EIP-4844 ("blobs") attaches large data blobs to a transaction, each committed to
+with a **KZG commitment** and proven with a **KZG proof**. `eth.kzg` provides
+real, spec-correct KZG over the vendored
+[c-kzg-4844](https://github.com/ethereum/c-kzg-4844) reference implementation and
+its [blst](https://github.com/supranational/blst) dependency. The mainnet
+trusted setup (the KZG ceremony output) is **embedded in the library** via
+`@embedFile`, so you do not need to ship or locate an external setup file.
+
+## Initialize the trusted setup
+
+Load the trusted setup once at startup and free it at shutdown. `init` is
+idempotent and thread-safe (guarded by an atomic once-flag), so calling it more
+than once is harmless.
+
+```zig
+const eth = @import("eth");
+
+try eth.kzg.init(allocator);
+defer eth.kzg.deinit();
+```
+
+## Build a blob sidecar
+
+The common task is turning raw blob bytes into a sidecar: the blob plus its KZG
+commitment and proof. `blob.buildSidecar` does exactly that.
+
+```zig
+// `raw_blob` is [131072]u8 (128 KiB = 4096 field elements x 32 bytes).
+// Each 32-byte field element must be a canonical BLS12-381 scalar (< modulus).
+var raw_blob: eth.blob.Blob = @splat(0);
+// ... fill raw_blob with your data ...
+
+const sidecar = try eth.blob.buildSidecar(allocator, raw_blob);
+// sidecar.blob, sidecar.commitment ([48]u8), sidecar.proof ([48]u8)
+```
+
+The blob-transaction `versioned hash` that goes on-chain is derived from the
+commitment:
+
+```zig
+const versioned_hash = eth.blob.computeVersionedHash(sidecar.commitment);
+// versioned_hash[0] == 0x01 (the KZG version byte)
+```
+
+## Lower-level API
+
+If you want the individual operations rather than a full sidecar:
+
+```zig
+const commitment = try eth.kzg.blobToKzgCommitment(&raw_blob); // [48]u8
+const proof = try eth.kzg.computeBlobKzgProof(&raw_blob, commitment); // [48]u8
+
+const ok = try eth.kzg.verifyBlobKzgProof(&raw_blob, commitment, proof);
+// ok == true
+
+// Batch verification over equal-length slices of blobs/commitments/proofs:
+const all_ok = try eth.kzg.verifyBlobKzgProofBatch(blobs, commitments, proofs);
+```
+
+Errors map c-kzg's `C_KZG_RET` codes onto a Zig `KzgError` set
+(`BadArgs`, `Internal`, `OutOfMemory`), plus `NotInitialized` if you call an
+operation before `kzg.init`.
+
+## Correctness
+
+The bindings are verified **byte-for-byte against the official ethereum/c-kzg-4844
+test vectors** (the same `blob_to_kzg_commitment`, `compute_blob_kzg_proof`, and
+`verify_blob_kzg_proof` vectors used by the reference implementation), in addition
+to round-trip and lifecycle tests. The vendored versions are pinned in
+`src/crypto/c-kzg/VENDOR.md` (c-kzg-4844 v2.1.1, blst v0.3.14, built in blst's
+portable no-assembly C mode for robustness across targets).

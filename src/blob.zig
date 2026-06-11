@@ -23,6 +23,26 @@ pub const BlobSidecar = struct {
     proof: KzgProof,
 };
 
+/// Build a blob sidecar from raw blob data, computing the KZG commitment and
+/// proof via the vendored c-kzg-4844 backend.
+///
+/// The caller must have initialized the KZG trusted setup with `kzg.init`
+/// beforehand (and is responsible for `kzg.deinit`). The `allocator` is
+/// accepted for API symmetry; this routine performs no heap allocation itself
+/// (a `BlobSidecar` is returned by value).
+pub fn buildSidecar(allocator: std.mem.Allocator, raw_blob: Blob) !BlobSidecar {
+    _ = allocator;
+    // Lazy import avoids a hard import cycle (kzg.zig imports blob.zig).
+    const kzg = @import("kzg.zig");
+    const commitment = try kzg.blobToKzgCommitment(&raw_blob);
+    const proof = try kzg.computeBlobKzgProof(&raw_blob, commitment);
+    return BlobSidecar{
+        .blob = raw_blob,
+        .commitment = commitment,
+        .proof = proof,
+    };
+}
+
 /// Compute the versioned hash from a KZG commitment.
 ///
 /// The versioned hash is keccak256(commitment) with the first byte
