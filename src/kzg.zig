@@ -195,9 +195,10 @@ pub fn init(allocator: std.mem.Allocator) KzgError!void {
 /// Free the trusted setup. After this, `init` may be called again to reload.
 /// Not safe to call concurrently with commitment/proof/verify operations.
 pub fn deinit() void {
-    if (@atomicLoad(u8, &init_state, .acquire) != STATE_READY) return;
+    // Atomically claim the teardown: only the thread that flips READY -> UNINIT
+    // frees the setup, so concurrent `deinit` calls cannot double-free.
+    if (@cmpxchgStrong(u8, &init_state, STATE_READY, STATE_UNINIT, .acq_rel, .acquire) != null) return;
     free_trusted_setup(&settings);
-    @atomicStore(u8, &init_state, STATE_UNINIT, .release);
 }
 
 fn requireReady() KzgError!*const KZGSettings {
