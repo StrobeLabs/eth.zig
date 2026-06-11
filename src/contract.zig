@@ -1,6 +1,7 @@
 const std = @import("std");
 const provider_mod = @import("provider.zig");
 const http_transport_mod = @import("http_transport.zig");
+const runtime = @import("runtime.zig");
 const wallet_mod = @import("wallet.zig");
 const abi_encode = @import("abi_encode.zig");
 const abi_decode = @import("abi_decode.zig");
@@ -110,7 +111,7 @@ pub const Contract = struct {
 
 test "Contract.init sets fields correctly" {
     const contract_addr = @as([20]u8, @splat(0xaa));
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
     const contract = Contract.init(std.testing.allocator, contract_addr, &provider);

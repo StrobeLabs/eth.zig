@@ -7,8 +7,10 @@ const std = @import("std");
 const eth = @import("eth");
 
 pub fn main() !void {
+    const io = eth.runtime.blockingIo();
+
     var buf: [4096]u8 = undefined;
-    var stdout_impl = std.Io.File.stdout().writerStreaming(eth.runtime.defaultIo(), &buf);
+    var stdout_impl = std.Io.File.stdout().writerStreaming(io, &buf);
     const stdout = &stdout_impl.interface;
 
     var gpa: std.heap.DebugAllocator(.{}) = .init;
@@ -16,7 +18,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Connect to local node
-    var transport = eth.http_transport.HttpTransport.init(allocator, "http://127.0.0.1:8545");
+    var transport = eth.http_transport.HttpTransport.init(allocator, "http://127.0.0.1:8545", io);
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 

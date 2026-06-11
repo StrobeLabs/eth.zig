@@ -22,7 +22,7 @@ var fb = try eth.fallback_provider.FallbackProvider.init(allocator, &.{
     "https://primary.example.com",
     "https://backup-a.example.com",
     "https://backup-b.example.com",
-}, .{});
+}, eth.runtime.blockingIo(), .{});
 defer fb.deinit();
 
 // Same surface as Provider. If the primary's connection fails, this call
@@ -108,7 +108,7 @@ pub const FallbackOpts = struct {
 ```
 
 ```zig
-var fb = try eth.fallback_provider.FallbackProvider.init(allocator, endpoints, .{
+var fb = try eth.fallback_provider.FallbackProvider.init(allocator, endpoints, eth.runtime.blockingIo(), .{
     .failover_threshold = 5,
     .recovery_probe_ms = 10_000,
 });

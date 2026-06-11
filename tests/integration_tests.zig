@@ -27,7 +27,7 @@ const ANVIL_CHAIN_ID: u64 = 31337;
 /// Check if Anvil is reachable by opening a TCP connection to 127.0.0.1:8545.
 /// This avoids going through the HTTP client which can crash on connection refused.
 fn isAnvilAvailable() bool {
-    const io = eth.runtime.defaultIo();
+    const io = eth.runtime.blockingIo();
     const addr = std.Io.net.IpAddress.parse(ANVIL_HOST, ANVIL_PORT) catch return false;
     const stream = addr.connect(io, .{ .mode = .stream }) catch return false;
     stream.close(io);
@@ -42,7 +42,7 @@ test "getChainId returns 31337 (Anvil default)" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -54,7 +54,7 @@ test "getBlockNumber returns a value" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -71,7 +71,7 @@ test "getBalance of funded account" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -88,7 +88,7 @@ test "getTransactionCount of account" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -104,7 +104,7 @@ test "getCode of EOA returns empty" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -124,7 +124,7 @@ test "getGasPrice returns non-zero" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -136,7 +136,7 @@ test "getMaxPriorityFee returns a value" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -152,7 +152,7 @@ test "getBlock for block 0 returns genesis" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -171,7 +171,7 @@ test "getBlock for non-existent block returns null" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -188,7 +188,7 @@ test "Wallet.address derives correct address from private key" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -208,7 +208,7 @@ test "send ETH transfer and verify receipt" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -258,7 +258,7 @@ test "estimateGas for simple ETH transfer" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -275,7 +275,7 @@ test "sendTransactionAndWait returns receipt directly" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -298,7 +298,7 @@ test "getTransactionReceipt for unknown hash returns null" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -316,7 +316,7 @@ test "provider next_id increments across calls" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -338,7 +338,7 @@ test "callWithOverrides applies code + balance override" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -371,7 +371,7 @@ test "callWithOverrides applies stateDiff (storage slot)" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -402,7 +402,7 @@ test "callWithOverrides without an override matches plain call" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
@@ -425,7 +425,7 @@ const ANVIL_WS_URL = "ws://127.0.0.1:8545";
 
 /// Trigger a block on Anvil so newHeads subscriptions emit a notification.
 fn anvilMineOne(allocator: std.mem.Allocator) !void {
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     const response = try transport.request("evm_mine", "[]", 1);
     allocator.free(response);
@@ -438,7 +438,7 @@ test "WsClient subscribe newHeads receives a fresh block" {
     // Disable keepalive in tests so the test's run time is bounded by
     // mining + dispatch, not by the default 30s ping interval.
     const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
-    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, eth.runtime.blockingIo(), opts);
     defer client.deinit();
 
     const sub = try client.subscribe(.{ .new_heads = {} });
@@ -458,7 +458,7 @@ test "WsClient multiplexes two subscriptions on one connection" {
     const allocator = std.testing.allocator;
 
     const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
-    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, eth.runtime.blockingIo(), opts);
     defer client.deinit();
 
     const sub_a = try client.subscribe(.{ .new_heads = {} });
@@ -488,7 +488,7 @@ test "WsClient unsubscribe frees handle and removes from registry" {
     const allocator = std.testing.allocator;
 
     const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
-    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, eth.runtime.blockingIo(), opts);
     defer client.deinit();
 
     const sub = try client.subscribe(.{ .new_heads = {} });
@@ -504,14 +504,14 @@ test "WsClient subscribe pending full streams an RpcTransaction" {
     // Subscribe on a fresh WsClient before sending the tx so we don't miss
     // the notification.
     const opts = eth.ws_client.Opts{ .ping_interval_ms = 0 };
-    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, opts);
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, eth.runtime.blockingIo(), opts);
     defer client.deinit();
 
     const sub = try client.subscribe(.{ .new_pending_transactions = .{ .full = true } });
 
     // Send a transaction via the HTTP wallet so the WsClient is purely a
     // reader. Account #0 -> account #1, 0.001 ETH.
-    var http = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var http = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer http.deinit();
     var provider = eth.provider.Provider.init(allocator, &http);
     const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
@@ -571,11 +571,11 @@ test "LogWatcher pollOnce tracks mined blocks" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
 
-    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL);
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
-    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, .{ .ping_interval_ms = 0 });
+    const client = try eth.ws_client.WsClient.connect(allocator, ANVIL_WS_URL, eth.runtime.blockingIo(), .{ .ping_interval_ms = 0 });
     defer client.deinit();
 
     var watcher = try eth.log_watcher.LogWatcher.init(allocator, &provider, client, .{}, .{});

@@ -42,10 +42,10 @@ pub const ValidEntropySize = enum(u8) {
     }
 };
 
-/// Generate a random mnemonic phrase.
-pub fn generate(comptime entropy_size: ValidEntropySize) [entropy_size.wordCount()][]const u8 {
+/// Generate a random mnemonic phrase, drawing entropy from `io`.
+pub fn generate(io: std.Io, comptime entropy_size: ValidEntropySize) [entropy_size.wordCount()][]const u8 {
     var entropy: [@intFromEnum(entropy_size)]u8 = undefined;
-    runtime.defaultIo().random(&entropy);
+    io.random(&entropy);
     return entropyToMnemonic(entropy_size, &entropy);
 }
 
@@ -294,7 +294,7 @@ test "validate rejects bad checksum" {
 }
 
 test "generate produces a valid mnemonic" {
-    const words = generate(.@"128");
+    const words = generate(runtime.blockingIo(), .@"128");
     try std.testing.expectEqual(@as(usize, 12), words.len);
     try validate(&words);
 }

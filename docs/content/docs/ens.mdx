@@ -12,7 +12,7 @@ Resolve an ENS name to an address:
 ```zig
 const eth = @import("eth");
 
-var transport = eth.http_transport.HttpTransport.init(allocator, "https://eth.llamarpc.com");
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://eth.llamarpc.com", eth.runtime.blockingIo());
 defer transport.deinit();
 var provider = eth.provider.Provider.init(allocator, &transport);
 

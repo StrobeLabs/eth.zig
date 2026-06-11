@@ -1,5 +1,4 @@
 const std = @import("std");
-const runtime = @import("runtime.zig");
 
 /// HTTP JSON-RPC transport layer.
 ///
@@ -8,13 +7,17 @@ const runtime = @import("runtime.zig");
 pub const HttpTransport = struct {
     url: []const u8,
     allocator: std.mem.Allocator,
+    /// The `std.Io` this transport runs on. Exposed so wrappers (for example
+    /// `Provider`) can inherit it as their single source of truth.
+    io: std.Io,
     client: std.http.Client,
 
-    pub fn init(allocator: std.mem.Allocator, url: []const u8) HttpTransport {
+    pub fn init(allocator: std.mem.Allocator, url: []const u8, io: std.Io) HttpTransport {
         return .{
             .url = url,
             .allocator = allocator,
-            .client = .{ .allocator = allocator, .io = runtime.defaultIo() },
+            .io = io,
+            .client = .{ .allocator = allocator, .io = io },
         };
     }
 
@@ -185,10 +188,25 @@ test "buildRequestBody - eth_call with object param" {
 
 test "init and deinit" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    const runtime = @import("runtime.zig");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
 
     try std.testing.expectEqualStrings("http://localhost:8545", transport.url);
+}
+
+test "init threads caller Io through to the transport" {
+    const allocator = std.testing.allocator;
+    const runtime = @import("runtime.zig");
+    const io = runtime.blockingIo();
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", io);
+    defer transport.deinit();
+
+    // The transport exposes the exact Io it was constructed with, and forwards
+    // it to the underlying http.Client.
+    try std.testing.expectEqual(io.userdata, transport.io.userdata);
+    try std.testing.expectEqual(io.vtable, transport.io.vtable);
+    try std.testing.expectEqual(io.userdata, transport.client.io.userdata);
 }
 
 test "buildBatchBody - empty" {

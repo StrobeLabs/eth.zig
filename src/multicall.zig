@@ -1,6 +1,7 @@
 const std = @import("std");
 const provider_mod = @import("provider.zig");
 const http_transport_mod = @import("http_transport.zig");
+const runtime = @import("runtime.zig");
 const abi_encode = @import("abi_encode.zig");
 const uint256_mod = @import("uint256.zig");
 
@@ -268,7 +269,7 @@ fn readWord(data: []const u8) usize {
 
 test "Multicall.init and deinit" {
     const allocator = std.testing.allocator;
-    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
     const multicall_addr = @as([20]u8, @splat(0xca));
@@ -282,7 +283,7 @@ test "Multicall.init and deinit" {
 
 test "Multicall.addCall adds calls" {
     const allocator = std.testing.allocator;
-    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
@@ -306,7 +307,7 @@ test "Multicall.addCall adds calls" {
 
 test "Multicall.reset clears calls" {
     const allocator = std.testing.allocator;
-    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
@@ -323,7 +324,7 @@ test "Multicall.reset clears calls" {
 
 test "Multicall.encodeAggregate3 produces valid ABI encoding" {
     const allocator = std.testing.allocator;
-    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
@@ -354,7 +355,7 @@ test "Multicall.encodeAggregate3 produces valid ABI encoding" {
 
 test "Multicall.encodeAggregate3 with multiple calls" {
     const allocator = std.testing.allocator;
-    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
@@ -384,7 +385,7 @@ test "Multicall.encodeAggregate3 with multiple calls" {
 
 test "Multicall.encodeAggregate3 with empty calldata" {
     const allocator = std.testing.allocator;
-    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
@@ -486,7 +487,7 @@ test "AGGREGATE3_SELECTOR is correct" {
 
 test "Multicall.encodeAggregate3 address encoding" {
     const allocator = std.testing.allocator;
-    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 

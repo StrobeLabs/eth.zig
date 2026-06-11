@@ -357,18 +357,19 @@ pub const MevShareClient = struct {
         relay_url: []const u8,
         stream_url: []const u8,
         auth_key: [32]u8,
+        io: std.Io,
     ) MevShareClient {
         return .{
             .allocator = allocator,
-            .relay = flashbots.Relay.init(allocator, relay_url, auth_key),
+            .relay = flashbots.Relay.init(allocator, relay_url, auth_key, io),
             .stream_url = stream_url,
-            .client = .{ .allocator = allocator, .io = runtime.defaultIo() },
+            .client = .{ .allocator = allocator, .io = io },
         };
     }
 
     /// Convenience constructor for Ethereum mainnet.
-    pub fn initMainnet(allocator: std.mem.Allocator, auth_key: [32]u8) MevShareClient {
-        return init(allocator, mainnet_relay_url, mainnet_stream_url, auth_key);
+    pub fn initMainnet(allocator: std.mem.Allocator, auth_key: [32]u8, io: std.Io) MevShareClient {
+        return init(allocator, mainnet_relay_url, mainnet_stream_url, auth_key, io);
     }
 
     pub fn deinit(self: *MevShareClient) void {
@@ -1093,7 +1094,7 @@ test "parseEventHistoryResponse - malformed" {
 
 test "MevShareClient.init sets endpoints" {
     const auth_key = try hex_mod.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-    var client = MevShareClient.initMainnet(std.testing.allocator, auth_key);
+    var client = MevShareClient.initMainnet(std.testing.allocator, auth_key, runtime.blockingIo());
     defer client.deinit();
 
     try std.testing.expectEqualStrings(mainnet_relay_url, client.relay.url);

@@ -47,7 +47,7 @@ pub const RetryingProvider = struct {
     /// Seeds the PRNG from a cryptographically random value.
     pub fn init(inner: *Provider, opts: RetryOpts) RetryingProvider {
         var seed_bytes: [8]u8 = undefined;
-        runtime.defaultIo().random(&seed_bytes);
+        inner.io().random(&seed_bytes);
         const seed = std.mem.readInt(u64, &seed_bytes, .little);
         return .{
             .inner = inner,
@@ -222,7 +222,7 @@ const RetryState = struct {
 
         const jitter_ms: u64 = @intFromFloat(@as(f64, @floatFromInt(self.backoff_ms)) * self.provider.opts.jitter);
         const extra = if (jitter_ms > 0) self.provider.prng.random().int(u64) % jitter_ms else 0;
-        runtime.sleepMs(self.backoff_ms + extra);
+        runtime.sleepMs(self.provider.inner.io(), self.backoff_ms + extra);
 
         const next_backoff: u64 = @intFromFloat(
             @as(f64, @floatFromInt(self.backoff_ms)) * self.provider.opts.backoff_multiplier,
@@ -256,8 +256,11 @@ fn isRetryable(err: anyerror, opts: RetryOpts) bool {
 // ============================================================================
 
 test "RetryingProvider.init seeds the jitter PRNG" {
-    var fake_inner: Provider = undefined;
-    var rp = RetryingProvider.init(&fake_inner, .{});
+    const HttpTransport = @import("http_transport.zig").HttpTransport;
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var inner = Provider.init(std.testing.allocator, &transport);
+    var rp = RetryingProvider.init(&inner, .{});
     try std.testing.expectEqual(@as(u32, 3), rp.opts.max_attempts);
     // The PRNG must be usable.
     _ = rp.prng.random().int(u64);
@@ -295,7 +298,10 @@ test "RetryState - exhausts attempts then stops" {
     // We can't call into a real Provider here; we test RetryState directly.
     const opts = RetryOpts{ .max_attempts = 2, .initial_backoff_ms = 0, .jitter = 0 };
     const seed: u64 = 0;
-    var fake_inner: Provider = undefined;
+    const HttpTransport = @import("http_transport.zig").HttpTransport;
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var fake_inner = Provider.init(std.testing.allocator, &transport);
     var rp = RetryingProvider{
         .inner = &fake_inner,
         .opts = opts,
@@ -312,7 +318,10 @@ test "RetryState - exhausts attempts then stops" {
 
 test "RetryState - non-retryable error stops immediately" {
     const opts = RetryOpts{ .max_attempts = 5, .initial_backoff_ms = 0, .jitter = 0 };
-    var fake_inner: Provider = undefined;
+    const HttpTransport = @import("http_transport.zig").HttpTransport;
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var fake_inner = Provider.init(std.testing.allocator, &transport);
     var rp = RetryingProvider{
         .inner = &fake_inner,
         .opts = opts,
@@ -333,7 +342,10 @@ test "RetryState - backoff increases exponentially" {
         .jitter = 0, // no sleep
         .retryable = .connection_errors,
     };
-    var fake_inner: Provider = undefined;
+    const HttpTransport = @import("http_transport.zig").HttpTransport;
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var fake_inner = Provider.init(std.testing.allocator, &transport);
     var rp = RetryingProvider{
         .inner = &fake_inner,
         .opts = opts,

@@ -243,12 +243,12 @@ pub const Relay = struct {
     /// Create a new Relay client.
     /// auth_key is the private key used for Flashbots authentication
     /// (separate from the transaction signing key).
-    pub fn init(allocator: std.mem.Allocator, url: []const u8, auth_key: [32]u8) Relay {
+    pub fn init(allocator: std.mem.Allocator, url: []const u8, auth_key: [32]u8, io: std.Io) Relay {
         return .{
             .allocator = allocator,
             .url = url,
             .auth_signer = signer_mod.Signer.init(auth_key),
-            .client = .{ .allocator = allocator, .io = runtime.defaultIo() },
+            .client = .{ .allocator = allocator, .io = io },
             .next_id = 1,
         };
     }
@@ -1112,7 +1112,7 @@ test "parseCallBundleResult - success with decimal strings" {
 
 test "Relay.init sets fields correctly" {
     const auth_key = try hex_mod.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-    var relay = Relay.init(std.testing.allocator, "https://relay.flashbots.net", auth_key);
+    var relay = Relay.init(std.testing.allocator, "https://relay.flashbots.net", auth_key, runtime.blockingIo());
     defer relay.deinit();
 
     try std.testing.expectEqualStrings("https://relay.flashbots.net", relay.url);
