@@ -20,7 +20,8 @@ API are public and need no authentication.
 const eth = @import("eth");
 
 // auth_key is your Flashbots reputation key (NOT a funded key).
-var client = eth.mev_share.MevShareClient.initMainnet(allocator, auth_key);
+const io = eth.runtime.blockingIo();
+var client = eth.mev_share.MevShareClient.initMainnet(allocator, auth_key, io);
 defer client.deinit();
 
 // Or with explicit endpoints (e.g. Sepolia):
@@ -29,6 +30,7 @@ var sepolia = eth.mev_share.MevShareClient.init(
     "https://relay-sepolia.flashbots.net",
     eth.mev_share.sepolia_stream_url,
     auth_key,
+    io,
 );
 defer sepolia.deinit();
 ```

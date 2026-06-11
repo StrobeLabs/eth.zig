@@ -162,7 +162,7 @@ pub fn selectEndpoint(
 ///   var fb = try FallbackProvider.init(allocator, &.{
 ///       "https://primary.example.com",
 ///       "https://backup.example.com",
-///   }, .{});
+///   }, eth.runtime.blockingIo(), .{});
 ///   defer fb.deinit();
 ///   const block_num = try fb.getBlockNumber();
 pub const FallbackProvider = struct {
@@ -174,6 +174,9 @@ pub const FallbackProvider = struct {
     /// Per-endpoint health, parallel to `providers`.
     health: []EndpointHealth,
     opts: FallbackOpts,
+    /// The `std.Io` shared by every endpoint transport; also drives the
+    /// health-tracking timestamps.
+    io: std.Io,
 
     /// Initialise a FallbackProvider over an ordered list of endpoint URLs.
     /// The URLs are referenced (not copied); they must outlive the provider,
@@ -183,6 +186,7 @@ pub const FallbackProvider = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         endpoints: []const []const u8,
+        io: std.Io,
         opts: FallbackOpts,
     ) !FallbackProvider {
         if (endpoints.len == 0) return error.NoEndpoints;
@@ -196,7 +200,7 @@ pub const FallbackProvider = struct {
         errdefer allocator.free(health);
 
         for (endpoints, 0..) |url, i| {
-            transports[i] = HttpTransport.init(allocator, url);
+            transports[i] = HttpTransport.init(allocator, url, io);
             health[i] = .{};
         }
         // Bind each provider to its transport. Done in a second pass so the
@@ -212,6 +216,7 @@ pub const FallbackProvider = struct {
             .providers = providers,
             .health = health,
             .opts = opts,
+            .io = io,
         };
     }
 
@@ -351,13 +356,13 @@ pub const FallbackProvider = struct {
 
         var attempts: usize = 0;
         while (attempts < self.providers.len) : (attempts += 1) {
-            const now = runtime.milliTimestamp();
+            const now = runtime.milliTimestamp(self.io);
             const idx = selectEndpoint(self.health, now, self.opts, tried) orelse break;
             tried[idx] = true;
 
             const result = @call(.auto, @field(Provider, method), .{&self.providers[idx]} ++ args);
             if (result) |ok| {
-                self.health[idx].recordSuccess(runtime.milliTimestamp());
+                self.health[idx].recordSuccess(runtime.milliTimestamp(self.io));
                 return ok;
             } else |err| {
                 if (!isFailoverError(err)) {
@@ -365,7 +370,7 @@ pub const FallbackProvider = struct {
                     // over, and do NOT count it against endpoint health.
                     return err;
                 }
-                self.health[idx].recordFailure(runtime.milliTimestamp());
+                self.health[idx].recordFailure(runtime.milliTimestamp(self.io));
                 last_err = err;
             }
         }
@@ -498,7 +503,7 @@ test "selectEndpoint - reclaims primary once its streak clears" {
 }
 
 test "FallbackProvider - init requires at least one endpoint" {
-    try testing.expectError(error.NoEndpoints, FallbackProvider.init(testing.allocator, &.{}, .{}));
+    try testing.expectError(error.NoEndpoints, FallbackProvider.init(testing.allocator, &.{}, runtime.blockingIo(), .{}));
 }
 
 test "FallbackProvider - init/deinit wires one provider per endpoint" {
@@ -506,7 +511,7 @@ test "FallbackProvider - init/deinit wires one provider per endpoint" {
         "http://localhost:8545",
         "http://localhost:8546",
     };
-    var fb = try FallbackProvider.init(testing.allocator, &endpoints, .{});
+    var fb = try FallbackProvider.init(testing.allocator, &endpoints, runtime.blockingIo(), .{});
     defer fb.deinit();
 
     try testing.expectEqual(@as(usize, 2), fb.providers.len);

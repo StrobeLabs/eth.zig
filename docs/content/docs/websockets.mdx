@@ -82,11 +82,13 @@ on sequential heads) re-fetch the replaced range.
 ```zig
 const eth = @import("eth");
 
-var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+const io = eth.runtime.blockingIo();
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com", io);
 defer transport.deinit();
 var provider = eth.provider.Provider.init(allocator, &transport);
 
-const client = try eth.ws_client.WsClient.connect(allocator, "wss://rpc.example.com/ws", .{});
+const client = try eth.ws_client.WsClient.connect(allocator, "wss://rpc.example.com/ws", io, .{});
 defer client.deinit();
 
 var watcher = try eth.log_watcher.LogWatcher.init(allocator, &provider, client, .{
@@ -111,3 +113,33 @@ Notes:
 - `start_block_lag` lets the first poll start N blocks behind the first observed
   head (useful for warm-up).
 - A callback-style wrapper `eth.log_watcher.watchLogs(...)` is also available.
+
+## Pluggable Io
+
+Every network entry point in eth.zig takes a `std.Io` explicitly, in line with
+Zig 0.16's guidance to pass I/O handles rather than reaching for a hidden global.
+This includes `HttpTransport.init`, `WsTransport.connect`, `WsClient.connect`,
+`flashbots.Relay.init`, and `FallbackProvider.init`, as well as functions that
+need randomness or sleep (`mnemonic.generate`, `keystore.encrypt`,
+`runtime.milliTimestamp`, `runtime.sleepMs`). Wrappers like `Provider`,
+`Wallet`, `RetryingProvider`, and `NonceManager` inherit the `Io` of the
+transport or provider they wrap, so you only pass it once at construction.
+
+Because the `Io` is yours to provide, you can drive eth.zig on your own event
+loop -- a `std.Io.Evented` implementation, a custom green-thread scheduler, or
+anything that satisfies the `std.Io` interface. For the common blocking case,
+`eth.runtime.blockingIo()` returns a ready-to-use synchronous `Io`:
+
+```zig
+const io = eth.runtime.blockingIo();
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com", io);
+defer transport.deinit();
+
+const client = try eth.ws_client.WsClient.connect(allocator, "wss://rpc.example.com/ws", io, .{});
+defer client.deinit();
+```
+
+In an executable that uses the `pub fn main(init: std.process.Init) !void`
+entry point, pass `init.io` instead to thread the process's real `Io` all the
+way down.

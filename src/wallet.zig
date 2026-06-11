@@ -166,7 +166,7 @@ pub const Wallet = struct {
             if (try self.provider.getTransactionReceipt(tx_hash)) |receipt| {
                 return receipt;
             }
-            runtime.sleepMs(1_000); // 1 second
+            runtime.sleepMs(self.provider.io(), 1_000); // 1 second
         }
         return null;
     }
@@ -195,7 +195,7 @@ test "Wallet.init sets fields correctly" {
     const hex = @import("hex.zig");
     const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
     var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
@@ -214,7 +214,7 @@ test "Wallet accepts an optional nonce manager without breaking init" {
     const hex = @import("hex.zig");
     const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
     var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
@@ -228,7 +228,7 @@ test "Wallet.signTransaction produces valid signed bytes" {
     const hex = @import("hex.zig");
     const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
     var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
@@ -259,7 +259,7 @@ test "Wallet.signTransaction is deterministic" {
     const hex = @import("hex.zig");
     const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
     var wallet = Wallet.init(std.testing.allocator, private_key, &provider);

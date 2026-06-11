@@ -7,6 +7,7 @@ const keccak = @import("keccak.zig");
 const provider_mod = @import("provider.zig");
 const wallet_mod = @import("wallet.zig");
 const http_transport_mod = @import("http_transport.zig");
+const runtime = @import("runtime.zig");
 
 const AbiValue = abi_encode.AbiValue;
 const AbiType = abi_types.AbiType;
@@ -220,7 +221,7 @@ test "ERC20 Approval topic matches known value" {
 
 test "ERC20.init sets address correctly" {
     const token_addr = @as([20]u8, @splat(0xaa));
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var prov = provider_mod.Provider.init(std.testing.allocator, &transport);
     const erc20 = ERC20.init(std.testing.allocator, token_addr, &prov);

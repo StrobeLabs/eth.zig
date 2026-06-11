@@ -194,11 +194,12 @@ pub const SseParser = struct {
 pub fn subscribe(
     allocator: std.mem.Allocator,
     url: []const u8,
+    io: std.Io,
     extra_headers: []const std.http.Header,
     parser: *SseParser,
     callback: *const fn (event: SseEvent) void,
 ) !void {
-    var client = std.http.Client{ .allocator = allocator, .io = runtime.defaultIo() };
+    var client = std.http.Client{ .allocator = allocator, .io = io };
     defer client.deinit();
 
     const uri = try std.Uri.parse(url);
@@ -281,6 +282,7 @@ pub const ReconnectOpts = struct {
 pub fn subscribeWithReconnect(
     allocator: std.mem.Allocator,
     url: []const u8,
+    io: std.Io,
     extra_headers: []const std.http.Header,
     opts: ReconnectOpts,
     callback: *const fn (event: SseEvent) void,
@@ -291,7 +293,7 @@ pub fn subscribeWithReconnect(
     var backoff_ms = opts.initial_backoff_ms;
 
     while (true) {
-        if (subscribe(allocator, url, extra_headers, &parser, callback)) |_| {
+        if (subscribe(allocator, url, io, extra_headers, &parser, callback)) |_| {
             // Clean close -- reset backoff.
             backoff_ms = opts.initial_backoff_ms;
         } else |_| {}
@@ -299,7 +301,7 @@ pub fn subscribeWithReconnect(
         // Use server-specified retry delay if available, otherwise exponential backoff.
         const delay = parser.retry_ms orelse backoff_ms;
         if (opts.on_reconnect) |cb| cb(delay);
-        runtime.sleepMs(delay);
+        runtime.sleepMs(io, delay);
 
         // Only advance exponential backoff when server hasn't specified retry.
         if (parser.retry_ms == null) {

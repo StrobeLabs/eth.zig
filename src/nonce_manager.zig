@@ -72,7 +72,7 @@ pub const NonceManager = struct {
     fn ensureSeeded(self: *NonceManager) !void {
         if (self.seeded.load(.acquire)) return;
 
-        const io = runtime.defaultIo();
+        const io = self.provider.io();
         self.seed_mutex.lockUncancelable(io);
         defer self.seed_mutex.unlock(io);
 
@@ -113,7 +113,7 @@ pub const NonceManager = struct {
     /// expected to land, otherwise an in-flight transaction may collide with
     /// a re-issued nonce.
     pub fn resync(self: *NonceManager) !u64 {
-        const io = runtime.defaultIo();
+        const io = self.provider.io();
         self.seed_mutex.lockUncancelable(io);
         defer self.seed_mutex.unlock(io);
 
@@ -178,7 +178,7 @@ fn seededManager(provider: *provider_mod.Provider, base: u64) NonceManager {
 }
 
 test "next() returns increasing values from a seeded base" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 
@@ -190,7 +190,7 @@ test "next() returns increasing values from a seeded base" {
 }
 
 test "peek does not advance" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 
@@ -202,7 +202,7 @@ test "peek does not advance" {
 }
 
 test "peek returns UNSEEDED before seeding" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 
@@ -211,7 +211,7 @@ test "peek returns UNSEEDED before seeding" {
 }
 
 test "onFailure(next-1) makes the next call reuse that nonce" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 
@@ -227,7 +227,7 @@ test "onFailure(next-1) makes the next call reuse that nonce" {
 }
 
 test "onFailure(other) is a no-op" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 
@@ -251,7 +251,7 @@ test "onFailure(other) is a no-op" {
 }
 
 test "onFailure before seeding is a no-op" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 
@@ -260,7 +260,7 @@ test "onFailure before seeding is a no-op" {
 }
 
 test "onFailure(UNSEEDED) does not overflow and is a no-op" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 
@@ -271,7 +271,7 @@ test "onFailure(UNSEEDED) does not overflow and is a no-op" {
 }
 
 test "concurrent next() yields a contiguous, duplicate-free nonce set" {
-    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545");
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
 

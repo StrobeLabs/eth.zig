@@ -8,6 +8,7 @@ const block_mod = @import("block.zig");
 const state_overrides_mod = @import("state_overrides.zig");
 const rpc_transaction_mod = @import("rpc_transaction.zig");
 const HttpTransport = @import("http_transport.zig").HttpTransport;
+const runtime = @import("runtime.zig");
 
 /// Read-only Ethereum JSON-RPC provider.
 ///
@@ -24,6 +25,11 @@ pub const Provider = struct {
             .allocator = allocator,
             .next_id = 1,
         };
+    }
+
+    /// The `std.Io` this provider runs on, inherited from its transport.
+    pub fn io(self: *const Provider) std.Io {
+        return self.transport.io;
     }
 
     // ========================================================================
@@ -1253,7 +1259,7 @@ test "formatLogFilter - with topics" {
 
 test "Provider.formatAddressAndBlock" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
 
     var provider = Provider.init(allocator, &transport);
@@ -1269,7 +1275,7 @@ test "Provider.formatAddressAndBlock" {
 
 test "Provider.formatCallParams - without from" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
 
     var provider = Provider.init(allocator, &transport);
@@ -1286,7 +1292,7 @@ test "Provider.formatCallParams - without from" {
 
 test "Provider.formatCallParams - with from" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
 
     var provider = Provider.init(allocator, &transport);
@@ -1303,7 +1309,7 @@ test "Provider.formatCallParams - with from" {
 
 test "Provider.formatCallParamsWithOverrides - balance override" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
 
     var provider = Provider.init(allocator, &transport);
@@ -1328,7 +1334,7 @@ test "Provider.formatCallParamsWithOverrides - balance override" {
 
 test "Provider.formatCallParamsWithOverrides - empty overrides emits {}" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
 
     var provider = Provider.init(allocator, &transport);
@@ -1769,7 +1775,7 @@ test "parseLogsResponse - single log" {
 
 test "Provider.init" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
 
     const provider = Provider.init(allocator, &transport);
@@ -1778,7 +1784,7 @@ test "Provider.init" {
 
 test "BatchCaller.init and deinit" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var prov = Provider.init(allocator, &transport);
     var batch = BatchCaller.init(allocator, &prov);
@@ -1788,7 +1794,7 @@ test "BatchCaller.init and deinit" {
 
 test "BatchCaller.addCall accumulates" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var prov = Provider.init(allocator, &transport);
     var batch = BatchCaller.init(allocator, &prov);
@@ -1804,7 +1810,7 @@ test "BatchCaller.addCall accumulates" {
 
 test "BatchCaller.reset clears" {
     const allocator = std.testing.allocator;
-    var transport = HttpTransport.init(allocator, "http://localhost:8545");
+    var transport = HttpTransport.init(allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var prov = Provider.init(allocator, &transport);
     var batch = BatchCaller.init(allocator, &prov);

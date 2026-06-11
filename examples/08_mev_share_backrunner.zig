@@ -288,9 +288,10 @@ fn parseKey(s: []const u8) ![32]u8 {
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const env = init.environ_map;
+    const io = init.io;
 
     var buf: [4096]u8 = undefined;
-    var stdout_impl = std.Io.File.stdout().writerStreaming(eth.runtime.defaultIo(), &buf);
+    var stdout_impl = std.Io.File.stdout().writerStreaming(io, &buf);
     const stdout = &stdout_impl.interface;
 
     // -- Read configuration ---------------------------------------------------
@@ -319,12 +320,12 @@ pub fn main(init: std.process.Init) !void {
 
     // MevShareClient bundles the authenticated relay (mev_sendBundle) with
     // the public SSE stream endpoint.
-    var client = eth.mev_share.MevShareClient.init(allocator, relay_url, stream_url, auth_key);
+    var client = eth.mev_share.MevShareClient.init(allocator, relay_url, stream_url, auth_key, io);
     defer client.deinit();
     const auth_address = try client.relay.authAddress();
 
     // -- Live mode needs an RPC for nonce / fees / target block --------------
-    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url);
+    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url, io);
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 

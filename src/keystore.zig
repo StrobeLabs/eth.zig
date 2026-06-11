@@ -140,13 +140,14 @@ pub fn encrypt(
     allocator: std.mem.Allocator,
     key: [32]u8,
     password: []const u8,
+    io: std.Io,
     opts: EncryptOptions,
 ) ![]u8 {
-    // Random salt and IV via the runtime Io (std.crypto.random was removed in 0.16).
+    // Random salt and IV via the caller's Io (std.crypto.random was removed in 0.16).
     var salt: [salt_len]u8 = undefined;
     var iv: [iv_len]u8 = undefined;
-    runtime.defaultIo().random(&salt);
-    runtime.defaultIo().random(&iv);
+    io.random(&salt);
+    io.random(&iv);
 
     var derived_key: [dklen]u8 = undefined;
     defer secureZero(&derived_key);
@@ -182,7 +183,7 @@ pub fn encrypt(
 
     // Random UUID (v4) for the keystore id.
     var uuid_bytes: [16]u8 = undefined;
-    runtime.defaultIo().random(&uuid_bytes);
+    io.random(&uuid_bytes);
     uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x40; // version 4
     uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80; // variant 1
 
@@ -346,7 +347,7 @@ test "round-trip scrypt" {
     const allocator = testing.allocator;
     const key = try hex.hexToBytesFixed(32, "7a28b5ba57c53603b0b07b56bba752f7784bf506fa95edc395f5cf6c7514fe9d");
 
-    const json = try encrypt(allocator, key, "testpassword", test_opts);
+    const json = try encrypt(allocator, key, "testpassword", runtime.blockingIo(), test_opts);
     defer allocator.free(json);
 
     const recovered = try decrypt(allocator, json, "testpassword");
@@ -357,7 +358,7 @@ test "round-trip pbkdf2" {
     const allocator = testing.allocator;
     const key = try hex.hexToBytesFixed(32, "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
 
-    const json = try encrypt(allocator, key, "hunter2", .{ .kdf = .pbkdf2, .pbkdf2_c = 4096 });
+    const json = try encrypt(allocator, key, "hunter2", runtime.blockingIo(), .{ .kdf = .pbkdf2, .pbkdf2_c = 4096 });
     defer allocator.free(json);
 
     const recovered = try decrypt(allocator, json, "hunter2");
@@ -373,7 +374,7 @@ test "round-trip multiple keys" {
     };
     for (keys) |kh| {
         const key = try hex.hexToBytesFixed(32, kh);
-        const json = try encrypt(allocator, key, "pw", test_opts);
+        const json = try encrypt(allocator, key, "pw", runtime.blockingIo(), test_opts);
         defer allocator.free(json);
         const recovered = try decrypt(allocator, json, "pw");
         try testing.expectEqualSlices(u8, &key, &recovered);
@@ -384,7 +385,7 @@ test "wrong password returns InvalidPassword" {
     const allocator = testing.allocator;
     const key = try hex.hexToBytesFixed(32, "7a28b5ba57c53603b0b07b56bba752f7784bf506fa95edc395f5cf6c7514fe9d");
 
-    const json = try encrypt(allocator, key, "correct horse", test_opts);
+    const json = try encrypt(allocator, key, "correct horse", runtime.blockingIo(), test_opts);
     defer allocator.free(json);
 
     try testing.expectError(KeystoreError.InvalidPassword, decrypt(allocator, json, "wrong horse"));

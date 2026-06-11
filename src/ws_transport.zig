@@ -293,7 +293,7 @@ pub fn validateHandshakeResponse(response: []const u8, expected_accept: []const 
 /// for the TLS client's reader/writer interfaces.
 ///
 /// Usage:
-///   var transport = try WsTransport.connect(allocator, "ws://localhost:8545");
+///   var transport = try WsTransport.connect(allocator, "ws://localhost:8545", io);
 ///   defer transport.close();
 ///   const response = try transport.request("eth_blockNumber", "[]");
 ///   defer allocator.free(response);
@@ -363,9 +363,8 @@ pub const WsTransport = struct {
     ///
     /// Parses the URL, opens a TCP connection, optionally wraps it in TLS,
     /// and performs the WebSocket upgrade handshake.
-    pub fn connect(allocator: std.mem.Allocator, url: []const u8) TransportError!WsTransport {
+    pub fn connect(allocator: std.mem.Allocator, url: []const u8, io: std.Io) TransportError!WsTransport {
         const parsed = parseUrl(url) catch return error.ConnectionFailed;
-        const io = runtime.defaultIo();
 
         // Open TCP connection. Try the host as an IP literal first, then
         // fall back to DNS resolution.
@@ -721,7 +720,7 @@ pub const WsTransport = struct {
         }
 
         if (deadline_ms) |dl| {
-            const now = runtime.milliTimestamp();
+            const now = runtime.milliTimestamp(self.io);
             if (now >= dl) return false;
             const wait_i64 = dl - now;
             const wait_ms: i32 = if (wait_i64 > std.math.maxInt(i32))
@@ -809,13 +808,14 @@ pub const ReconnectOpts = struct {
 pub fn connectWithReconnect(
     allocator: std.mem.Allocator,
     url: []const u8,
+    io: std.Io,
     opts: ReconnectOpts,
     callback: *const fn (transport: *WsTransport) anyerror!void,
 ) void {
     var backoff_ms = opts.initial_backoff_ms;
 
     while (true) {
-        if (WsTransport.connect(allocator, url)) |transport_val| {
+        if (WsTransport.connect(allocator, url, io)) |transport_val| {
             var transport = transport_val;
             defer transport.close();
             if (callback(&transport)) |_| {
@@ -825,7 +825,7 @@ pub fn connectWithReconnect(
         } else |_| {}
 
         if (opts.on_reconnect) |cb| cb(backoff_ms);
-        runtime.sleepMs(backoff_ms);
+        runtime.sleepMs(io, backoff_ms);
 
         // Guard against overflow before clamping.
         backoff_ms = if (backoff_ms > opts.max_backoff_ms / 2)

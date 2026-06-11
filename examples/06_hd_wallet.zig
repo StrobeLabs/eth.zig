@@ -8,7 +8,7 @@ const eth = @import("eth");
 
 pub fn main() !void {
     var buf: [4096]u8 = undefined;
-    var stdout_impl = std.Io.File.stdout().writerStreaming(eth.runtime.defaultIo(), &buf);
+    var stdout_impl = std.Io.File.stdout().writerStreaming(eth.runtime.blockingIo(), &buf);
     const stdout = &stdout_impl.interface;
 
     // Standard test mnemonic (DO NOT use in production)

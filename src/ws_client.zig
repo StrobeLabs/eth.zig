@@ -94,6 +94,9 @@ pub const Subscription = struct {
 
 pub const WsClient = struct {
     allocator: std.mem.Allocator,
+    /// The `std.Io` this client runs on. Used for every connect/reconnect,
+    /// the keepalive timestamps, and the ping-nonce randomness.
+    io: std.Io,
     /// Owned copy of the URL used for reconnects.
     url: []u8,
     transport: ?WsTransport,
@@ -105,7 +108,7 @@ pub const WsClient = struct {
     next_id: u64,
     opts: Opts,
     state: State,
-    /// `runtime.milliTimestamp()` of the last received frame.
+    /// `runtime.milliTimestamp(io)` of the last received frame.
     last_activity_ms: i64,
     /// Sentinel for an in-flight ping.
     pending_pong: bool,
@@ -117,17 +120,18 @@ pub const WsClient = struct {
     /// Open a resilient WebSocket client.
     /// `connect()` itself is NOT retried; if the very first connect fails,
     /// the call returns `error.ConnectionFailed`.
-    pub fn connect(allocator: std.mem.Allocator, url: []const u8, opts: Opts) !*WsClient {
+    pub fn connect(allocator: std.mem.Allocator, url: []const u8, io: std.Io, opts: Opts) !*WsClient {
         const self = try allocator.create(WsClient);
         errdefer allocator.destroy(self);
 
         const url_copy = try allocator.dupe(u8, url);
         errdefer allocator.free(url_copy);
 
-        const transport = WsTransport.connect(allocator, url) catch return error.ConnectionFailed;
+        const transport = WsTransport.connect(allocator, url, io) catch return error.ConnectionFailed;
 
         self.* = .{
             .allocator = allocator,
+            .io = io,
             .url = url_copy,
             .transport = transport,
             .subs = .empty,
@@ -136,10 +140,10 @@ pub const WsClient = struct {
             .next_id = 1,
             .opts = opts,
             .state = .connected,
-            .last_activity_ms = runtime.milliTimestamp(),
+            .last_activity_ms = runtime.milliTimestamp(io),
             .pending_pong = false,
             .ping_sent_ms = 0,
-            .rng = std.Random.DefaultPrng.init(@bitCast(runtime.milliTimestamp())),
+            .rng = std.Random.DefaultPrng.init(@bitCast(runtime.milliTimestamp(io))),
         };
         return self;
     }
@@ -379,7 +383,7 @@ pub const WsClient = struct {
             const t = &self.transport.?;
             const frames_before = t.frames_received;
 
-            const now = runtime.milliTimestamp();
+            const now = runtime.milliTimestamp(self.io);
 
             // Pong-timeout check.
             if (self.pending_pong and now - self.ping_sent_ms >= @as(i64, @intCast(self.opts.pong_timeout_ms))) {
@@ -391,7 +395,7 @@ pub const WsClient = struct {
                 const elapsed_idle = now - self.last_activity_ms;
                 if (elapsed_idle >= @as(i64, @intCast(self.opts.ping_interval_ms))) {
                     var nonce: [8]u8 = undefined;
-                    runtime.defaultIo().random(&nonce);
+                    self.io.random(&nonce);
                     t.sendPing(&nonce) catch return error.WriteError;
                     self.ping_sent_ms = now;
                     self.pending_pong = true;
@@ -408,7 +412,7 @@ pub const WsClient = struct {
 
             const maybe_frame = t.readMessageDeadline(deadline_ms) catch return error.ReadError;
             if (maybe_frame) |frame| {
-                self.last_activity_ms = runtime.milliTimestamp();
+                self.last_activity_ms = runtime.milliTimestamp(self.io);
                 self.pending_pong = false;
                 return frame;
             }
@@ -416,7 +420,7 @@ pub const WsClient = struct {
             // we were waiting for a data frame, we are still alive. Otherwise
             // loop, which will either send a ping or trip pong-timeout.
             if (t.frames_received != frames_before) {
-                self.last_activity_ms = runtime.milliTimestamp();
+                self.last_activity_ms = runtime.milliTimestamp(self.io);
                 self.pending_pong = false;
             }
         }
@@ -473,15 +477,15 @@ pub const WsClient = struct {
             const delay = applyJitter(base, self.opts.jitter_pct, self.rng.random());
 
             if (self.opts.on_reconnect) |cb| cb(attempt, delay);
-            runtime.sleepMs(delay);
+            runtime.sleepMs(self.io, delay);
 
-            const maybe_t = WsTransport.connect(self.allocator, self.url);
+            const maybe_t = WsTransport.connect(self.allocator, self.url, self.io);
             if (maybe_t) |t_val| {
                 var t = t_val;
                 if (self.resubscribeAll(&t)) |_| {
                     self.transport = t;
                     self.state = .connected;
-                    self.last_activity_ms = runtime.milliTimestamp();
+                    self.last_activity_ms = runtime.milliTimestamp(self.io);
                     return;
                 } else |_| {
                     t.close();
@@ -703,6 +707,7 @@ test "Opts defaults" {
 fn testStubClient(allocator: std.mem.Allocator) WsClient {
     return .{
         .allocator = allocator,
+        .io = runtime.blockingIo(),
         .url = &.{},
         .transport = null,
         .subs = .empty,
