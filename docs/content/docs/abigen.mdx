@@ -70,6 +70,44 @@ const transfer = try Erc20.decodeEvent("Transfer", log);
 returns `error.TopicMismatch` if it does not match, so you can fan a stream of
 logs through several decoders and let the wrong ones fall through.
 
+## Writing to a contract
+
+State-changing functions take a `*Wallet` instead of a `*Provider`. `send`
+builds the **same** `selector ++ encode(args)` calldata as `call` (the encoder
+is shared, so a read and a write of the same function produce byte-identical
+calldata) and hands it to the wallet, which fills nonce/gas/chainId, signs, and
+broadcasts. It returns the transaction hash.
+
+```zig
+const weth = Weth.at(weth_address);
+
+// transfer(address,uint256) -> the wallet signs and broadcasts
+const tx_hash = try weth.send(&wallet, "transfer", .{ recipient, amount });
+```
+
+For `payable` functions that take ETH, use `sendValue` to attach `value` wei:
+
+```zig
+// deposit() is payable -- wrap 1 ETH into WETH
+const tx_hash = try weth.sendValue(&wallet, "deposit", .{}, one_ether);
+```
+
+`sendAndWait` is a convenience that polls for the receipt:
+
+```zig
+const receipt = try weth.sendAndWait(&wallet, "transfer", .{ recipient, amount }, 10);
+// receipt.status == 1 on success
+```
+
+Naming a `view` or `pure` function in `send`/`sendValue`/`sendAndWait` is a
+**compile error** -- a read-only function makes no state change, so a write to
+one is almost always a mistake. The error points you back to `call`:
+
+```zig
+// Compile error: 'balanceOf' is a view function (read-only); use `call` instead of `send`
+const x = try token.send(&wallet, "balanceOf", .{ holder });
+```
+
 ## ABI to Zig type mapping
 
 | ABI type           | Zig type        | Notes                                       |

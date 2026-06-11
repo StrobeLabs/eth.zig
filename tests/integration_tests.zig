@@ -294,6 +294,68 @@ test "sendTransactionAndWait returns receipt directly" {
     try std.testing.expect(receipt.gas_used > 0);
 }
 
+// ============================================================================
+// abigen write tests (eth.bind send/sendAndWait against a deployed contract)
+// ============================================================================
+
+// A minimal ERC-20 ABI bound at comptime for the write-path integration test.
+const ERC20_ABI =
+    \\[
+    \\  {"type":"function","name":"transfer","stateMutability":"nonpayable","inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[{"name":"","type":"bool"}]}
+    \\]
+;
+
+// Deploy a contract whose runtime is a single STOP opcode (0x00): it accepts
+// any calldata and returns success, so a `transfer(...)` call against it mines a
+// successful receipt. Init code: PUSH1 0x00, PUSH1 0x00, MSTORE8, PUSH1 0x01,
+// PUSH1 0x00, RETURN -- stores one 0x00 byte and returns it as the runtime.
+const STOP_DEPLOY_CODE = [_]u8{ 0x60, 0x00, 0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xf3 };
+
+test "abigen send: bind ERC-20 and transfer against a deployed contract" {
+    if (!isAnvilAvailable()) return;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
+    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    defer wallet.deinit();
+
+    // Deploy the stub contract and recover its address from the receipt.
+    // An explicit gas limit is supplied: the wallet estimates deployment gas
+    // against the zero address, which underestimates contract creation.
+    const deploy_receipt = try wallet.sendTransactionAndWait(.{
+        .to = null,
+        .data = &STOP_DEPLOY_CODE,
+        .gas_limit = 200_000,
+    }, 10);
+    try std.testing.expectEqual(@as(u8, 1), deploy_receipt.status);
+    const contract_addr = deploy_receipt.contract_address orelse return error.TestUnexpectedResult;
+
+    const Erc20 = eth.bind(ERC20_ABI);
+    const token = Erc20.at(contract_addr);
+
+    const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
+    const amount: u256 = 1_000_000;
+
+    // send: returns the broadcast tx hash.
+    const tx_hash = try token.send(&wallet, "transfer", .{ recipient, amount });
+    const maybe_receipt = try wallet.waitForReceipt(tx_hash, 10);
+    const send_receipt = maybe_receipt orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 1), send_receipt.status);
+    try std.testing.expectEqualSlices(u8, &tx_hash, &send_receipt.transaction_hash);
+    // The transaction targeted the bound contract address.
+    if (send_receipt.to) |to_addr| {
+        try std.testing.expectEqualSlices(u8, &contract_addr, &to_addr);
+    } else return error.TestUnexpectedResult;
+
+    // sendAndWait: same call via the receipt-returning convenience.
+    const wait_receipt = try token.sendAndWait(&wallet, "transfer", .{ recipient, amount }, 10);
+    try std.testing.expectEqual(@as(u8, 1), wait_receipt.status);
+}
+
 test "getTransactionReceipt for unknown hash returns null" {
     if (!isAnvilAvailable()) return;
     const allocator = std.testing.allocator;
