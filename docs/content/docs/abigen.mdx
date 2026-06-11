@@ -98,7 +98,7 @@ This release covers **read functions and event decoders**. Honest scope cuts:
   topic, but naming one in `call`/`decodeEvent` is a compile-time error for now.
 - **Overloaded functions.** Solidity allows two functions sharing a name; the
   first declaration wins. Use the runtime
-  [`abi_json`](/docs/modules) parser if you need every overload.
+  [`abi_json`](/modules) parser if you need every overload.
 
 Unknown or unsupported names fail the build with a clear `@compileError`, so
 typos and unsupported ABI shapes are caught at compile time, never at runtime.

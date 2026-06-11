@@ -1,21 +1,30 @@
 //! Comptime contract bindings (abigen).
 //!
 //! `Bind(@embedFile("weth.json"))` parses a Solidity JSON ABI *at compile time*
-//! and returns a fully typed contract struct: one typed method per read
-//! function (selector precomputed), one typed decoder per event (topic0
-//! precomputed), with zero runtime ABI parsing. This is the headline "why Zig"
-//! capability -- Rust needs a proc-macro plus a codegen step to reach the same
-//! developer experience; Zig does it in-language.
+//! and returns a contract type whose calls and event decoders are statically
+//! typed from the ABI, with selectors and event topics precomputed and zero
+//! runtime ABI parsing. This is the headline "why Zig" capability -- Rust needs
+//! a proc-macro plus a codegen step to reach the same developer experience;
+//! Zig does it in-language.
+//!
+//! Calls go through a single generic `call(provider, name, args)` rather than a
+//! generated `weth.balanceOf(...)` method, because Zig cannot mint a `pub fn`
+//! whose name comes from a comptime string. `name` is still comptime, so the
+//! argument and return types are resolved from the ABI at compile time:
+//! `ArgsOf(name)` / `ReturnOf(name)`. An unknown function name or a wrong
+//! argument type is a compile error, exactly like a named method would give.
 //!
 //! ## Usage
 //! ```zig
 //! const eth = @import("eth");
 //! const Weth = eth.bind(@embedFile("weth.json"));
 //!
-//! var weth = Weth.at(weth_address);
-//! const bal = try weth.balanceOf(&provider, holder); // bal: u256
+//! const weth = Weth.at(weth_address);
+//! // args/return are typed from the ABI: holder is [20]u8, bal is u256.
+//! const bal = try weth.call(&provider, "balanceOf", .{holder});
 //!
-//! const transfer = try Weth.decodeTransfer(log); // typed { from, to, value }
+//! // Typed event decode: returns a struct { from, to, value }.
+//! const transfer = try Weth.decodeEvent("Transfer", log);
 //! ```
 //!
 //! ## Scope of this release
@@ -75,6 +84,8 @@ pub const EventError = error{
     TopicMismatch,
     /// The log has fewer topics than the event has indexed parameters.
     MissingIndexedTopic,
+    /// `log.data` is shorter than the event's non-indexed parameters require.
+    TruncatedData,
 };
 
 // ============================================================================
@@ -243,13 +254,22 @@ pub fn Bind(comptime abi_json: []const u8) type {
             var topic_idx: usize = 1; // topics[0] is the signature hash
             var data_word: usize = 0;
             inline for (evt.inputs, 0..) |input, i| {
-                const FieldT = mapType(input.type_str);
                 if (input.indexed) {
                     if (topic_idx >= log.topics.len) return EventError.MissingIndexedTopic;
+                    const topic_word = log.topics[topic_idx];
                     @field(result, eventFieldName(input.name, i)) =
-                        wordToValue(FieldT, input.type_str, log.topics[topic_idx]);
+                        if (comptime !isStaticScalarType(input.type_str))
+                            // Reference type: the topic is keccak256(value), so
+                            // surface the raw 32-byte hash (its mapped field is [32]u8).
+                            topic_word
+                        else
+                            wordToValue(mapType(input.type_str), input.type_str, topic_word);
                     topic_idx += 1;
                 } else {
+                    const FieldT = mapType(input.type_str);
+                    // Reject truncated data rather than fabricating a
+                    // zero-padded word from an under-length RPC payload.
+                    if ((data_word + 1) * 32 > log.data.len) return EventError.TruncatedData;
                     const word = readWord(log.data, data_word);
                     @field(result, eventFieldName(input.name, i)) =
                         wordToValue(FieldT, input.type_str, word);
@@ -289,7 +309,7 @@ fn findEvent(comptime events: []const Evt, comptime name: []const u8) Evt {
         if (std.mem.eql(u8, evt.name, name)) {
             if (!isEventGeneratable(evt)) {
                 @compileError("abigen: event '" ++ name ++
-                    "' has tuple/array/dynamic params, which are not supported yet");
+                    "' has a non-indexed tuple/array/dynamic param, which is not supported yet");
             }
             return evt;
         }
@@ -384,12 +404,23 @@ fn eventStruct(comptime evt: Evt) type {
     comptime var types: [evt.inputs.len]type = undefined;
     inline for (evt.inputs, 0..) |input, i| {
         names[i] = eventFieldName(input.name, i);
-        types[i] = mapType(input.type_str);
+        types[i] = eventFieldType(input);
     }
     return namedStruct(&names, &types);
 }
 
-/// Read the i-th 32-byte word from `data` (zero-padded if `data` is short).
+/// The Zig type of a decoded event field. An indexed reference type
+/// (string/bytes/array/tuple) is stored in the topic as `keccak256(value)`, not
+/// the value itself, so it is surfaced as the raw 32-byte topic. All other
+/// params map normally.
+fn eventFieldType(comptime input: Param) type {
+    if (input.indexed and !isStaticScalarType(input.type_str)) return [32]u8;
+    return mapType(input.type_str);
+}
+
+/// Read the i-th 32-byte word from `data`. Callers must bounds-check `data`
+/// first (see `decodeEvent`, which rejects truncated data); a short tail is
+/// zero-padded here only as a defensive fallback.
 fn readWord(data: []const u8, i: usize) [32]u8 {
     var word: [32]u8 = @splat(0);
     const start = i * 32;
@@ -560,12 +591,15 @@ fn isGeneratable(comptime func: Func) bool {
     return true;
 }
 
-/// True if an event can be decoded: indexed params must be static scalars (a
-/// 32-byte topic), and non-indexed params must be static scalars (one data
-/// word). Dynamic params (indexed-as-hash or offset-following) are excluded.
+/// True if an event can be decoded. Non-indexed params must be static scalars
+/// (one data word). Indexed params may be any type: a static scalar decodes
+/// from its topic, and an indexed reference type (string/bytes/array/tuple) is
+/// surfaced as its raw 32-byte topic (the `keccak256(value)` Ethereum stores).
+/// Only non-indexed dynamic params (which need offset-following decode) are
+/// excluded.
 fn isEventGeneratable(comptime evt: Evt) bool {
     for (evt.inputs) |p| {
-        if (!isStaticScalarType(p.type_str)) return false;
+        if (!p.indexed and !isStaticScalarType(p.type_str)) return false;
     }
     return true;
 }
@@ -1102,6 +1136,56 @@ test "bytes32 indexed event param decodes to [32]u8" {
     const decoded = try C.decodeEvent("Hashed", log);
     try testing.expectEqualSlices(u8, &id, &decoded.id);
     try testing.expectEqual(@as(u256, 7), decoded.n);
+}
+
+test "indexed reference-type (string) event param surfaces as raw [32]u8 topic" {
+    const abi =
+        \\[{"type":"event","name":"Named","inputs":[
+        \\  {"name":"label","type":"string","indexed":true},
+        \\  {"name":"value","type":"uint256","indexed":false}]}]
+    ;
+    const C = Bind(abi);
+    const T = C.EventOf("Named");
+    // Indexed string is hashed in the topic, so the field is the raw 32 bytes.
+    try testing.expectEqual([32]u8, @FieldType(T, "label"));
+
+    var label_topic: [32]u8 = @splat(0);
+    label_topic[31] = 0x2a;
+    const data = uint256_mod.toBigEndianBytes(@as(u256, 99));
+    const topics = [_][32]u8{ C.topicOf("Named"), label_topic };
+    const log = Log{
+        .address = @splat(0),
+        .topics = &topics,
+        .data = &data,
+        .block_number = null,
+        .transaction_hash = null,
+        .transaction_index = null,
+        .log_index = null,
+        .block_hash = null,
+        .removed = false,
+    };
+    const decoded = try C.decodeEvent("Named", log);
+    try testing.expectEqualSlices(u8, &label_topic, &decoded.label);
+    try testing.expectEqual(@as(u256, 99), decoded.value);
+}
+
+test "decodeEvent rejects truncated log.data" {
+    const C = Bind(erc20_abi);
+    const topics = [_][32]u8{ C.topicOf("Transfer"), @splat(0x11), @splat(0x22) };
+    // Transfer's non-indexed `value` needs a full 32-byte word; give it 4 bytes.
+    const short_data = [_]u8{ 0, 0, 0, 1 };
+    const log = Log{
+        .address = @splat(0),
+        .topics = &topics,
+        .data = &short_data,
+        .block_number = null,
+        .transaction_hash = null,
+        .transaction_index = null,
+        .log_index = null,
+        .block_hash = null,
+        .removed = false,
+    };
+    try testing.expectError(EventError.TruncatedData, C.decodeEvent("Transfer", log));
 }
 
 test "refAllDecls" {
