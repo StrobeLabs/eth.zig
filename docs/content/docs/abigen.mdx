@@ -1,0 +1,104 @@
+---
+title: Contract Bindings (abigen)
+description: Generate a fully typed contract struct from a JSON ABI at compile time -- zero runtime ABI parsing.
+---
+
+`eth.bind(@embedFile("weth.json"))` parses a Solidity JSON ABI **at compile time**
+and returns a fully typed contract struct: typed read calls per function with
+selectors precomputed, typed event decoders with topics precomputed, and zero
+runtime ABI parsing.
+
+This is the unique "why Zig" capability. Rust needs a proc-macro plus a codegen
+step to reach the same developer experience; Zig does it in-language with
+`comptime`.
+
+```zig
+const eth = @import("eth");
+
+const Erc20 = eth.bind(@embedFile("erc20.json"));
+```
+
+## Reading a contract
+
+Function names are passed as **comptime strings**, so the compiler resolves the
+matching ABI entry at each call site and the argument tuple and return types are
+fully typed. There is no runtime ABI lookup in the hot path.
+
+```zig
+var token = Erc20.at(token_address); // [20]u8 -> contract handle
+
+// balanceOf(address) -> uint256
+//   args:   .{ holder }  typed as .{ [20]u8 }
+//   return: u256
+const balance = try token.call(&provider, "balanceOf", .{ holder });
+
+// decimals() -> uint8 maps to the smallest fitting Zig integer: u8
+const decimals = try token.call(&provider, "decimals", .{});
+
+// name() -> string is heap-allocated on provider.allocator; the caller frees it
+const name = try token.call(&provider, "name", .{});
+defer provider.allocator.free(name);
+```
+
+The 4-byte selector for any function is precomputed at compile time:
+
+```zig
+const sel = Erc20.selectorOf("balanceOf");
+// sel == [4]u8{ 0x70, 0xa0, 0x82, 0x31 }
+```
+
+`ArgsOf(name)` and `ReturnOf(name)` expose the typed argument-tuple and return
+types if you want them directly (e.g. for building calldata yourself).
+
+## Decoding events
+
+Each event gets a typed decoder and a precomputed topic0:
+
+```zig
+// topic0 == keccak256("Transfer(address,address,uint256)")
+const topic = Erc20.topicOf("Transfer");
+
+// Decode a log into a typed struct:
+//   indexed params come from log.topics[1..], non-indexed from log.data
+const transfer = try Erc20.decodeEvent("Transfer", log);
+// transfer.from:  [20]u8
+// transfer.to:    [20]u8
+// transfer.value: u256
+```
+
+`decodeEvent` validates `log.topics[0]` against the event's signature hash and
+returns `error.TopicMismatch` if it does not match, so you can fan a stream of
+logs through several decoders and let the wrong ones fall through.
+
+## ABI to Zig type mapping
+
+| ABI type           | Zig type        | Notes                                       |
+| ------------------ | --------------- | ------------------------------------------- |
+| `uintN` (8..256)   | `uN`            | Smallest fitting unsigned (`uint8` -> `u8`) |
+| `intN` (8..256)    | `iN`            | Smallest fitting signed (`int128` -> `i128`)|
+| `uint` / `int`     | `u256` / `i256` | Bare alias for the 256-bit form             |
+| `address`          | `[20]u8`        | Raw 20-byte address                         |
+| `bool`             | `bool`          |                                             |
+| `bytesN` (1..32)   | `[N]u8`         | Fixed-size byte array                       |
+| `bytes`            | `[]const u8`    | Dynamic; decoded values are heap-allocated  |
+| `string`           | `[]const u8`    | Same encoding as `bytes`                    |
+
+Integers map to the exact Solidity width: `decimals()` is `u8`, a Uniswap pair's
+`getReserves()` returns `u112` fields. The mapping is lossless and the
+encode/decode bridge widens to `u256`/`i256` at the boundary.
+
+## Scope and limitations
+
+This release covers **read functions and event decoders**. Honest scope cuts:
+
+- **Writes are deferred.** State-changing calls (which would take a `*Wallet`)
+  are a planned follow-up.
+- **Tuples and arrays.** Functions or events whose parameters contain a `tuple`,
+  fixed array, or dynamic array still parse and still get a correct selector or
+  topic, but naming one in `call`/`decodeEvent` is a compile-time error for now.
+- **Overloaded functions.** Solidity allows two functions sharing a name; the
+  first declaration wins. Use the runtime
+  [`abi_json`](/docs/modules) parser if you need every overload.
+
+Unknown or unsupported names fail the build with a clear `@compileError`, so
+typos and unsupported ABI shapes are caught at compile time, never at runtime.
