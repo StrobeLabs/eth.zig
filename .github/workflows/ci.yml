@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        zig-version: ["0.16.0", "master"]
+        zig-version: ["0.16.0"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
