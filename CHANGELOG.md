@@ -5,7 +5,7 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-06-11
 
 ### Added
 - EIP-7702 SetCode transactions (type 0x04), shipped in Pectra and live on mainnet (#66). New `transaction.Authorization` tuple `{chain_id, address, nonce, y_parity, r, s}` and `transaction.Eip7702Transaction` (note: `to` is non-nullable -- type-0x04 cannot create contracts), wired into the `Transaction` union and the `serializeForSigning`/`hashForSigning`/`serializeSigned` dispatch. The signing payload is `0x04 || rlp([chain_id, nonce, max_priority_fee_per_gas, max_fee_per_gas, gas_limit, to, value, data, access_list, authorization_list])` (signed appends `y_parity, r, s`), each authorization encoded as `[chain_id, address, nonce, y_parity, r, s]`. `signer.signAuthorization(allocator, chain_id, address, nonce)` signs the authorization hash `keccak256(0x05 || rlp([chain_id, address, nonce]))` (MAGIC = 0x05) and fills `y_parity/r/s`; `signer.hashAuthorization` exposes that hash. `rpc_transaction.RpcTransaction` gains an optional `authorization_list`, parsed best-effort from an RPC `authorizationList`. Verified via sign-then-recover round trip (recovered signer equals the authority) plus fixed RLP-shape assertions; no official EIP-7702 signing test vector was found in the EIP or this repo, so correctness rests on the round trip plus shape checks
