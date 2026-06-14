@@ -213,12 +213,15 @@ Built something with eth.zig? Open a PR to add it here.
 
 **One-liner:**
 
+<!-- x-release-please-start-version -->
 ```bash
 zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.7.0
 ```
+<!-- x-release-please-end -->
 
 **Or add manually** to your `build.zig.zon`:
 
+<!-- x-release-please-start-version -->
 ```zig
 .dependencies = .{
     .eth = .{
@@ -227,6 +230,7 @@ zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.7.0
     },
 },
 ```
+<!-- x-release-please-end -->
 
 Then import in your `build.zig`:
 
