@@ -2,13 +2,23 @@ const std = @import("std");
 const hex = @import("hex.zig");
 
 /// Convert a u256 to a big-endian 32-byte array.
+///
+/// Uses `std.mem.writeInt` with an explicit `.big` endianness so the result is
+/// correct on any host. On a little-endian target this lowers to the same byte
+/// swap as before; on a big-endian target it is a no-op rather than (wrongly)
+/// reversing the bytes.
 pub fn toBigEndianBytes(value: u256) [32]u8 {
-    return @bitCast(@byteSwap(value));
+    var buf: [32]u8 = undefined;
+    std.mem.writeInt(u256, &buf, value, .big);
+    return buf;
 }
 
 /// Convert a big-endian 32-byte array to u256.
+///
+/// The mirror of `toBigEndianBytes`: reads the bytes as a big-endian integer on
+/// any host (see that function for the endianness rationale).
 pub fn fromBigEndianBytes(bytes: [32]u8) u256 {
-    return @byteSwap(@as(u256, @bitCast(bytes)));
+    return std.mem.readInt(u256, &bytes, .big);
 }
 
 /// Convert a hex string (with optional "0x" prefix) to u256.
@@ -564,6 +574,18 @@ test "toBigEndianBytes known value" {
     // Last byte should be 1, all others 0
     try std.testing.expectEqual(@as(u8, 1), bytes[31]);
     try std.testing.expectEqual(@as(u8, 0), bytes[0]);
+
+    // Pin the exact big-endian byte order for a multi-byte value. This is
+    // host-endianness-independent: 0xdeadbeef must occupy the four
+    // least-significant (rightmost) bytes regardless of the build target.
+    var expected: [32]u8 = @splat(0);
+    expected[28] = 0xde;
+    expected[29] = 0xad;
+    expected[30] = 0xbe;
+    expected[31] = 0xef;
+    const b2 = toBigEndianBytes(@as(u256, 0xdeadbeef));
+    try std.testing.expectEqualSlices(u8, &expected, &b2);
+    try std.testing.expectEqual(@as(u256, 0xdeadbeef), fromBigEndianBytes(b2));
 }
 
 test "fromHex basic" {

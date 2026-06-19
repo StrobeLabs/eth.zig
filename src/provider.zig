@@ -17,19 +17,44 @@ const runtime = @import("runtime.zig");
 pub const Provider = struct {
     transport: *HttpTransport,
     allocator: std.mem.Allocator,
-    next_id: u64,
+    /// Monotonic JSON-RPC request id. Atomic so a Provider shared across threads
+    /// cannot hand out duplicate ids (note the underlying HttpTransport is still
+    /// single-threaded -- sharing a Provider is only id-safe, not call-safe).
+    next_id: std.atomic.Value(u64),
+    /// Diagnostics for the most recent JSON-RPC `error` response. See lastError().
+    last_error: ?ErrorInfo = null,
+    /// Inline backing storage for `last_error.message` (truncated to fit). Inline
+    /// so the Provider holds no heap diagnostics state and needs no deinit.
+    last_error_storage: [256]u8 = undefined,
+
+    /// Structured diagnostics for a failed JSON-RPC call.
+    pub const ErrorInfo = struct {
+        /// JSON-RPC error code, e.g. 3 = execution reverted, -32000 = server error.
+        code: i64,
+        /// Error message (may be empty; truncated to 256 bytes). Borrows
+        /// provider-owned storage; valid until the next call on this provider.
+        message: []const u8,
+    };
 
     pub fn init(allocator: std.mem.Allocator, transport: *HttpTransport) Provider {
         return .{
             .transport = transport,
             .allocator = allocator,
-            .next_id = 1,
+            .next_id = .init(1),
         };
     }
 
     /// The `std.Io` this provider runs on, inherited from its transport.
     pub fn io(self: *const Provider) std.Io {
         return self.transport.io;
+    }
+
+    /// Diagnostics for the most recent JSON-RPC `error` response, or null if the
+    /// last call did not fail with `error.RpcError`. Lets callers tell an
+    /// on-chain revert (code 3) apart from a transport-level failure. The
+    /// message is valid until the next call on this provider.
+    pub fn lastError(self: *const Provider) ?ErrorInfo {
+        return self.last_error;
     }
 
     // ========================================================================
@@ -41,7 +66,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_chainId, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
@@ -51,7 +76,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_blockNumber, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
@@ -68,7 +93,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getBalance, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexU256(result_str);
     }
@@ -90,7 +115,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getTransactionCount, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
@@ -104,7 +129,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getCode, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexBytes(self.allocator, result_str);
     }
@@ -128,7 +153,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getStorageAt, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return hex_mod.hexToBytesFixed(32, result_str) catch return error.InvalidResponse;
     }
@@ -142,7 +167,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_gasPrice, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexU256(result_str);
     }
@@ -152,7 +177,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_maxPriorityFeePerGas, "[]");
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexU256(result_str);
     }
@@ -170,7 +195,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_call, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexBytes(self.allocator, result_str);
     }
@@ -197,7 +222,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_call, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexBytes(self.allocator, result_str);
     }
@@ -210,7 +235,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_estimateGas, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexU64(result_str);
     }
@@ -232,7 +257,7 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_sendRawTransaction, params);
         defer self.allocator.free(raw);
 
-        const result_str = try extractResultString(self.allocator, raw);
+        const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return primitives.hashFromHex(result_str) catch return error.InvalidResponse;
     }
@@ -257,7 +282,10 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getTransactionReceipt, params);
         defer self.allocator.free(raw);
 
-        return parseTransactionReceipt(self.allocator, raw);
+        return parseTransactionReceipt(self.allocator, raw) catch |err| {
+            if (err == error.RpcError) self.captureRpcError(raw);
+            return err;
+        };
     }
 
     // ========================================================================
@@ -282,7 +310,10 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getBlockByNumber, params);
         defer self.allocator.free(raw);
 
-        return parseBlockHeader(self.allocator, raw);
+        return parseBlockHeader(self.allocator, raw) catch |err| {
+            if (err == error.RpcError) self.captureRpcError(raw);
+            return err;
+        };
     }
 
     // ========================================================================
@@ -298,7 +329,10 @@ pub const Provider = struct {
         const raw = try self.rpcCall(json_rpc.Method.eth_getLogs, params);
         defer self.allocator.free(raw);
 
-        return parseLogsResponse(self.allocator, raw);
+        return parseLogsResponse(self.allocator, raw) catch |err| {
+            if (err == error.RpcError) self.captureRpcError(raw);
+            return err;
+        };
     }
 
     // ========================================================================
@@ -306,9 +340,48 @@ pub const Provider = struct {
     // ========================================================================
 
     fn rpcCall(self: *Provider, method: []const u8, params: []const u8) ![]u8 {
-        const id = self.next_id;
-        self.next_id += 1;
+        // Reset diagnostics at the single choke point every call flows through;
+        // the parse step records details if the response carries an RPC error.
+        self.last_error = null;
+        const id = self.next_id.fetchAdd(1, .monotonic);
         return self.transport.request(method, params, id);
+    }
+
+    /// `extractResultString`, but capturing RPC error diagnostics into the
+    /// provider on `error.RpcError` so callers can inspect `lastError()`.
+    fn extractResult(self: *Provider, raw: []const u8) ![]u8 {
+        return extractResultString(self.allocator, raw) catch |err| {
+            if (err == error.RpcError) self.captureRpcError(raw);
+            return err;
+        };
+    }
+
+    /// Best-effort: parse `raw` for a JSON-RPC `error` object and record its
+    /// code and (truncated) message into `last_error`. Runs only on the error
+    /// path, so the extra parse never touches the success hot path.
+    fn captureRpcError(self: *Provider, raw: []const u8) void {
+        var code: i64 = 0;
+        var message: []const u8 = "";
+        if (std.json.parseFromSlice(std.json.Value, self.allocator, raw, .{})) |parsed| {
+            defer parsed.deinit();
+            if (parsed.value == .object) {
+                if (parsed.value.object.get("error")) |ev| {
+                    if (ev == .object) {
+                        if (ev.object.get("code")) |c| {
+                            if (c == .integer) code = c.integer;
+                        }
+                        if (ev.object.get("message")) |m| {
+                            if (m == .string) message = m.string;
+                        }
+                    }
+                }
+            }
+            const n = @min(message.len, self.last_error_storage.len);
+            @memcpy(self.last_error_storage[0..n], message[0..n]);
+            self.last_error = .{ .code = code, .message = self.last_error_storage[0..n] };
+        } else |_| {
+            self.last_error = .{ .code = 0, .message = "" };
+        }
     }
 
     fn formatAddressAndBlock(self: *Provider, address: [20]u8, block_tag: []const u8) ![]u8 {
@@ -452,8 +525,7 @@ pub const BatchCaller = struct {
         const ids = try self.allocator.alloc(u64, n);
         defer self.allocator.free(ids);
 
-        const base_id = self.provider.next_id;
-        self.provider.next_id += n;
+        const base_id = self.provider.next_id.fetchAdd(n, .monotonic);
 
         for (0..n) |i| {
             ids[i] = base_id + i;
@@ -1184,6 +1256,35 @@ test "extractResultString - rpc error" {
     try std.testing.expectError(error.RpcError, extractResultString(allocator, raw));
 }
 
+test "Provider.lastError - null before any error" {
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = Provider.init(std.testing.allocator, &transport);
+    try std.testing.expect(provider.lastError() == null);
+}
+
+test "Provider.captureRpcError - records code and message" {
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = Provider.init(std.testing.allocator, &transport);
+
+    provider.captureRpcError(
+        \\{"jsonrpc":"2.0","id":1,"error":{"code":3,"message":"execution reverted"}}
+    );
+
+    const info = provider.lastError() orelse return error.TestExpectedDiagnostic;
+    try std.testing.expectEqual(@as(i64, 3), info.code);
+    try std.testing.expectEqualStrings("execution reverted", info.message);
+}
+
+test "Provider.next_id - atomic, starts at 1 and increments" {
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = Provider.init(std.testing.allocator, &transport);
+    try std.testing.expectEqual(@as(u64, 1), provider.next_id.fetchAdd(1, .monotonic));
+    try std.testing.expectEqual(@as(u64, 2), provider.next_id.load(.monotonic));
+}
+
 test "parseHexU64 - basic values" {
     try std.testing.expectEqual(@as(u64, 1), try parseHexU64("0x1"));
     try std.testing.expectEqual(@as(u64, 255), try parseHexU64("0xff"));
@@ -1779,7 +1880,7 @@ test "Provider.init" {
     defer transport.deinit();
 
     const provider = Provider.init(allocator, &transport);
-    try std.testing.expectEqual(@as(u64, 1), provider.next_id);
+    try std.testing.expectEqual(@as(u64, 1), provider.next_id.load(.monotonic));
 }
 
 test "BatchCaller.init and deinit" {
