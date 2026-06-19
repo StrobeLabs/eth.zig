@@ -78,6 +78,9 @@ const Timer = struct {
 
 const BenchResult = struct {
     ns_per_op: u64,
+    /// Sample standard deviation of the per-batch ns/op measurements. Turns the
+    /// "within measurement noise" claims into data callers can actually check.
+    stddev_ns: u64,
     iters: u64,
 };
 
@@ -100,23 +103,53 @@ fn runBench(comptime func: fn () void) BenchResult {
         batch *= 2;
     }
 
-    // Measure: collect samples over BENCH_NS
+    // Measure: collect one ns/op sample per ~100ms batch over BENCH_NS. With a
+    // 2s window and ~100ms batches this is ~20 samples -- enough for a stddev.
+    var samples: [4096]f64 = undefined;
+    var n_samples: usize = 0;
     var total_iters: u64 = 0;
     timer.reset();
-
-    while (timer.read() < BENCH_NS) {
+    var elapsed: u64 = 0;
+    while (elapsed < BENCH_NS) {
+        const t0 = timer.read();
         for (0..batch) |_| func();
+        const t1 = timer.read();
+        elapsed = t1;
+        if (n_samples < samples.len) {
+            const batch_ns: f64 = @floatFromInt(t1 - t0);
+            samples[n_samples] = batch_ns / @as(f64, @floatFromInt(batch));
+            n_samples += 1;
+        }
         total_iters += batch;
     }
 
     const total_ns = timer.read();
     const ns_per_op = if (total_iters > 0) total_ns / total_iters else 0;
-    return .{ .ns_per_op = ns_per_op, .iters = total_iters };
+
+    // Sample standard deviation (Bessel-corrected) of the per-batch ns/op.
+    var stddev_ns: u64 = 0;
+    if (n_samples > 1) {
+        var mean: f64 = 0;
+        for (samples[0..n_samples]) |s| mean += s;
+        mean /= @floatFromInt(n_samples);
+        var acc: f64 = 0;
+        for (samples[0..n_samples]) |s| {
+            const d = s - mean;
+            acc += d * d;
+        }
+        const variance = acc / @as(f64, @floatFromInt(n_samples - 1));
+        stddev_ns = @intFromFloat(@round(@sqrt(variance)));
+    }
+
+    return .{ .ns_per_op = ns_per_op, .stddev_ns = stddev_ns, .iters = total_iters };
 }
 
 fn runAndPrint(comptime name: []const u8, comptime func: fn () void, stdout: anytype) !void {
     const result = runBench(func);
-    try stdout.print("{s:<34} {d:>9} ns {d:>14}\n", .{ name, result.ns_per_op, result.iters });
+    try stdout.print("{s:<34} {d:>9} ns {d:>9} ns {d:>14}\n", .{ name, result.ns_per_op, result.stddev_ns, result.iters });
+    // Machine-readable line for compare.sh and regression tooling. Filtered out
+    // of human views with `grep -v '^BENCH_JSON'`.
+    try stdout.print("BENCH_JSON|{{\"name\":\"{s}\",\"ns_per_op\":{d},\"stddev_ns\":{d},\"iters\":{d}}}\n", .{ name, result.ns_per_op, result.stddev_ns, result.iters });
 }
 
 // ============================================================================
@@ -496,8 +529,8 @@ pub fn main() !void {
     var w = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &out_buf);
     const stdout = &w.interface;
 
-    try stdout.print("\n{s:<34} {s:>12} {s:>14}\n", .{ "Benchmark", "ns/op", "iters" });
-    try stdout.print("{s}\n", .{"" ++ @as([64]u8, @splat('-'))});
+    try stdout.print("\n{s:<34} {s:>12} {s:>12} {s:>14}\n", .{ "Benchmark", "ns/op", "stddev", "iters" });
+    try stdout.print("{s}\n", .{"" ++ @as([72]u8, @splat('-'))});
 
     // Keccak256
     try runAndPrint("keccak256_empty", benchKeccakEmpty, stdout);

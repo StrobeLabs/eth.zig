@@ -1,6 +1,7 @@
 ZIG ?= zig
+KCOV ?= kcov
 
-.PHONY: build test fmt lint ci integration-test bench bench-u256 bench-keccak clean
+.PHONY: build test fmt fmt-fix lint ci integration-test bench bench-u256 bench-keccak coverage docs clean
 
 ## Build the library (default)
 build:
@@ -17,6 +18,18 @@ fmt:
 ## Auto-fix formatting
 fmt-fix:
 	$(ZIG) fmt src/ tests/
+
+## Measure unit-test code coverage with kcov (Linux; requires kcov installed).
+## Excludes vendored C/crypto so the report reflects the Zig SDK surface.
+coverage:
+	$(ZIG) build install-test
+	rm -rf kcov-out
+	$(KCOV) --include-pattern=src/ --exclude-pattern=src/crypto/ kcov-out ./zig-out/bin/test
+	@echo "Coverage report: kcov-out/index.html"
+
+## Generate API documentation into zig-out/docs
+docs:
+	$(ZIG) build docs
 
 ## Run fmt + test — everything CI checks locally (no Anvil required)
 lint: fmt test

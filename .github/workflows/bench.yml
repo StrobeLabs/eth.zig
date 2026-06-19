@@ -1,0 +1,32 @@
+name: Bench
+
+# Benchmarks run nightly (and on demand), off the PR-blocking path: the harness
+# is noisy on shared runners, so we capture numbers for trend/regression review
+# rather than gate merges on them. Each run uploads the BENCH_JSON lines so a
+# committed baseline + diff can be layered on later.
+on:
+  schedule:
+    - cron: "0 7 * * *" # daily at 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  bench:
+    name: Benchmarks (ReleaseFast)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+      - name: Run benchmarks
+        run: zig build bench | tee bench-results.txt
+      - name: Extract machine-readable results
+        run: grep '^BENCH_JSON' bench-results.txt > bench-results.jsonl || true
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: |
+            bench-results.txt
+            bench-results.jsonl

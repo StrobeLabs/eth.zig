@@ -11,6 +11,9 @@ zig-pkg/
 *.o
 *.s
 
+# Coverage output (make coverage / kcov)
+kcov-out/
+
 # Docs site build artifacts
 docs/node_modules/
 docs/.next/

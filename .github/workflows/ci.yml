@@ -47,3 +47,25 @@ jobs:
           version: "0.16.0"
       - name: Build library
         run: zig build
+
+  coverage:
+    name: Coverage (kcov)
+    runs-on: ubuntu-latest
+    # Informational: surfaces which branches the unit tests exercise. Not a
+    # required check -- a coverage dip should not block a merge on its own.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+      - name: Install kcov
+        run: sudo apt-get update && sudo apt-get install -y kcov
+      - name: Build unit-test binary
+        run: zig build install-test
+      - name: Run kcov
+        run: kcov --include-pattern=src/ --exclude-pattern=src/crypto/ kcov-out ./zig-out/bin/test
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: kcov-out

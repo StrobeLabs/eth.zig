@@ -19,7 +19,7 @@ echo ""
 # -- Step 1: Run eth-zig benchmarks --
 echo "[1/3] Running eth-zig benchmarks (ReleaseFast)..."
 ZIG_OUTPUT=$(cd "$ROOT_DIR" && zig build bench 2>&1)
-echo "$ZIG_OUTPUT"
+echo "$ZIG_OUTPUT" | grep -v "^BENCH_JSON"
 echo ""
 
 # -- Step 2: Run alloy.rs benchmarks --
