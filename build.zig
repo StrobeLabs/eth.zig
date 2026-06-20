@@ -39,6 +39,35 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
+    // Install the unit-test binary so coverage tooling (kcov) can run it
+    // out-of-band: `zig build install-test` writes it to zig-out/bin/test.
+    const install_unit_tests = b.addInstallArtifact(unit_tests, .{});
+    const install_test_step = b.step("install-test", "Install the unit-test binary (for coverage tooling)");
+    install_test_step.dependOn(&install_unit_tests.step);
+
+    // Formatting check as a first-class build step (mirrors the CI fmt job and
+    // `make fmt`, so `zig build fmt-check` is self-describing without Make).
+    const fmt_check = b.addFmt(.{
+        .paths = &.{ "src", "tests", "bench", "build.zig" },
+        .check = true,
+    });
+    const fmt_step = b.step("fmt-check", "Check source formatting (zig fmt --check)");
+    fmt_step.dependOn(&fmt_check.step);
+
+    // API documentation: `zig build docs` emits the HTML docs generated from the
+    // public surface (src/root.zig) into zig-out/docs.
+    const docs_obj = b.addObject(.{
+        .name = "eth",
+        .root_module = eth_module,
+    });
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = docs_obj.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    const docs_step = b.step("docs", "Generate API documentation into zig-out/docs");
+    docs_step.dependOn(&install_docs.step);
+
     // Integration tests (requires Anvil)
     const integration_tests = b.addTest(.{
         .root_module = b.createModule(.{

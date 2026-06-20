@@ -382,14 +382,14 @@ test "provider next_id increments across calls" {
     defer transport.deinit();
     var provider = eth.provider.Provider.init(allocator, &transport);
 
-    try std.testing.expectEqual(@as(u64, 1), provider.next_id);
+    try std.testing.expectEqual(@as(u64, 1), provider.next_id.load(.monotonic));
 
     _ = try provider.getChainId();
-    try std.testing.expect(provider.next_id > 1);
+    try std.testing.expect(provider.next_id.load(.monotonic) > 1);
 
-    const id_after_first = provider.next_id;
+    const id_after_first = provider.next_id.load(.monotonic);
     _ = try provider.getBlockNumber();
-    try std.testing.expect(provider.next_id > id_after_first);
+    try std.testing.expect(provider.next_id.load(.monotonic) > id_after_first);
 }
 
 // ============================================================================

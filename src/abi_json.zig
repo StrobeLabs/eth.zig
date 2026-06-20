@@ -11,25 +11,34 @@ pub const ContractAbi = struct {
     functions: []const abi_types.Function,
     events: []const abi_types.Event,
     errors: []const abi_types.AbiError,
-    allocator: std.mem.Allocator,
+    /// Owns every allocation backing the parsed ABI. A single arena means there
+    /// is no hand-written recursive free, and a failure partway through parsing
+    /// cannot leak already-built entries: the `errdefer` in `fromJson` (and
+    /// `deinit` on success) frees the whole tree in one shot.
+    arena: *std.heap.ArenaAllocator,
 
     /// Parse a Solidity JSON ABI string into a ContractAbi.
     /// Caller must call deinit() to free all memory.
-    pub fn fromJson(allocator: std.mem.Allocator, json: []const u8) !ContractAbi {
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch {
-            return error.InvalidJson;
-        };
-        defer parsed.deinit();
+    pub fn fromJson(gpa: std.mem.Allocator, json: []const u8) !ContractAbi {
+        const arena = try gpa.create(std.heap.ArenaAllocator);
+        errdefer gpa.destroy(arena);
+        arena.* = std.heap.ArenaAllocator.init(gpa);
+        errdefer arena.deinit();
+        const allocator = arena.allocator();
 
-        const root = parsed.value;
+        // Parse "leaky" into the arena: the JSON DOM lives in the same arena as
+        // the parsed ABI, so it is reclaimed by deinit() with everything else.
+        // Surface allocator exhaustion as itself; only genuine parse failures
+        // collapse to InvalidJson.
+        const root = std.json.parseFromSliceLeaky(std.json.Value, allocator, json, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidJson,
+        };
         if (root != .array) return error.InvalidAbiFormat;
 
         var functions: std.ArrayList(abi_types.Function) = .empty;
-        defer functions.deinit(allocator);
         var events: std.ArrayList(abi_types.Event) = .empty;
-        defer events.deinit(allocator);
         var errors: std.ArrayList(abi_types.AbiError) = .empty;
-        defer errors.deinit(allocator);
 
         for (root.array.items) |item| {
             if (item != .object) continue;
@@ -38,14 +47,11 @@ pub const ContractAbi = struct {
             const type_str = jsonGetString(obj, "type") orelse continue;
 
             if (std.mem.eql(u8, type_str, "function")) {
-                const func = try parseFunction(allocator, obj);
-                try functions.append(allocator, func);
+                try functions.append(allocator, try parseFunction(allocator, obj));
             } else if (std.mem.eql(u8, type_str, "event")) {
-                const evt = try parseEvent(allocator, obj);
-                try events.append(allocator, evt);
+                try events.append(allocator, try parseEvent(allocator, obj));
             } else if (std.mem.eql(u8, type_str, "error")) {
-                const err = try parseError(allocator, obj);
-                try errors.append(allocator, err);
+                try errors.append(allocator, try parseError(allocator, obj));
             }
             // Skip constructor, fallback, receive -- not needed for call encoding
         }
@@ -54,30 +60,15 @@ pub const ContractAbi = struct {
             .functions = try functions.toOwnedSlice(allocator),
             .events = try events.toOwnedSlice(allocator),
             .errors = try errors.toOwnedSlice(allocator),
-            .allocator = allocator,
+            .arena = arena,
         };
     }
 
     /// Free all memory allocated by fromJson.
     pub fn deinit(self: *ContractAbi) void {
-        for (self.functions) |func| {
-            freeParams(self.allocator, func.inputs);
-            freeParams(self.allocator, func.outputs);
-            self.allocator.free(func.name);
-        }
-        self.allocator.free(self.functions);
-
-        for (self.events) |evt| {
-            freeParams(self.allocator, evt.inputs);
-            self.allocator.free(evt.name);
-        }
-        self.allocator.free(self.events);
-
-        for (self.errors) |err| {
-            freeParams(self.allocator, err.inputs);
-            self.allocator.free(err.name);
-        }
-        self.allocator.free(self.errors);
+        const gpa = self.arena.child_allocator;
+        self.arena.deinit();
+        gpa.destroy(self.arena);
     }
 
     /// Find a function by name. Returns null if not found.
@@ -105,64 +96,34 @@ pub const ContractAbi = struct {
     }
 };
 
-fn freeParams(allocator: std.mem.Allocator, params: []const AbiParam) void {
-    for (params) |param| {
-        if (param.name.len > 0) allocator.free(param.name);
-        if (param.components.len > 0) {
-            freeParams(allocator, param.components);
-        }
-    }
-    allocator.free(params);
-}
+// All parse helpers below allocate into the caller's arena. There is no
+// per-helper cleanup on error: a failure unwinds to ContractAbi.fromJson, whose
+// errdefer tears down the whole arena, so partially-built entries cannot leak.
 
 fn parseFunction(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !abi_types.Function {
     const name_str = jsonGetString(obj, "name") orelse return error.MissingName;
-    const name = try allocator.dupe(u8, name_str);
-    errdefer allocator.free(name);
-
-    const inputs = try parseInputs(allocator, obj, "inputs");
-    errdefer freeParams(allocator, inputs);
-
-    const outputs = try parseInputs(allocator, obj, "outputs");
-    errdefer freeParams(allocator, outputs);
-
-    const mutability = parseMutability(obj);
-
     return .{
-        .name = name,
-        .inputs = inputs,
-        .outputs = outputs,
-        .state_mutability = mutability,
+        .name = try allocator.dupe(u8, name_str),
+        .inputs = try parseInputs(allocator, obj, "inputs"),
+        .outputs = try parseInputs(allocator, obj, "outputs"),
+        .state_mutability = parseMutability(obj),
     };
 }
 
 fn parseEvent(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !abi_types.Event {
     const name_str = jsonGetString(obj, "name") orelse return error.MissingName;
-    const name = try allocator.dupe(u8, name_str);
-    errdefer allocator.free(name);
-
-    const inputs = try parseInputs(allocator, obj, "inputs");
-    errdefer freeParams(allocator, inputs);
-
-    const anonymous = jsonGetBool(obj, "anonymous") orelse false;
-
     return .{
-        .name = name,
-        .inputs = inputs,
-        .anonymous = anonymous,
+        .name = try allocator.dupe(u8, name_str),
+        .inputs = try parseInputs(allocator, obj, "inputs"),
+        .anonymous = jsonGetBool(obj, "anonymous") orelse false,
     };
 }
 
 fn parseError(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !abi_types.AbiError {
     const name_str = jsonGetString(obj, "name") orelse return error.MissingName;
-    const name = try allocator.dupe(u8, name_str);
-    errdefer allocator.free(name);
-
-    const inputs = try parseInputs(allocator, obj, "inputs");
-
     return .{
-        .name = name,
-        .inputs = inputs,
+        .name = try allocator.dupe(u8, name_str),
+        .inputs = try parseInputs(allocator, obj, "inputs"),
     };
 }
 
@@ -172,19 +133,16 @@ fn parseError(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !abi_types.
 const ComponentError = std.mem.Allocator.Error || error{ MissingType, UnknownType };
 
 fn parseInputs(allocator: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) ComponentError![]const AbiParam {
-    const val = obj.get(key) orelse return try allocator.alloc(AbiParam, 0);
-    if (val != .array) return try allocator.alloc(AbiParam, 0);
+    const val = obj.get(key) orelse return &.{};
+    if (val != .array) return &.{};
 
     var params: std.ArrayList(AbiParam) = .empty;
-    defer params.deinit(allocator);
-
     for (val.array.items) |item| {
         if (item != .object) continue;
-        const param = try parseParam(allocator, item.object);
-        try params.append(allocator, param);
+        try params.append(allocator, try parseParam(allocator, item.object));
     }
 
-    return try params.toOwnedSlice(allocator);
+    return params.toOwnedSlice(allocator);
 }
 
 fn parseParam(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ComponentError!AbiParam {
@@ -193,9 +151,7 @@ fn parseParam(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ComponentEr
     const indexed = jsonGetBool(obj, "indexed") orelse false;
 
     const abi_type = parseType(type_str) orelse return error.UnknownType;
-
     const name = if (name_str.len > 0) try allocator.dupe(u8, name_str) else name_str;
-    errdefer if (name.len > 0) allocator.free(name);
 
     var components: []const AbiParam = &.{};
     if (abi_type == .tuple) {
@@ -664,4 +620,19 @@ test "ContractAbi.fromJson - non-array returns error" {
     const allocator = std.testing.allocator;
     const result = ContractAbi.fromJson(allocator, "{}");
     try std.testing.expectError(error.InvalidAbiFormat, result);
+}
+
+test "ContractAbi.fromJson - no leak when a later entry fails to parse" {
+    // The first function parses and is appended; the second fails on an unknown
+    // input type. With per-allocation cleanup this leaked the already-built
+    // first entry's name/params -- std.testing.allocator turns that into a test
+    // failure. The arena makes the error path leak-free.
+    const allocator = std.testing.allocator;
+    const json =
+        \\[
+        \\  {"type":"function","name":"good","inputs":[{"name":"a","type":"uint256"}],"outputs":[]},
+        \\  {"type":"function","name":"bad","inputs":[{"name":"x","type":"not_a_real_type"}],"outputs":[]}
+        \\]
+    ;
+    try std.testing.expectError(error.UnknownType, ContractAbi.fromJson(allocator, json));
 }

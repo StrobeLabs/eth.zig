@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: these jobs only read the repo (and upload artifacts via the
+# Actions runtime token, which needs no extra GITHUB_TOKEN scope).
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test / Zig ${{ matrix.zig-version }} / ${{ matrix.os }}
@@ -16,8 +21,10 @@ jobs:
         zig-version: ["0.16.0"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: ${{ matrix.zig-version }}
       - name: Run unit tests
@@ -27,8 +34,10 @@ jobs:
     name: Format check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: "0.16.0"
       - name: Check formatting
@@ -41,9 +50,47 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: "0.16.0"
       - name: Build library
         run: zig build
+
+  coverage:
+    name: Coverage (kcov)
+    runs-on: ubuntu-latest
+    # Informational: surfaces which branches the unit tests exercise. Not a
+    # required check -- a coverage dip should not block a merge on its own.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: "0.16.0"
+      - name: Install kcov
+        # kcov was dropped from Ubuntu's repos (gone in 24.04 noble) and ships
+        # no prebuilt binaries, so build a pinned release from source.
+        env:
+          KCOV_VERSION: v43
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ binutils-dev libcurl4-openssl-dev libdw-dev \
+            libiberty-dev zlib1g-dev libssl-dev
+          git clone --depth 1 --branch "$KCOV_VERSION" https://github.com/SimonKagstrom/kcov.git /tmp/kcov
+          cmake -S /tmp/kcov -B /tmp/kcov/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/kcov/build --parallel "$(nproc)"
+          sudo cmake --install /tmp/kcov/build
+      - name: Build unit-test binary
+        run: zig build install-test
+      - name: Run kcov
+        run: kcov --include-pattern=src/ --exclude-pattern=src/crypto/ kcov-out ./zig-out/bin/test
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-report
+          path: kcov-out
