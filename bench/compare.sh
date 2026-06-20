@@ -19,7 +19,9 @@ echo ""
 # -- Step 1: Run eth-zig benchmarks --
 echo "[1/3] Running eth-zig benchmarks (ReleaseFast)..."
 ZIG_OUTPUT=$(cd "$ROOT_DIR" && zig build bench 2>&1)
-echo "$ZIG_OUTPUT" | grep -v "^BENCH_JSON"
+# `|| true`: grep exits 1 if every line were filtered, which would abort the
+# script under `set -o pipefail` even though the bench itself succeeded.
+echo "$ZIG_OUTPUT" | grep -v "^BENCH_JSON" || true
 echo ""
 
 # -- Step 2: Run alloy.rs benchmarks --

@@ -28,8 +28,11 @@ pub const ContractAbi = struct {
 
         // Parse "leaky" into the arena: the JSON DOM lives in the same arena as
         // the parsed ABI, so it is reclaimed by deinit() with everything else.
-        const root = std.json.parseFromSliceLeaky(std.json.Value, allocator, json, .{}) catch {
-            return error.InvalidJson;
+        // Surface allocator exhaustion as itself; only genuine parse failures
+        // collapse to InvalidJson.
+        const root = std.json.parseFromSliceLeaky(std.json.Value, allocator, json, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidJson,
         };
         if (root != .array) return error.InvalidAbiFormat;
 
