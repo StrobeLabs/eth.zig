@@ -12,12 +12,15 @@ description: How to add eth.zig to your Zig project.
 
 **One-liner:**
 
+{/* x-release-please-start-version */}
 ```bash
 zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.7.0
 ```
+{/* x-release-please-end */}
 
 **Or add manually** to your `build.zig.zon`:
 
+{/* x-release-please-start-version */}
 ```zig
 .dependencies = .{
     .eth = .{
@@ -26,6 +29,7 @@ zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.7.0
     },
 },
 ```
+{/* x-release-please-end */}
 
 ## Configure build.zig
 

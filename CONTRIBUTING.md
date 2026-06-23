@@ -73,6 +73,14 @@ Layers 1-3 have zero I/O. Layers 1-5 have zero network dependencies.
 5. Run `zig build test` to make sure all tests pass
 6. Open a PR against `main`
 
+## Commit Messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) for PR titles or squash-merge commit messages so release automation can choose the right SemVer bump and changelog entry.
+
+- `fix:` for bug fixes
+- `feat:` for new features
+- `feat!:` or a `BREAKING CHANGE:` footer for breaking changes
+
 ## Code Style
 
 - Follow `zig fmt` formatting (enforced by CI)
