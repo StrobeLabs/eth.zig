@@ -1365,7 +1365,7 @@ test "send typechecks against a Wallet built over a (dummy) provider" {
     var transport = http_transport_mod.HttpTransport.init(testing.allocator, "http://127.0.0.1:1", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(testing.allocator, &transport);
-    var wallet = wallet_mod.Wallet.init(testing.allocator, private_key, &provider);
+    var wallet = wallet_mod.Wallet.initLocal(testing.allocator, private_key, &provider);
     defer wallet.deinit();
 
     const token = Erc20.at(@splat(0xAB));

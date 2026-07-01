@@ -193,7 +193,7 @@ pub const FlashbotsError = error{
 /// where id(body) = keccak256(toUtf8Bytes(body)) as hex string.
 ///
 /// Returns allocator-owned string: "0x<address>:0x<signature>"
-fn computeAuthHeader(allocator: std.mem.Allocator, auth_signer: signer_mod.Signer, body: []const u8) ![]u8 {
+fn computeAuthHeader(allocator: std.mem.Allocator, auth_signer: signer_mod.LocalSigner, body: []const u8) ![]u8 {
     // 1. Hash the request body: keccak256(body) -> 32 bytes
     const body_hash = keccak.hash(body);
 
@@ -203,7 +203,7 @@ fn computeAuthHeader(allocator: std.mem.Allocator, auth_signer: signer_mod.Signe
 
     // 3. EIP-191 prefix hash of the hex string (as 66-byte UTF-8 message)
     //    = keccak256("\x19Ethereum Signed Message:\n66" + body_hash_hex)
-    const prefixed_hash = signer_mod.Signer.hashPersonalMessage(&body_hash_hex);
+    const prefixed_hash = signer_mod.LocalSigner.hashPersonalMessage(&body_hash_hex);
 
     // 4. Sign the prefixed hash
     const sig = auth_signer.signHash(prefixed_hash) catch return error.SigningFailed;
@@ -236,7 +236,7 @@ fn computeAuthHeader(allocator: std.mem.Allocator, auth_signer: signer_mod.Signe
 pub const Relay = struct {
     allocator: std.mem.Allocator,
     url: []const u8,
-    auth_signer: signer_mod.Signer,
+    auth_signer: signer_mod.LocalSigner,
     client: std.http.Client,
     next_id: u64,
 
@@ -247,13 +247,14 @@ pub const Relay = struct {
         return .{
             .allocator = allocator,
             .url = url,
-            .auth_signer = signer_mod.Signer.init(auth_key),
+            .auth_signer = signer_mod.LocalSigner.init(auth_key),
             .client = .{ .allocator = allocator, .io = io },
             .next_id = 1,
         };
     }
 
     pub fn deinit(self: *Relay) void {
+        self.auth_signer.deinit();
         self.client.deinit();
     }
 
@@ -884,7 +885,7 @@ test "computeAuthHeader format and recovery" {
     const private_key = try hex_mod.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
     const expected_address = try hex_mod.hexToBytesFixed(20, "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
-    const auth_signer = signer_mod.Signer.init(private_key);
+    const auth_signer = signer_mod.LocalSigner.init(private_key);
     const body = "{\"jsonrpc\":\"2.0\",\"method\":\"eth_sendBundle\",\"params\":[{}],\"id\":1}";
 
     const header = try computeAuthHeader(std.testing.allocator, auth_signer, body);
@@ -907,7 +908,7 @@ test "computeAuthHeader format and recovery" {
     // Reconstruct the hash that was signed
     const body_hash = keccak.hash(body);
     const body_hash_hex = hex_mod.bytesToHexBuf(32, &body_hash);
-    const prefixed_hash = signer_mod.Signer.hashPersonalMessage(&body_hash_hex);
+    const prefixed_hash = signer_mod.LocalSigner.hashPersonalMessage(&body_hash_hex);
 
     const recovered = try secp256k1.recoverAddress(sig, prefixed_hash);
     try std.testing.expectEqualSlices(u8, &expected_address, &recovered);
