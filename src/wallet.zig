@@ -30,7 +30,8 @@ pub const WalletError = error{
 /// transaction lifecycle: fill nonce/gas from the provider, construct an
 /// EIP-1559 transaction, sign it, serialize it, and broadcast it.
 pub const Wallet = struct {
-    signer_instance: signer_mod.Signer,
+    /// The account signer (local key or KMS). Owned inline (value semantics).
+    signer: signer_mod.Signer,
     provider: *provider_mod.Provider,
     allocator: std.mem.Allocator,
     chain_id: ?u64,
@@ -41,12 +42,12 @@ pub const Wallet = struct {
     /// frees it. See `nonce_manager.NonceManager`.
     nonce_manager: ?*nonce_manager_mod.NonceManager = null,
 
-    /// Create a new Wallet from a private key and provider.
+    /// Create a new Wallet from a `Signer` (local key or KMS) and a provider.
     /// The chain_id is initially null and will be fetched from the provider
     /// on the first transaction if not set manually.
-    pub fn init(allocator: std.mem.Allocator, private_key: [32]u8, provider: *provider_mod.Provider) Wallet {
+    pub fn init(allocator: std.mem.Allocator, signer: signer_mod.Signer, provider: *provider_mod.Provider) Wallet {
         return .{
-            .signer_instance = signer_mod.Signer.init(private_key),
+            .signer = signer,
             .provider = provider,
             .allocator = allocator,
             .chain_id = null,
@@ -54,14 +55,22 @@ pub const Wallet = struct {
         };
     }
 
-    /// Securely zero the private key. Call when the Wallet is no longer needed.
-    pub fn deinit(self: *Wallet) void {
-        self.signer_instance.deinit();
+    /// Convenience: create a Wallet from a raw local private key (wraps a
+    /// `LocalSigner`). For a KMS-backed key, build a `signer.KmsSigner` and pass
+    /// `signer.Signer.fromKms(&kms_signer)` to `init`.
+    pub fn initLocal(allocator: std.mem.Allocator, private_key: [32]u8, provider: *provider_mod.Provider) Wallet {
+        return init(allocator, signer_mod.Signer.fromPrivateKey(private_key), provider);
     }
 
-    /// Return the Ethereum address derived from this wallet's private key.
+    /// Release any resources held by the signer (e.g. zero a local key, close a
+    /// KMS HTTP client). Call when the Wallet is no longer needed.
+    pub fn deinit(self: *Wallet) void {
+        self.signer.deinit();
+    }
+
+    /// Return the Ethereum address of this wallet's signer.
     pub fn address(self: *const Wallet) ![20]u8 {
-        return try self.signer_instance.address();
+        return try self.signer.address();
     }
 
     /// Ensure chain_id is populated by fetching it from the provider if needed.
@@ -180,7 +189,7 @@ pub const Wallet = struct {
         const msg_hash = try transaction_mod.hashForSigning(self.allocator, wrapped);
 
         // Sign the hash
-        const sig = self.signer_instance.signHash(msg_hash) catch return error.SigningFailed;
+        const sig = self.signer.signHash(msg_hash) catch return error.SigningFailed;
 
         // For EIP-1559 (type 2) transactions, v is the raw recovery id (0 or 1)
         return try transaction_mod.serializeSigned(self.allocator, wrapped, sig.r, sig.s, sig.v);
@@ -198,7 +207,7 @@ test "Wallet.init sets fields correctly" {
     var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
-    var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
+    var wallet = Wallet.initLocal(std.testing.allocator, private_key, &provider);
 
     try std.testing.expect(wallet.chain_id == null);
     try std.testing.expect(wallet.provider == &provider);
@@ -217,7 +226,7 @@ test "Wallet accepts an optional nonce manager without breaking init" {
     var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
-    var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
+    var wallet = Wallet.initLocal(std.testing.allocator, private_key, &provider);
 
     var nonces = nonce_manager_mod.NonceManager.init(&provider, try wallet.address());
     wallet.nonce_manager = &nonces;
@@ -231,7 +240,7 @@ test "Wallet.signTransaction produces valid signed bytes" {
     var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
-    var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
+    var wallet = Wallet.initLocal(std.testing.allocator, private_key, &provider);
     wallet.chain_id = 1;
 
     const tx = transaction_mod.Eip1559Transaction{
@@ -262,7 +271,7 @@ test "Wallet.signTransaction is deterministic" {
     var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
-    var wallet = Wallet.init(std.testing.allocator, private_key, &provider);
+    var wallet = Wallet.initLocal(std.testing.allocator, private_key, &provider);
     wallet.chain_id = 1;
 
     const tx = transaction_mod.Eip1559Transaction{

@@ -17,6 +17,7 @@ pub const abi_decode = @import("abi_decode.zig");
 pub const signature = @import("signature.zig");
 pub const secp256k1 = @import("secp256k1.zig");
 pub const signer = @import("signer.zig");
+pub const kms = @import("kms.zig");
 pub const eip155 = @import("eip155.zig");
 
 // -- Layer 4: Types --
@@ -109,6 +110,7 @@ test {
     _ = @import("signature.zig");
     _ = @import("secp256k1.zig");
     _ = @import("signer.zig");
+    _ = @import("kms.zig");
     _ = @import("eip155.zig");
     // Layer 4
     _ = @import("access_list.zig");
