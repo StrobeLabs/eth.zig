@@ -228,11 +228,13 @@ pub const Signer = union(enum) {
         };
     }
 
-    /// Release any resources held by the underlying signer.
+    /// Release resources owned by this Signer: zeroes a local key. The `kms`
+    /// variant is borrowed (see `fromKms`), so its owner is responsible for
+    /// calling `KmsSigner.deinit` - it is deliberately NOT released here.
     pub fn deinit(self: *Signer) void {
         switch (self.*) {
             .local => |*s| s.deinit(),
-            .kms => |k| k.deinit(),
+            .kms => {},
         }
     }
 };

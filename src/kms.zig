@@ -204,10 +204,18 @@ pub fn resolveCredentials(allocator: std.mem.Allocator, io: std.Io) KmsError!Cre
     }) catch return KmsError.CredentialsUnavailable;
     defer parsed.deinit();
 
+    // Dupe field-by-field with errdefer so an allocation failure mid-way frees
+    // the fields already duplicated instead of leaking them.
+    const access_key_id = try allocator.dupe(u8, parsed.value.AccessKeyId);
+    errdefer allocator.free(access_key_id);
+    const secret_access_key = try allocator.dupe(u8, parsed.value.SecretAccessKey);
+    errdefer allocator.free(secret_access_key);
+    const session_token = if (parsed.value.Token) |t| try allocator.dupe(u8, t) else null;
+
     return .{
-        .access_key_id = try allocator.dupe(u8, parsed.value.AccessKeyId),
-        .secret_access_key = try allocator.dupe(u8, parsed.value.SecretAccessKey),
-        .session_token = if (parsed.value.Token) |t| try allocator.dupe(u8, t) else null,
+        .access_key_id = access_key_id,
+        .secret_access_key = secret_access_key,
+        .session_token = session_token,
     };
 }
 
@@ -395,18 +403,24 @@ fn decodeBase64Field(allocator: std.mem.Allocator, resp: []const u8, comptime fi
 }
 
 /// Decode a DER-encoded ECDSA signature `SEQUENCE { INTEGER r, INTEGER s }`
-/// into 64 big-endian bytes `r||s` (each 32 bytes, left-padded).
+/// into 64 big-endian bytes `r||s` (each 32 bytes, left-padded). Strict: the
+/// SEQUENCE length must span exactly the rest of the input, and both INTEGERs
+/// must consume it fully - trailing or embedded extra bytes are rejected.
 pub fn decodeDerSignature(der: []const u8) KmsError![64]u8 {
     var pos: usize = 0;
     if (der.len < 8 or der[pos] != 0x30) return KmsError.ResponseInvalid;
     pos += 1;
-    // SEQUENCE length (assume short form; ECDSA sigs are < 128 bytes).
-    if (der[pos] & 0x80 != 0) return KmsError.ResponseInvalid;
+    // SEQUENCE length (short form only; a secp256k1 ECDSA sig is < 128 bytes)
+    // and it must match the remaining input exactly.
+    const seq_len = der[pos];
+    if (seq_len & 0x80 != 0) return KmsError.ResponseInvalid;
     pos += 1;
+    if (der.len != pos + seq_len) return KmsError.ResponseInvalid;
 
     var out: [64]u8 = @splat(0);
     pos = try readDerInteger(der, pos, out[0..32]);
-    _ = try readDerInteger(der, pos, out[32..64]);
+    pos = try readDerInteger(der, pos, out[32..64]);
+    if (pos != der.len) return KmsError.ResponseInvalid;
     return out;
 }
 
@@ -418,7 +432,7 @@ fn readDerInteger(der: []const u8, pos_in: usize, dst: *[32]u8) KmsError!usize {
     pos += 1;
     const len = der[pos];
     pos += 1;
-    if (len & 0x80 != 0 or pos + len > der.len) return KmsError.ResponseInvalid;
+    if (len == 0 or len & 0x80 != 0 or pos + len > der.len) return KmsError.ResponseInvalid;
 
     var start = pos;
     var remaining = len;
@@ -497,6 +511,24 @@ test "decodeDerSignature strips leading sign byte" {
     const rs = try decodeDerSignature(&der);
     try std.testing.expectEqual(@as(u8, 0xff), rs[31]);
     try std.testing.expectEqual(@as(u8, 0x80), rs[63]);
+}
+
+test "decodeDerSignature rejects trailing bytes after the sequence" {
+    // Valid minimal sig followed by one garbage byte.
+    const der = [_]u8{ 0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0xff };
+    try std.testing.expectError(KmsError.ResponseInvalid, decodeDerSignature(&der));
+}
+
+test "decodeDerSignature rejects sequence length mismatch" {
+    // SEQUENCE claims 7 bytes of content but only 6 follow.
+    const der = [_]u8{ 0x30, 0x07, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02 };
+    try std.testing.expectError(KmsError.ResponseInvalid, decodeDerSignature(&der));
+}
+
+test "decodeDerSignature rejects zero-length integers" {
+    // r is INTEGER of length 0 (padded with an extra s byte to pass the min-len gate).
+    const der = [_]u8{ 0x30, 0x07, 0x02, 0x00, 0x02, 0x03, 0x01, 0x02, 0x03 };
+    try std.testing.expectError(KmsError.ResponseInvalid, decodeDerSignature(&der));
 }
 
 test "extractUncompressedPubkey pulls the trailing 65 bytes" {

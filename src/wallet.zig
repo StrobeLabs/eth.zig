@@ -62,8 +62,9 @@ pub const Wallet = struct {
         return init(allocator, signer_mod.Signer.fromPrivateKey(private_key), provider);
     }
 
-    /// Release any resources held by the signer (e.g. zero a local key, close a
-    /// KMS HTTP client). Call when the Wallet is no longer needed.
+    /// Release signer resources owned by this wallet (zeroes a local key). A
+    /// KMS signer is borrowed - its owner calls `KmsSigner.deinit` separately.
+    /// Call when the Wallet is no longer needed.
     pub fn deinit(self: *Wallet) void {
         self.signer.deinit();
     }

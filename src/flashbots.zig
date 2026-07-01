@@ -254,6 +254,7 @@ pub const Relay = struct {
     }
 
     pub fn deinit(self: *Relay) void {
+        self.auth_signer.deinit();
         self.client.deinit();
     }
 
