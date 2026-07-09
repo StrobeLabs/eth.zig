@@ -22,7 +22,6 @@ pub const SendTransactionOpts = struct {
 
 pub const WalletError = error{
     ChainIdNotSet,
-    SigningFailed,
     ReceiptNotFound,
 };
 
@@ -155,8 +154,32 @@ pub const Wallet = struct {
         const signed_bytes = try self.signTransaction(eip1559_tx);
         defer self.allocator.free(signed_bytes);
 
-        // Broadcast
-        return try self.provider.sendRawTransaction(signed_bytes);
+        // Broadcast. A JSON-RPC error response does not prove the transaction
+        // missed the chain: the request can be delivered and the connection die
+        // before the response, after which a duplicate delivery is answered
+        // with an error (e.g. "already known") while the first copy mines.
+        // The hash is determined by the signed bytes, so on RpcError poll
+        // briefly for a receipt and report success if the transaction landed.
+        const tx_hash = keccak.hash(signed_bytes);
+        _ = self.provider.sendRawTransaction(signed_bytes) catch |err| {
+            if (err == error.RpcError and self.transactionLanded(tx_hash)) {
+                return tx_hash;
+            }
+            return err;
+        };
+        return tx_hash;
+    }
+
+    /// Whether a transaction has a receipt, polling a few times to let an
+    /// in-flight copy mine. Used to double-check ambiguous broadcast failures.
+    fn transactionLanded(self: *Wallet, tx_hash: [32]u8) bool {
+        var attempt: u32 = 0;
+        while (attempt < 3) : (attempt += 1) {
+            if (attempt > 0) runtime.sleepMs(self.provider.io(), 1_000);
+            const receipt = self.provider.getTransactionReceipt(tx_hash) catch continue;
+            if (receipt != null) return true;
+        }
+        return false;
     }
 
     /// Sign and send a transaction, then wait for the receipt by polling.
@@ -189,8 +212,11 @@ pub const Wallet = struct {
         // Hash the transaction for signing
         const msg_hash = try transaction_mod.hashForSigning(self.allocator, wrapped);
 
-        // Sign the hash
-        const sig = self.signer.signHash(msg_hash) catch return error.SigningFailed;
+        // Sign the hash. Propagate the signer's own error: for a KMS signer
+        // this distinguishes a failed HTTPS call (RequestFailed) from bad
+        // credentials (Unauthorized) or a recovery mismatch (AddressMismatch),
+        // which a blanket SigningFailed used to hide.
+        const sig = try self.signer.signHash(msg_hash);
 
         // For EIP-1559 (type 2) transactions, v is the raw recovery id (0 or 1)
         return try transaction_mod.serializeSigned(self.allocator, wrapped, sig.r, sig.s, sig.v);
@@ -294,6 +320,43 @@ test "Wallet.signTransaction is deterministic" {
     defer std.testing.allocator.free(signed2);
 
     try std.testing.expectEqualSlices(u8, signed1, signed2);
+}
+
+// `sendTransaction` reports an ambiguous broadcast failure as landed by
+// polling for the receipt of a hash it computes locally, before broadcasting,
+// as keccak256 of the signed bytes. This locks that hash to the canonical
+// EIP-1559 transaction hash, cross-checked against viem (an independent
+// implementation) for the well-known Anvil key #0.
+test "signed-tx keccak matches the canonical transaction hash" {
+    const hex = @import("hex.zig");
+    const private_key = try hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
+    var wallet = Wallet.initLocal(std.testing.allocator, private_key, &provider);
+    wallet.chain_id = 1;
+
+    const tx = transaction_mod.Eip1559Transaction{
+        .chain_id = 1,
+        .nonce = 5,
+        .max_priority_fee_per_gas = 2_000_000_000,
+        .max_fee_per_gas = 50_000_000_000,
+        .gas_limit = 100_000,
+        .to = @as([20]u8, @splat(0xaa)),
+        .value = 0,
+        .data = &.{ 0xa9, 0x05, 0x9c, 0xbb },
+        .access_list = &.{},
+    };
+
+    const signed = try wallet.signTransaction(tx);
+    defer std.testing.allocator.free(signed);
+
+    const expected_signed = try hex.hexToBytesFixed(115, "02f87001058477359400850ba43b7400830186a094aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8084a9059cbbc001a096c40667fc8d708d1e2c548918533b952881d0f92aad790fa0e5d5d7fe2e0643a06e7d62e317516b359c31c63dbb0e9fb73d06ecf473f5f013211cdab71db3198c");
+    try std.testing.expectEqualSlices(u8, &expected_signed, signed);
+
+    const expected_hash = try hex.hexToBytesFixed(32, "7a8921f4543662f78b5ff4917258d8a32ce704a3df7dc9789b24000dce29afab");
+    try std.testing.expectEqualSlices(u8, &expected_hash, &keccak.hash(signed));
 }
 
 test "SendTransactionOpts defaults" {
