@@ -119,9 +119,6 @@ pub const Client = struct {
         });
         defer self.allocator.free(authorization);
 
-        var response_body: std.Io.Writer.Allocating = .init(self.allocator);
-        errdefer response_body.deinit();
-
         var header_buf: [5]std.http.Header = undefined;
         var n: usize = 0;
         header_buf[n] = .{ .name = "Content-Type", .value = "application/x-amz-json-1.1" };
@@ -137,24 +134,37 @@ pub const Client = struct {
             n += 1;
         }
 
-        const result = self.http.fetch(.{
-            .location = .{ .url = url },
-            .method = .POST,
-            .payload = body,
-            .extra_headers = header_buf[0..n],
-            .response_writer = &response_body.writer,
-        }) catch {
+        // Signing calls can be minutes apart, and KMS closes idle keep-alive
+        // connections well before that, so the pooled connection is routinely
+        // dead by the next call and the first write fails. The failed fetch
+        // discards that connection; one retry dials fresh.
+        var attempt: u2 = 0;
+        while (true) : (attempt += 1) {
+            var response_body: std.Io.Writer.Allocating = .init(self.allocator);
+
+            const result = self.http.fetch(.{
+                .location = .{ .url = url },
+                .method = .POST,
+                .payload = body,
+                .extra_headers = header_buf[0..n],
+                .response_writer = &response_body.writer,
+            }) catch {
+                response_body.deinit();
+                if (attempt == 0) continue;
+                return KmsError.RequestFailed;
+            };
+
+            if (result.status == .ok) {
+                errdefer response_body.deinit();
+                return response_body.toOwnedSlice();
+            }
+
             response_body.deinit();
-            return KmsError.RequestFailed;
-        };
-
-        if (result.status == .ok) return response_body.toOwnedSlice();
-
-        response_body.deinit();
-        return switch (result.status) {
-            .forbidden, .unauthorized => KmsError.Unauthorized,
-            else => KmsError.RequestFailed,
-        };
+            return switch (result.status) {
+                .forbidden, .unauthorized => KmsError.Unauthorized,
+                else => KmsError.RequestFailed,
+            };
+        }
     }
 };
 
