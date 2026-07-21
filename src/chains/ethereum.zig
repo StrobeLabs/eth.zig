@@ -32,7 +32,6 @@ pub const mainnet: Chain = .{
         .{ .name = "Etherscan", .url = "https://etherscan.io" },
     },
     .multicall3 = multicall3_contract,
-    .ens_registry = ens_registry_contract,
     .testnet = false,
 };
 
@@ -86,12 +85,6 @@ test "mainnet multicall3 address" {
     try std.testing.expect(std.mem.eql(u8, &mainnet.multicall3.?.address, &expected));
 }
 
-test "mainnet ens registry" {
-    const expected = addressFromHex("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
-    try std.testing.expect(mainnet.ens_registry != null);
-    try std.testing.expect(std.mem.eql(u8, &mainnet.ens_registry.?.address, &expected));
-}
-
 test "mainnet block explorer" {
     try std.testing.expectEqual(@as(usize, 1), mainnet.block_explorers.len);
     try std.testing.expectEqualStrings("https://etherscan.io", mainnet.block_explorers[0].url);
@@ -107,12 +100,4 @@ test "holesky is testnet" {
     try std.testing.expectEqual(@as(u64, 17000), holesky.id);
     try std.testing.expectEqualStrings("Holesky", holesky.name);
     try std.testing.expectEqual(true, holesky.testnet);
-}
-
-test "sepolia has no ens_registry" {
-    try std.testing.expect(sepolia.ens_registry == null);
-}
-
-test "holesky has no ens_registry" {
-    try std.testing.expect(holesky.ens_registry == null);
 }
