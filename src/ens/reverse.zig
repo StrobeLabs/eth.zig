@@ -98,12 +98,10 @@ const http_transport_mod = @import("../http_transport.zig");
 const provider_mod = @import("../provider.zig");
 const runtime_mod = @import("../runtime.zig");
 
-const MAINNET_RPC_URL = "https://ethereum-rpc.publicnode.com";
-
 test "lookupAddress devrel.enslabs.eth on mainnet via Universal Resolver" {
     const allocator = std.testing.allocator;
 
-    var transport = http_transport_mod.HttpTransport.init(allocator, MAINNET_RPC_URL, runtime_mod.blockingIo());
+    var transport = http_transport_mod.HttpTransport.init(allocator, resolver_mod.mainnetTestRpcUrl(), runtime_mod.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 

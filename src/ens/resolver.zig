@@ -420,12 +420,23 @@ const http_transport_mod = @import("../http_transport.zig");
 const provider_mod = @import("../provider.zig");
 const runtime_mod = @import("../runtime.zig");
 
-const MAINNET_RPC_URL = "https://ethereum-rpc.publicnode.com";
+const default_mainnet_rpc_url = "https://ethereum-rpc.publicnode.com";
+
+/// RPC URL for live ENS mainnet tests.
+/// Set `ETH_RPC_URL` to override (e.g. an Alchemy/Infura endpoint); otherwise
+/// falls back to the publicnode default.
+pub fn mainnetTestRpcUrl() []const u8 {
+    if (std.c.getenv("ETH_RPC_URL")) |raw| {
+        const url = std.mem.span(raw);
+        if (url.len > 0) return url;
+    }
+    return default_mainnet_rpc_url;
+}
 
 test "resolve ur.integration-tests.eth on mainnet via Universal Resolver" {
     const allocator = std.testing.allocator;
 
-    var transport = http_transport_mod.HttpTransport.init(allocator, MAINNET_RPC_URL, runtime_mod.blockingIo());
+    var transport = http_transport_mod.HttpTransport.init(allocator, mainnetTestRpcUrl(), runtime_mod.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
@@ -444,7 +455,7 @@ test "resolve ur.integration-tests.eth on mainnet via Universal Resolver" {
 test "getText ur.integration-tests.eth description on mainnet via Universal Resolver" {
     const allocator = std.testing.allocator;
 
-    var transport = http_transport_mod.HttpTransport.init(allocator, MAINNET_RPC_URL, runtime_mod.blockingIo());
+    var transport = http_transport_mod.HttpTransport.init(allocator, mainnetTestRpcUrl(), runtime_mod.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
@@ -481,7 +492,7 @@ test "buildContentHashCalldata encodes correctly" {
 test "getContentHash ur.integration-tests.eth on mainnet via Universal Resolver" {
     const allocator = std.testing.allocator;
 
-    var transport = http_transport_mod.HttpTransport.init(allocator, MAINNET_RPC_URL, runtime_mod.blockingIo());
+    var transport = http_transport_mod.HttpTransport.init(allocator, mainnetTestRpcUrl(), runtime_mod.blockingIo());
     defer transport.deinit();
     var provider = provider_mod.Provider.init(allocator, &transport);
 
