@@ -18,11 +18,6 @@ const multicall3_contract = Contract{
     .block_created = 14353601,
 };
 
-const ens_registry_contract = Contract{
-    .address = addressFromHex("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"),
-    .block_created = 9380380,
-};
-
 pub const mainnet: Chain = .{
     .id = 1,
     .name = "Ethereum",
