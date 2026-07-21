@@ -11,15 +11,13 @@ const AbiValue = abi_encode.AbiValue;
 const AbiType = abi_types.AbiType;
 const Address = primitives.Address;
 
-/// ENS Registry contract address on Ethereum mainnet.
-/// 0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
-pub const ENS_REGISTRY: Address = .{
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x2E, 0x07, 0x4e, 0xC6,
-    0x9A, 0x0D, 0xFb, 0x29, 0x97, 0xBA, 0x6C, 0x7d, 0x2e, 0x1e,
+/// ENS Universal Resolver (mainnet / testnets proxy).
+/// 0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe
+/// Canonical entrypoint for forward resolution (ENSIP-10).
+pub const UNIVERSAL_RESOLVER: Address = .{
+    0xeE, 0xeE, 0xEE, 0xeE, 0x14, 0xD7, 0x18, 0xC2, 0xB4, 0x7D,
+    0x99, 0x23, 0xDe, 0xab, 0x13, 0x35, 0xE1, 0x44, 0xEe, 0xEe,
 };
-
-/// Function selector for resolver(bytes32): 0x0178b8bf
-const RESOLVER_SELECTOR: [4]u8 = keccak.selector("resolver(bytes32)");
 
 /// Function selector for addr(bytes32): 0x3b3b57de
 const ADDR_SELECTOR: [4]u8 = keccak.selector("addr(bytes32)");
@@ -27,129 +25,121 @@ const ADDR_SELECTOR: [4]u8 = keccak.selector("addr(bytes32)");
 /// Function selector for text(bytes32,string): 0x59d1d43c
 const TEXT_SELECTOR: [4]u8 = keccak.selector("text(bytes32,string)");
 
+/// Function selector for resolve(bytes,bytes) on the Universal Resolver.
+const RESOLVE_SELECTOR: [4]u8 = keccak.selector("resolve(bytes,bytes)");
+
 /// Errors that can occur during ENS resolution.
 pub const ResolveError = error{
     /// The ABI-encoded response was too short or malformed.
     InvalidResponse,
     /// No resolver is set for this name.
     NoResolver,
+    /// A DNS label exceeded 63 bytes.
+    LabelTooLong,
     /// Memory allocation failure.
     OutOfMemory,
     /// The provider call failed.
     ProviderError,
 };
 
-/// Resolve an ENS name to an Ethereum address.
+/// Resolve an ENS name to an Ethereum address via the Universal Resolver.
 ///
-/// Performs two on-chain lookups:
-/// 1. Calls the ENS registry to get the resolver address for the name.
-/// 2. Calls the resolver's addr(bytes32) function to get the address.
+/// Calls `resolve(bytes name, bytes data)` on the Universal Resolver with
+/// DNS-encoded `name` and an `addr(bytes32)` calldata payload (ENSIP-10).
+/// This is the ENSv2-ready path: names like `ur.integration-tests.eth`
+/// resolve to `0x2222…2222` here, whereas the legacy registry/`addr` path
+/// returns `0x1111…1111`.
 ///
-/// Returns null if the name has no resolver or resolves to the zero address.
+/// Returns null if the name resolves to the zero address.
+/// Does not yet follow EIP-3668 OffchainLookup reverts.
 pub fn resolve(allocator: std.mem.Allocator, provider: anytype, name: []const u8) !?Address {
     const node = namehash_mod.namehash(name);
 
-    // Step 1: Get the resolver address from the ENS registry.
-    const resolver_addr = try getResolver(allocator, provider, node) orelse return null;
-
-    // Step 2: Call addr(bytes32) on the resolver.
     const addr_calldata = try buildAddrCalldata(allocator, node);
     defer allocator.free(addr_calldata);
 
-    const addr_response = provider.call(resolver_addr, addr_calldata) catch return ResolveError.ProviderError;
-    defer allocator.free(addr_response);
+    const result_bytes = try callUniversalResolve(allocator, provider, name, addr_calldata);
+    defer allocator.free(result_bytes);
 
-    if (addr_response.len < 32) return ResolveError.InvalidResponse;
+    if (result_bytes.len < 32) return ResolveError.InvalidResponse;
 
-    // Decode the address from the response (address is in bytes 12..32 of the first word).
-    const result_types = [_]AbiType{.address};
-    const decoded = abi_decode.decodeValues(addr_response, &result_types, allocator) catch
+    const addr_types = [_]AbiType{.address};
+    const addr_decoded = abi_decode.decodeValues(result_bytes, &addr_types, allocator) catch
         return ResolveError.InvalidResponse;
-    defer abi_decode.freeValues(decoded, allocator);
+    defer abi_decode.freeValues(addr_decoded, allocator);
 
-    if (decoded.len < 1) return ResolveError.InvalidResponse;
+    if (addr_decoded.len < 1) return ResolveError.InvalidResponse;
 
-    const addr = decoded[0].address;
-
-    // Return null if the resolved address is the zero address.
+    const addr = addr_decoded[0].address;
     if (std.mem.eql(u8, &addr, &primitives.ZERO_ADDRESS)) return null;
 
     return addr;
 }
 
-/// Look up a text record for an ENS name.
+/// Look up a text record for an ENS name via the Universal Resolver.
 ///
-/// Calls text(bytes32,string) on the name's resolver.
-/// Returns null if there is no resolver or the text record is empty.
+/// Calls `resolve(bytes name, bytes data)` with a `text(bytes32,string)`
+/// payload (ENSIP-10). Returns null if the text record is empty.
 /// Caller owns the returned memory.
+/// Does not yet follow EIP-3668 OffchainLookup reverts.
 pub fn getText(allocator: std.mem.Allocator, provider: anytype, name: []const u8, key: []const u8) !?[]u8 {
     const node = namehash_mod.namehash(name);
 
-    // Step 1: Get the resolver address from the ENS registry.
-    const resolver_addr = try getResolver(allocator, provider, node) orelse return null;
-
-    // Step 2: Call text(bytes32,string) on the resolver.
     const text_calldata = try buildTextCalldata(allocator, node, key);
     defer allocator.free(text_calldata);
 
-    const text_response = provider.call(resolver_addr, text_calldata) catch return ResolveError.ProviderError;
-    defer allocator.free(text_response);
+    const result_bytes = try callUniversalResolve(allocator, provider, name, text_calldata);
+    defer allocator.free(result_bytes);
 
-    if (text_response.len < 64) return ResolveError.InvalidResponse;
+    if (result_bytes.len < 64) return ResolveError.InvalidResponse;
 
-    // Decode the string from the response.
     const result_types = [_]AbiType{.string};
-    const decoded = abi_decode.decodeValues(text_response, &result_types, allocator) catch
+    const decoded = abi_decode.decodeValues(result_bytes, &result_types, allocator) catch
         return ResolveError.InvalidResponse;
     defer abi_decode.freeValues(decoded, allocator);
 
     if (decoded.len < 1) return ResolveError.InvalidResponse;
 
     const text = decoded[0].string;
-
-    // Return null if the text record is empty.
     if (text.len == 0) return null;
 
-    // Copy the string since we are freeing the decoded values.
     const result = try allocator.alloc(u8, text.len);
     @memcpy(result, text);
     return result;
 }
 
-/// Get the resolver address for a given node from the ENS registry.
-/// Returns null if the resolver is the zero address.
-fn getResolver(allocator: std.mem.Allocator, provider: anytype, node: [32]u8) !?Address {
-    const resolver_calldata = try buildResolverCalldata(allocator, node);
-    defer allocator.free(resolver_calldata);
+/// Call Universal Resolver `resolve(bytes,bytes)` and return the inner `bytes` result.
+/// Caller owns the returned memory.
+fn callUniversalResolve(
+    allocator: std.mem.Allocator,
+    provider: anytype,
+    name: []const u8,
+    data: []const u8,
+) ![]u8 {
+    const dns_name = namehash_mod.dnsEncode(allocator, name) catch |err| switch (err) {
+        error.LabelTooLong => return ResolveError.LabelTooLong,
+        error.OutOfMemory => return ResolveError.OutOfMemory,
+    };
+    defer allocator.free(dns_name);
 
-    const resolver_response = provider.call(ENS_REGISTRY, resolver_calldata) catch return ResolveError.ProviderError;
-    defer allocator.free(resolver_response);
+    const resolve_calldata = try buildResolveCalldata(allocator, dns_name, data);
+    defer allocator.free(resolve_calldata);
 
-    if (resolver_response.len < 32) return ResolveError.InvalidResponse;
+    const response = provider.call(UNIVERSAL_RESOLVER, resolve_calldata) catch return ResolveError.ProviderError;
+    defer allocator.free(response);
 
-    // Decode the address from the response.
-    const result_types = [_]AbiType{.address};
-    const decoded = abi_decode.decodeValues(resolver_response, &result_types, allocator) catch
+    // resolve(bytes,bytes) returns (bytes data, address resolver)
+    const result_types = [_]AbiType{ .bytes, .address };
+    const decoded = abi_decode.decodeValues(response, &result_types, allocator) catch
         return ResolveError.InvalidResponse;
     defer abi_decode.freeValues(decoded, allocator);
 
     if (decoded.len < 1) return ResolveError.InvalidResponse;
 
-    const resolver_addr = decoded[0].address;
-
-    // Return null if the resolver address is zero (no resolver set).
-    if (std.mem.eql(u8, &resolver_addr, &primitives.ZERO_ADDRESS)) return null;
-
-    return resolver_addr;
-}
-
-/// Build the ABI-encoded calldata for resolver(bytes32 node).
-fn buildResolverCalldata(allocator: std.mem.Allocator, node: [32]u8) ![]u8 {
-    var fb = AbiValue.FixedBytes{ .len = 32 };
-    @memcpy(&fb.data, &node);
-
-    const values = [_]AbiValue{.{ .fixed_bytes = fb }};
-    return abi_encode.encodeFunctionCall(allocator, RESOLVER_SELECTOR, &values);
+    const result_bytes = decoded[0].bytes;
+    const copy = try allocator.alloc(u8, result_bytes.len);
+    @memcpy(copy, result_bytes);
+    return copy;
 }
 
 /// Build the ABI-encoded calldata for addr(bytes32 node).
@@ -173,19 +163,22 @@ fn buildTextCalldata(allocator: std.mem.Allocator, node: [32]u8, key: []const u8
     return abi_encode.encodeFunctionCall(allocator, TEXT_SELECTOR, &values);
 }
 
+/// Build the ABI-encoded calldata for Universal Resolver resolve(bytes name, bytes data).
+fn buildResolveCalldata(allocator: std.mem.Allocator, dns_name: []const u8, data: []const u8) ![]u8 {
+    const values = [_]AbiValue{
+        .{ .bytes = dns_name },
+        .{ .bytes = data },
+    };
+    return abi_encode.encodeFunctionCall(allocator, RESOLVE_SELECTOR, &values);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
-test "ENS_REGISTRY address is correct" {
-    const expected = try hex_mod.hexToBytesFixed(20, "00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
-    try std.testing.expectEqualSlices(u8, &expected, &ENS_REGISTRY);
-}
-
-test "resolver selector is correct" {
-    // keccak256("resolver(bytes32)")[0:4] = 0x0178b8bf
-    const expected = [_]u8{ 0x01, 0x78, 0xb8, 0xbf };
-    try std.testing.expectEqualSlices(u8, &expected, &RESOLVER_SELECTOR);
+test "UNIVERSAL_RESOLVER address is correct" {
+    const expected = try hex_mod.hexToBytesFixed(20, "eEeEEEeE14D718C2B47D9923Deab1335E144EeEe");
+    try std.testing.expectEqualSlices(u8, &expected, &UNIVERSAL_RESOLVER);
 }
 
 test "addr selector is correct" {
@@ -200,20 +193,10 @@ test "text selector is correct" {
     try std.testing.expectEqualSlices(u8, &expected, &TEXT_SELECTOR);
 }
 
-test "buildResolverCalldata encodes correctly" {
-    const allocator = std.testing.allocator;
-    const node = namehash_mod.namehash("vitalik.eth");
-    const calldata = try buildResolverCalldata(allocator, node);
-    defer allocator.free(calldata);
-
-    // Should be 4 (selector) + 32 (bytes32 node) = 36 bytes
-    try std.testing.expectEqual(@as(usize, 36), calldata.len);
-
-    // First 4 bytes are the resolver selector
-    try std.testing.expectEqualSlices(u8, &RESOLVER_SELECTOR, calldata[0..4]);
-
-    // Next 32 bytes are the node hash
-    try std.testing.expectEqualSlices(u8, &node, calldata[4..36]);
+test "resolve selector is correct" {
+    // keccak256("resolve(bytes,bytes)")[0:4] = 0x9061b923
+    const expected = [_]u8{ 0x90, 0x61, 0xb9, 0x23 };
+    try std.testing.expectEqualSlices(u8, &expected, &RESOLVE_SELECTOR);
 }
 
 test "buildAddrCalldata encodes correctly" {
@@ -275,4 +258,62 @@ test "buildTextCalldata with longer key" {
 
     // String content
     try std.testing.expectEqualSlices(u8, "com.twitter", calldata[100..111]);
+}
+
+test "buildResolveCalldata encodes correctly" {
+    const allocator = std.testing.allocator;
+    const dns_name = try namehash_mod.dnsEncode(allocator, "foo.eth");
+    defer allocator.free(dns_name);
+    const node = namehash_mod.namehash("foo.eth");
+    const addr_data = try buildAddrCalldata(allocator, node);
+    defer allocator.free(addr_data);
+
+    const calldata = try buildResolveCalldata(allocator, dns_name, addr_data);
+    defer allocator.free(calldata);
+
+    try std.testing.expectEqualSlices(u8, &RESOLVE_SELECTOR, calldata[0..4]);
+    // Two dynamic bytes args: head is 2 offsets (64 bytes) after selector
+    try std.testing.expect(calldata.len > 4 + 64);
+}
+
+const http_transport_mod = @import("../http_transport.zig");
+const provider_mod = @import("../provider.zig");
+const runtime_mod = @import("../runtime.zig");
+
+const MAINNET_RPC_URL = "https://ethereum-rpc.publicnode.com";
+
+test "resolve ur.integration-tests.eth on mainnet via Universal Resolver" {
+    const allocator = std.testing.allocator;
+
+    var transport = http_transport_mod.HttpTransport.init(allocator, MAINNET_RPC_URL, runtime_mod.blockingIo());
+    defer transport.deinit();
+    var provider = provider_mod.Provider.init(allocator, &transport);
+
+    // ENSv2 readiness sentinel: Universal Resolver returns 0x2222…2222;
+    // the legacy registry/addr path returns 0x1111…1111.
+    const addr = resolve(allocator, &provider, "ur.integration-tests.eth") catch |err| {
+        if (err == ResolveError.ProviderError) return;
+        return err;
+    };
+
+    const expected = try hex_mod.hexToBytesFixed(20, "2222222222222222222222222222222222222222");
+    try std.testing.expect(addr != null);
+    try std.testing.expectEqualSlices(u8, &expected, &addr.?);
+}
+
+test "getText ur.integration-tests.eth description on mainnet via Universal Resolver" {
+    const allocator = std.testing.allocator;
+
+    var transport = http_transport_mod.HttpTransport.init(allocator, MAINNET_RPC_URL, runtime_mod.blockingIo());
+    defer transport.deinit();
+    var provider = provider_mod.Provider.init(allocator, &transport);
+
+    const text = getText(allocator, &provider, "ur.integration-tests.eth", "description") catch |err| {
+        if (err == ResolveError.ProviderError) return;
+        return err;
+    };
+    defer if (text) |t| allocator.free(t);
+
+    try std.testing.expect(text != null);
+    try std.testing.expectEqualStrings("✅️ Universal Resolver", text.?);
 }

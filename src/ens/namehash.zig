@@ -37,11 +37,31 @@ pub fn namehash(name: []const u8) [32]u8 {
     return node;
 }
 
-/// Compute the labelhash (keccak256 of a single label).
-/// This is used for registering second-level domains.
-/// e.g., labelhash("eth") = keccak256("eth")
-pub fn labelhash(label: []const u8) [32]u8 {
-    return keccak.hash(label);
+/// DNS-encode an ENS name for Universal Resolver calls (ENSIP-10).
+///
+/// Each label is prefixed with its length byte, then a trailing 0x00.
+/// Empty labels (e.g. from a trailing `.`) are skipped.
+/// Returns an error if any label is longer than 63 bytes.
+/// Caller owns the returned memory.
+pub fn dnsEncode(allocator: std.mem.Allocator, name: []const u8) error{ OutOfMemory, LabelTooLong }![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i <= name.len) : (i += 1) {
+        if (i == name.len or name[i] == '.') {
+            const label = name[start..i];
+            if (label.len > 0) {
+                if (label.len > 63) return error.LabelTooLong;
+                try buf.append(allocator, @intCast(label.len));
+                try buf.appendSlice(allocator, label);
+            }
+            start = i + 1;
+        }
+    }
+    try buf.append(allocator, 0);
+    return try buf.toOwnedSlice(allocator);
 }
 
 // ============================================================================
@@ -104,18 +124,6 @@ test "namehash deep subdomain" {
     try std.testing.expectEqualSlices(u8, &node, &result);
 }
 
-test "labelhash eth" {
-    const result = labelhash("eth");
-    const expected = keccak.hash("eth");
-    try std.testing.expectEqualSlices(u8, &expected, &result);
-}
-
-test "labelhash is just keccak256 of the label" {
-    const result = labelhash("vitalik");
-    const expected = keccak.hash("vitalik");
-    try std.testing.expectEqualSlices(u8, &expected, &result);
-}
-
 test "namehash single label (no dots)" {
     // A single label like "eth" should produce: keccak256(0x00..00 ++ keccak256("eth"))
     const result = namehash("eth");
@@ -159,4 +167,42 @@ test "namehash trailing dot handling" {
     const with_dot = namehash("foo.eth.");
     const without_dot = namehash("foo.eth");
     try std.testing.expectEqualSlices(u8, &without_dot, &with_dot);
+}
+
+test "dnsEncode ur.integration-tests.eth" {
+    const allocator = std.testing.allocator;
+    const encoded = try dnsEncode(allocator, "ur.integration-tests.eth");
+    defer allocator.free(encoded);
+
+    const expected = try hex.hexToBytesFixed(26, "02757211696e746567726174696f6e2d74657374730365746800");
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "dnsEncode yashgoyal.eth" {
+    const allocator = std.testing.allocator;
+    const encoded = try dnsEncode(allocator, "yashgoyal.eth");
+    defer allocator.free(encoded);
+
+    // 9 "yashgoyal" + 3 "eth" + terminator = 1+9 + 1+3 + 1 = 15
+    try std.testing.expectEqual(@as(usize, 15), encoded.len);
+    try std.testing.expectEqual(@as(u8, 9), encoded[0]);
+    try std.testing.expectEqualSlices(u8, "yashgoyal", encoded[1..10]);
+    try std.testing.expectEqual(@as(u8, 3), encoded[10]);
+    try std.testing.expectEqualSlices(u8, "eth", encoded[11..14]);
+    try std.testing.expectEqual(@as(u8, 0), encoded[14]);
+}
+
+test "dnsEncode skips empty labels" {
+    const allocator = std.testing.allocator;
+    const with_dot = try dnsEncode(allocator, "foo.eth.");
+    defer allocator.free(with_dot);
+    const without_dot = try dnsEncode(allocator, "foo.eth");
+    defer allocator.free(without_dot);
+    try std.testing.expectEqualSlices(u8, without_dot, with_dot);
+}
+
+test "dnsEncode rejects labels longer than 63" {
+    const allocator = std.testing.allocator;
+    const long_label = "a" ** 64 ++ ".eth";
+    try std.testing.expectError(error.LabelTooLong, dnsEncode(allocator, long_label));
 }
