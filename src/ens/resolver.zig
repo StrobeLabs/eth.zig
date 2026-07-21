@@ -25,8 +25,14 @@ const ADDR_SELECTOR: [4]u8 = keccak.selector("addr(bytes32)");
 /// Function selector for text(bytes32,string): 0x59d1d43c
 const TEXT_SELECTOR: [4]u8 = keccak.selector("text(bytes32,string)");
 
+/// Function selector for contenthash(bytes32): 0xbc1c58d1
+const CONTENTHASH_SELECTOR: [4]u8 = keccak.selector("contenthash(bytes32)");
+
 /// Function selector for resolve(bytes,bytes) on the Universal Resolver.
 const RESOLVE_SELECTOR: [4]u8 = keccak.selector("resolve(bytes,bytes)");
+
+/// Bitcoin/IPFS Base58 alphabet (omits 0, O, I, l).
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 /// Errors that can occur during ENS resolution.
 pub const ResolveError = error{
@@ -36,6 +42,8 @@ pub const ResolveError = error{
     NoResolver,
     /// A DNS label exceeded 63 bytes.
     LabelTooLong,
+    /// Contenthash codec is missing or not supported.
+    UnsupportedContentHash,
     /// Memory allocation failure.
     OutOfMemory,
     /// The provider call failed.
@@ -108,6 +116,78 @@ pub fn getText(allocator: std.mem.Allocator, provider: anytype, name: []const u8
     return result;
 }
 
+/// Look up the EIP-1577 contenthash for an ENS name via the Universal Resolver.
+///
+/// Calls `resolve(bytes name, bytes data)` with a `contenthash(bytes32)` payload,
+/// then decodes common codecs to a URI:
+/// - IPFS (`0xe3010170…`) → `ipfs://Qm…`
+/// - IPNS (`0xe5010172…`) → `ipns://…`
+/// - Swarm (`0xe40101fa011b20…`) → `bzz://…`
+///
+/// Returns null if no contenthash is set.
+/// Caller owns the returned memory.
+/// Does not yet follow EIP-3668 OffchainLookup reverts.
+pub fn getContentHash(allocator: std.mem.Allocator, provider: anytype, name: []const u8) !?[]u8 {
+    const node = namehash_mod.namehash(name);
+
+    const ch_calldata = try buildContentHashCalldata(allocator, node);
+    defer allocator.free(ch_calldata);
+
+    const result_bytes = try callUniversalResolve(allocator, provider, name, ch_calldata);
+    defer allocator.free(result_bytes);
+
+    if (result_bytes.len < 64) return ResolveError.InvalidResponse;
+
+    const result_types = [_]AbiType{.bytes};
+    const decoded = abi_decode.decodeValues(result_bytes, &result_types, allocator) catch
+        return ResolveError.InvalidResponse;
+    defer abi_decode.freeValues(decoded, allocator);
+
+    if (decoded.len < 1) return ResolveError.InvalidResponse;
+
+    const hash = decoded[0].bytes;
+    if (hash.len == 0) return null;
+
+    return try decodeContentHash(allocator, hash);
+}
+
+/// Decode EIP-1577 contenthash bytes to a URI string.
+/// Supports IPFS, IPNS, and Swarm encodings used by ethers/viem.
+/// Caller owns the returned memory.
+pub fn decodeContentHash(allocator: std.mem.Allocator, hash: []const u8) ResolveError![]u8 {
+    // IPFS: 0xe3010170 || <multihash>
+    // IPNS: 0xe5010172 || <multihash>
+    if (hash.len >= 6 and ((std.mem.eql(u8, hash[0..4], &.{ 0xe3, 0x01, 0x01, 0x70 }) or
+        std.mem.eql(u8, hash[0..4], &.{ 0xe5, 0x01, 0x01, 0x72 }))))
+    {
+        const scheme: []const u8 = if (hash[0] == 0xe3) "ipfs://" else "ipns://";
+        const multihash = hash[4..];
+        if (multihash.len < 2) return ResolveError.UnsupportedContentHash;
+        const digest_len: usize = multihash[1];
+        if (multihash.len != 2 + digest_len) return ResolveError.UnsupportedContentHash;
+
+        const cid = try encodeBase58(allocator, multihash);
+        defer allocator.free(cid);
+
+        const result = try allocator.alloc(u8, scheme.len + cid.len);
+        @memcpy(result[0..scheme.len], scheme);
+        @memcpy(result[scheme.len..], cid);
+        return result;
+    }
+
+    // Swarm: 0xe40101fa011b20 || <32-byte keccak>
+    if (hash.len == 39 and std.mem.eql(u8, hash[0..7], &.{ 0xe4, 0x01, 0x01, 0xfa, 0x01, 0x1b, 0x20 })) {
+        const hex_hash = try bytesToLowerHex(allocator, hash[7..]);
+        defer allocator.free(hex_hash);
+        const result = try allocator.alloc(u8, "bzz://".len + hex_hash.len);
+        @memcpy(result[0.."bzz://".len], "bzz://");
+        @memcpy(result["bzz://".len..], hex_hash);
+        return result;
+    }
+
+    return ResolveError.UnsupportedContentHash;
+}
+
 /// Call Universal Resolver `resolve(bytes,bytes)` and return the inner `bytes` result.
 /// Caller owns the returned memory.
 fn callUniversalResolve(
@@ -163,6 +243,15 @@ fn buildTextCalldata(allocator: std.mem.Allocator, node: [32]u8, key: []const u8
     return abi_encode.encodeFunctionCall(allocator, TEXT_SELECTOR, &values);
 }
 
+/// Build the ABI-encoded calldata for contenthash(bytes32 node).
+fn buildContentHashCalldata(allocator: std.mem.Allocator, node: [32]u8) ![]u8 {
+    var fb = AbiValue.FixedBytes{ .len = 32 };
+    @memcpy(&fb.data, &node);
+
+    const values = [_]AbiValue{.{ .fixed_bytes = fb }};
+    return abi_encode.encodeFunctionCall(allocator, CONTENTHASH_SELECTOR, &values);
+}
+
 /// Build the ABI-encoded calldata for Universal Resolver resolve(bytes name, bytes data).
 fn buildResolveCalldata(allocator: std.mem.Allocator, dns_name: []const u8, data: []const u8) ![]u8 {
     const values = [_]AbiValue{
@@ -170,6 +259,51 @@ fn buildResolveCalldata(allocator: std.mem.Allocator, dns_name: []const u8, data
         .{ .bytes = data },
     };
     return abi_encode.encodeFunctionCall(allocator, RESOLVE_SELECTOR, &values);
+}
+
+/// Encode bytes as Bitcoin/IPFS Base58 (no checksum). Caller owns the result.
+fn encodeBase58(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len == 0) return try allocator.dupe(u8, "");
+
+    // digit[i] is a base-58 digit, least-significant first.
+    var digits: std.ArrayList(u8) = .empty;
+    defer digits.deinit(allocator);
+
+    for (bytes) |byte| {
+        var carry: usize = byte;
+        for (digits.items) |*digit| {
+            carry += @as(usize, digit.*) << 8;
+            digit.* = @intCast(carry % 58);
+            carry /= 58;
+        }
+        while (carry > 0) {
+            try digits.append(allocator, @intCast(carry % 58));
+            carry /= 58;
+        }
+    }
+
+    var leading_zeros: usize = 0;
+    for (bytes) |byte| {
+        if (byte == 0) leading_zeros += 1 else break;
+    }
+
+    const result = try allocator.alloc(u8, leading_zeros + digits.items.len);
+    @memset(result[0..leading_zeros], BASE58_ALPHABET[0]);
+    for (digits.items, 0..) |digit, i| {
+        result[result.len - 1 - i] = BASE58_ALPHABET[digit];
+    }
+    return result;
+}
+
+/// Encode bytes as lowercase hex without 0x prefix. Caller owns the result.
+fn bytesToLowerHex(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    const hex_chars = "0123456789abcdef";
+    const result = try allocator.alloc(u8, bytes.len * 2);
+    for (bytes, 0..) |byte, i| {
+        result[i * 2] = hex_chars[byte >> 4];
+        result[i * 2 + 1] = hex_chars[byte & 0x0f];
+    }
+    return result;
 }
 
 // ============================================================================
@@ -191,6 +325,12 @@ test "text selector is correct" {
     // keccak256("text(bytes32,string)")[0:4] = 0x59d1d43c
     const expected = [_]u8{ 0x59, 0xd1, 0xd4, 0x3c };
     try std.testing.expectEqualSlices(u8, &expected, &TEXT_SELECTOR);
+}
+
+test "contenthash selector is correct" {
+    // keccak256("contenthash(bytes32)")[0:4] = 0xbc1c58d1
+    const expected = [_]u8{ 0xbc, 0x1c, 0x58, 0xd1 };
+    try std.testing.expectEqualSlices(u8, &expected, &CONTENTHASH_SELECTOR);
 }
 
 test "resolve selector is correct" {
@@ -316,4 +456,41 @@ test "getText ur.integration-tests.eth description on mainnet via Universal Reso
 
     try std.testing.expect(text != null);
     try std.testing.expectEqualStrings("✅️ Universal Resolver", text.?);
+}
+
+test "decodeContentHash ipfs CIDv0" {
+    const allocator = std.testing.allocator;
+    // EIP-1577 example / ur.integration-tests.eth contenthash payload
+    const raw = try hex_mod.hexToBytesFixed(38, "e30101701220b7fe081ef41160a57b591356186076e5eec77402385325bc1a0816b5bb764adb");
+    const uri = try decodeContentHash(allocator, &raw);
+    defer allocator.free(uri);
+    try std.testing.expectEqualStrings("ipfs://Qmaisz6NMhDB51cCvNWa1GMS7LU1pAxdF4Ld6Ft9kZEP2a", uri);
+}
+
+test "buildContentHashCalldata encodes correctly" {
+    const allocator = std.testing.allocator;
+    const node = namehash_mod.namehash("vitalik.eth");
+    const calldata = try buildContentHashCalldata(allocator, node);
+    defer allocator.free(calldata);
+
+    try std.testing.expectEqual(@as(usize, 36), calldata.len);
+    try std.testing.expectEqualSlices(u8, &CONTENTHASH_SELECTOR, calldata[0..4]);
+    try std.testing.expectEqualSlices(u8, &node, calldata[4..36]);
+}
+
+test "getContentHash ur.integration-tests.eth on mainnet via Universal Resolver" {
+    const allocator = std.testing.allocator;
+
+    var transport = http_transport_mod.HttpTransport.init(allocator, MAINNET_RPC_URL, runtime_mod.blockingIo());
+    defer transport.deinit();
+    var provider = provider_mod.Provider.init(allocator, &transport);
+
+    const uri = getContentHash(allocator, &provider, "ur.integration-tests.eth") catch |err| {
+        if (err == ResolveError.ProviderError) return;
+        return err;
+    };
+    defer if (uri) |u| allocator.free(u);
+
+    try std.testing.expect(uri != null);
+    try std.testing.expectEqualStrings("ipfs://Qmaisz6NMhDB51cCvNWa1GMS7LU1pAxdF4Ld6Ft9kZEP2a", uri.?);
 }
