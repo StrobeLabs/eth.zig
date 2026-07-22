@@ -162,6 +162,8 @@ test {
     _ = @import("ens/namehash.zig");
     _ = @import("ens/resolver.zig");
     _ = @import("ens/reverse.zig");
+    _ = @import("ens/normalize/decoder.zig");
+    _ = @import("ens/normalize/rune_set.zig");
     // Utils
     _ = @import("utils/units.zig");
     _ = @import("runtime.zig");
