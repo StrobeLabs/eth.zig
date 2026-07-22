@@ -1,0 +1,7 @@
+spec.bin and nf.bin are vendored unmodified from adraffy/go-ens-normalize
+  https://github.com/adraffy/go-ens-normalize
+  commit 165fa80d967c431535e77f04a1ee017c941746cd (2025-09-20)
+  License: MIT (Copyright (c) 2023 Andrew Raffensperger)
+The Zig sources in src/ens/normalize/ are a port of the same project.
+tests/data/ens-normalize/*.json are the upstream validation vectors
+(ens-normalize version 1.11.1, Unicode 17.0.0).
