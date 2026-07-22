@@ -84,6 +84,24 @@ pub fn build(b: *std.Build) void {
     const integration_step = b.step("integration-test", "Run integration tests (requires Anvil)");
     integration_step.dependOn(&run_integration_tests.step);
 
+    // ENS normalization conformance vectors (official ens-normalize + Unicode
+    // NF test suites, embedded from tests/data/ens-normalize/). No network
+    // required, unlike integration-test.
+    const vector_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/ens_vectors_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "eth", .module = eth_module },
+            },
+        }),
+    });
+
+    const run_vector_tests = b.addRunArtifact(vector_tests);
+    const vector_step = b.step("vector-test", "Run ENS normalization conformance vectors");
+    vector_step.dependOn(&run_vector_tests.step);
+
     // Benchmarks (always ReleaseFast for meaningful numbers)
     const bench_module = b.addModule("eth_bench", .{
         .root_source_file = b.path("src/root.zig"),
