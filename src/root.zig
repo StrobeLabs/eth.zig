@@ -164,6 +164,7 @@ test {
     _ = @import("ens/reverse.zig");
     _ = @import("ens/normalize/decoder.zig");
     _ = @import("ens/normalize/rune_set.zig");
+    _ = @import("ens/normalize/nf.zig");
     // Utils
     _ = @import("utils/units.zig");
     _ = @import("runtime.zig");
