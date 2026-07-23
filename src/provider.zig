@@ -26,6 +26,9 @@ pub const Provider = struct {
     /// Inline backing storage for `last_error.message` (truncated to fit). Inline
     /// so the Provider holds no heap diagnostics state and needs no deinit.
     last_error_storage: [256]u8 = undefined,
+    /// Inline backing storage for `last_error.data` (truncated to fit). Sized
+    /// for a 4-byte selector plus 512 bytes of ABI-encoded revert data.
+    last_error_data_storage: [1026]u8 = undefined,
 
     /// Structured diagnostics for a failed JSON-RPC call.
     pub const ErrorInfo = struct {
@@ -34,6 +37,10 @@ pub const Provider = struct {
         /// Error message (may be empty; truncated to 256 bytes). Borrows
         /// provider-owned storage; valid until the next call on this provider.
         message: []const u8,
+        /// Raw hex revert data from `error.data`, empty if absent; truncated to
+        /// 1026 bytes. Borrows provider-owned storage; valid until the next
+        /// call on this provider.
+        data: []const u8,
     };
 
     pub fn init(allocator: std.mem.Allocator, transport: *HttpTransport) Provider {
@@ -357,11 +364,13 @@ pub const Provider = struct {
     }
 
     /// Best-effort: parse `raw` for a JSON-RPC `error` object and record its
-    /// code and (truncated) message into `last_error`. Runs only on the error
-    /// path, so the extra parse never touches the success hot path.
+    /// code, (truncated) message, and (truncated) revert data into
+    /// `last_error`. Runs only on the error path, so the extra parse never
+    /// touches the success hot path.
     fn captureRpcError(self: *Provider, raw: []const u8) void {
         var code: i64 = 0;
         var message: []const u8 = "";
+        var data: []const u8 = "";
         if (std.json.parseFromSlice(std.json.Value, self.allocator, raw, .{})) |parsed| {
             defer parsed.deinit();
             if (parsed.value == .object) {
@@ -373,14 +382,34 @@ pub const Provider = struct {
                         if (ev.object.get("message")) |m| {
                             if (m == .string) message = m.string;
                         }
+                        if (ev.object.get("data")) |d| {
+                            switch (d) {
+                                .string => |s| data = s,
+                                // Some providers (e.g. Geth via certain proxies)
+                                // nest the hex payload as data.data instead of
+                                // putting it directly on data.
+                                .object => |o| {
+                                    if (o.get("data")) |nested| {
+                                        if (nested == .string) data = nested.string;
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
                     }
                 }
             }
             const n = @min(message.len, self.last_error_storage.len);
             @memcpy(self.last_error_storage[0..n], message[0..n]);
-            self.last_error = .{ .code = code, .message = self.last_error_storage[0..n] };
+            const dn = @min(data.len, self.last_error_data_storage.len);
+            @memcpy(self.last_error_data_storage[0..dn], data[0..dn]);
+            self.last_error = .{
+                .code = code,
+                .message = self.last_error_storage[0..n],
+                .data = self.last_error_data_storage[0..dn],
+            };
         } else |_| {
-            self.last_error = .{ .code = 0, .message = "" };
+            self.last_error = .{ .code = 0, .message = "", .data = "" };
         }
     }
 
@@ -1275,6 +1304,44 @@ test "Provider.captureRpcError - records code and message" {
     const info = provider.lastError() orelse return error.TestExpectedDiagnostic;
     try std.testing.expectEqual(@as(i64, 3), info.code);
     try std.testing.expectEqualStrings("execution reverted", info.message);
+}
+
+test "Provider.captureRpcError - records revert data" {
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = Provider.init(std.testing.allocator, &transport);
+
+    provider.captureRpcError(
+        \\{"jsonrpc":"2.0","id":1,"error":{"code":3,"message":"execution reverted","data":"0x556f1830deadbeef"}}
+    );
+
+    const info = provider.lastError() orelse return error.TestExpectedDiagnostic;
+    try std.testing.expectEqual(@as(i64, 3), info.code);
+    try std.testing.expectEqualStrings("0x556f1830deadbeef", info.data);
+}
+
+test "Provider.captureRpcError - no data field yields empty data" {
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = Provider.init(std.testing.allocator, &transport);
+
+    provider.captureRpcError(
+        \\{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"boom"}}
+    );
+
+    try std.testing.expectEqualStrings("", provider.lastError().?.data);
+}
+
+test "Provider.captureRpcError - nested data object shape" {
+    var transport = HttpTransport.init(std.testing.allocator, "http://localhost:8545", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = Provider.init(std.testing.allocator, &transport);
+
+    provider.captureRpcError(
+        \\{"jsonrpc":"2.0","id":1,"error":{"code":3,"message":"execution reverted","data":{"data":"0xdeadbeef"}}}
+    );
+
+    try std.testing.expectEqualStrings("0xdeadbeef", provider.lastError().?.data);
 }
 
 test "Provider.next_id - atomic, starts at 1 and increments" {
