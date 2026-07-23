@@ -54,6 +54,7 @@ pub const ens_namehash = @import("ens/namehash.zig");
 pub const ens_resolver = @import("ens/resolver.zig");
 pub const ens_reverse = @import("ens/reverse.zig");
 pub const ens_normalize = @import("ens/normalize.zig");
+pub const ens_contenthash = @import("ens/contenthash.zig");
 
 // -- Layer 8: Client --
 pub const wallet = @import("wallet.zig");
@@ -163,6 +164,7 @@ test {
     _ = @import("ens/namehash.zig");
     _ = @import("ens/resolver.zig");
     _ = @import("ens/reverse.zig");
+    _ = @import("ens/contenthash.zig");
     _ = @import("ens/normalize/decoder.zig");
     _ = @import("ens/normalize/rune_set.zig");
     _ = @import("ens/normalize/nf.zig");
