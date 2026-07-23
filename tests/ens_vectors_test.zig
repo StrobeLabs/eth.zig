@@ -49,7 +49,9 @@ test "ENSIP-15 official vectors" {
             }
         }
     }
-    std.debug.print("ENSIP-15 vectors: {d} pass, {d} fail\n", .{ pass, fail });
+    if (fail > 0) {
+        std.debug.print("ENSIP-15 vectors: {d} pass, {d} fail\n", .{ pass, fail });
+    }
     try std.testing.expectEqual(@as(usize, 0), fail);
 }
 
@@ -94,7 +96,9 @@ test "Unicode NF official vectors" {
             } else pass += 1;
         }
     }
-    std.debug.print("Unicode NF vectors: {d} pass, {d} fail\n", .{ pass, fail });
+    if (fail > 0) {
+        std.debug.print("Unicode NF vectors: {d} pass, {d} fail\n", .{ pass, fail });
+    }
     try std.testing.expectEqual(@as(usize, 0), fail);
 }
 
