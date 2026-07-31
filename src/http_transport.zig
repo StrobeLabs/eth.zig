@@ -85,12 +85,10 @@ pub const HttpTransport = struct {
 
         if (result) |res| {
             if (res.status != .ok) {
-                response_body.deinit();
                 return error.HttpError;
             }
             return response_body.toOwnedSlice();
         } else |_| {
-            response_body.deinit();
             return error.ConnectionFailed;
         }
     }
@@ -117,12 +115,10 @@ pub const HttpTransport = struct {
 
         if (result) |res| {
             if (res.status != .ok) {
-                response_body.deinit();
                 return error.HttpError;
             }
             return response_body.toOwnedSlice();
         } else |_| {
-            response_body.deinit();
             return error.ConnectionFailed;
         }
     }
@@ -253,4 +249,69 @@ test "buildBatchBody - multiple requests" {
         break :blk count;
     };
     try std.testing.expectEqual(@as(usize, 1), comma_count);
+}
+
+test "request surfaces HttpError on non-200 status without double-freeing the response buffer" {
+    // Regression: a JSON-RPC endpoint answering with a non-200 status (e.g.
+    // Alchemy's HTTP 429 "Monthly capacity limit exceeded") used to hit both
+    // the explicit `response_body.deinit()` and the `errdefer` deinit on the
+    // same buffer -- a double free that crashed the process instead of
+    // returning `error.HttpError`. The testing allocator detects the double
+    // free and fails this test on the old code.
+    const allocator = std.testing.allocator;
+    const runtime = @import("runtime.zig");
+    const io = runtime.blockingIo();
+
+    const addr = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+
+    var bound: std.c.sockaddr.in = undefined;
+    var bound_len: std.c.socklen_t = @sizeOf(@TypeOf(bound));
+    if (std.c.getsockname(server.socket.handle, @ptrCast(&bound), &bound_len) != 0)
+        return error.GetSockNameFailed;
+    const port = std.mem.bigToNative(u16, bound.port);
+
+    const serve = struct {
+        fn run(srv: *std.Io.net.Server, io_: std.Io) void {
+            var served: usize = 0;
+            while (served < 2) : (served += 1) {
+                var stream = srv.accept(io_) catch return;
+                defer stream.close(io_);
+
+                // Read whatever part of the request has arrived (a single
+                // recv is enough for the client to have flushed its write),
+                // answer, then drain until the client closes so the response
+                // is not lost to a reset.
+                var scratch: [4096]u8 = undefined;
+                _ = std.c.recv(stream.socket.handle, &scratch, scratch.len, 0);
+
+                const resp = "HTTP/1.1 429 Too Many Requests\r\n" ++
+                    "content-type: application/json\r\n" ++
+                    "content-length: 2\r\n" ++
+                    "connection: close\r\n\r\n{}";
+                var wbuf: [256]u8 = undefined;
+                var writer = stream.writer(io_, &wbuf);
+                writer.interface.writeAll(resp) catch return;
+                writer.interface.flush() catch return;
+                stream.shutdown(io_, .send) catch {};
+                while (true) {
+                    const n = std.c.recv(stream.socket.handle, &scratch, scratch.len, 0);
+                    if (n <= 0) break;
+                }
+            }
+        }
+    }.run;
+    const server_thread = try std.Thread.spawn(.{}, serve, .{ &server, io });
+    defer server_thread.join();
+
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}", .{port});
+    var transport = HttpTransport.init(allocator, url, io);
+    defer transport.deinit();
+
+    // Two calls: the second exercises the transport again after the first
+    // error path, catching any allocator state corrupted by the first.
+    try std.testing.expectError(error.HttpError, transport.request("eth_blockNumber", "[]", 1));
+    try std.testing.expectError(error.HttpError, transport.request("eth_blockNumber", "[]", 2));
 }
