@@ -30,15 +30,6 @@ pub const UNIVERSAL_RESOLVER: Address = .{
     0x99, 0x23, 0xDe, 0xab, 0x13, 0x35, 0xE1, 0x44, 0xEe, 0xEe,
 };
 
-/// Legacy ENS Registry address (`0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`).
-///
-/// Retained only so the pre-Universal-Resolver reverse.zig flow keeps building;
-/// removed in Task 9 when reverse resolution migrates to the UR.
-pub const ENS_REGISTRY: Address = .{
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x2E, 0x07, 0x4e, 0xC6,
-    0x9A, 0x0D, 0xFb, 0x29, 0x97, 0xBA, 0x6C, 0x7d, 0x2e, 0x1e,
-};
-
 /// `resolve(bytes,bytes)` selector on the Universal Resolver: `0x9061b923`.
 const RESOLVE_SELECTOR: [4]u8 = keccak.selector("resolve(bytes,bytes)");
 /// `addr(bytes32)` selector: `0x3b3b57de`.
@@ -196,7 +187,10 @@ fn callUniversalResolver(
 
 /// Inspect the provider's last revert and map the Universal Resolver custom
 /// error selector to a resolution outcome: null (no record), or an error.
-fn mapRevert(provider: anytype) ResolveError!?[]u8 {
+///
+/// Exposed (not just `resolver.zig`-private) so `reverse.zig` can reuse the
+/// same forward-resolution "not found" family mapping for `reverse()` reverts.
+pub fn mapRevert(provider: anytype) ResolveError!?[]u8 {
     const info = provider.lastError() orelse return error.ProviderError;
     const selector = parseSelector(info.data) orelse return error.ProviderError;
 

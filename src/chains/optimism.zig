@@ -72,8 +72,3 @@ test "optimism sepolia is testnet" {
     try std.testing.expectEqualStrings("OP Sepolia", sepolia.name);
     try std.testing.expectEqual(true, sepolia.testnet);
 }
-
-test "optimism chains have no ens_registry" {
-    try std.testing.expect(mainnet.ens_registry == null);
-    try std.testing.expect(sepolia.ens_registry == null);
-}
