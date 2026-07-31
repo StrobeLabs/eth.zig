@@ -88,6 +88,23 @@ const name = try token.name();
 defer allocator.free(name);
 ```
 
+### Resolve an ENS name
+
+Forward resolution goes through the ENSIP-10 Universal Resolver (`0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe` on mainnet and Sepolia), which also handles wildcard/CCIP-Read (EIP-3668) names automatically for the parts of the flow that resolve on-chain:
+
+```zig
+const eth = @import("eth");
+
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com", eth.runtime.blockingIo());
+defer transport.deinit();
+var provider = eth.provider.Provider.init(allocator, &transport);
+
+// Resolve vitalik.eth -> 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+const addr = try eth.ens_resolver.resolve(allocator, &provider, "vitalik.eth");
+```
+
+Names are normalized per ENSIP-15 before resolution; names that fail normalization are rejected and MUST be treated as invalid for payment or identity use. If the name requires an off-chain CCIP-Read gateway round-trip that `resolve` does not perform, it returns `error.OffchainLookupRequired` rather than silently returning a wrong or stale answer.
+
 ### Simulate eth_call with state overrides
 
 Lets searchers answer "what if?" questions without forking a node: what if this token balance were larger, what if this storage slot held a different value, what if this address ran alternative bytecode? Maps to the geth-style third argument to `eth_call`.
@@ -273,7 +290,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions |
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |
 | **Transport** | `http_transport`, `ws_transport`, `sse_transport`, `json_rpc`, `provider`, `subscription`, `ws_client` | HTTP, WebSocket, and SSE transports; resilient WS client with auto-reconnect |
-| **ENS** | `ens_namehash`, `ens_resolver`, `ens_reverse` | ENS name resolution and reverse lookup |
+| **ENS** | `ens_namehash`, `ens_resolver`, `ens_reverse`, `ens_normalize`, `ens_contenthash` | ENSIP-15 normalization, Universal Resolver forward/reverse resolution, contenthash decoding |
 | **Client** | `wallet`, `contract`, `multicall`, `event`, `erc20`, `erc721` | Signing wallet, contract interaction, Multicall3, token wrappers |
 | **Standards** | `eip712`, `abi_json` | EIP-712 typed data signing, Solidity JSON ABI parsing |
 | **Chains** | `chains` | Ethereum, Arbitrum, Optimism, Base, Polygon definitions |

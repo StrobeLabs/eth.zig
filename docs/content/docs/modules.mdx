@@ -127,13 +127,15 @@ The `Provider` supports all standard Ethereum JSON-RPC methods:
 
 ## ENS
 
-Ethereum Name Service resolution.
+Ethereum Name Service resolution via the ENSIP-10 Universal Resolver, with ENSIP-15 normalization. See [ENS Resolution](/ens) for details.
 
 | Module | Key Exports | Description |
 |--------|-------------|-------------|
-| `ens_namehash` | `namehash` | ENS name to namehash conversion |
-| `ens_resolver` | `resolve` | Forward resolution (name to address) |
-| `ens_reverse` | `reverseResolve` | Reverse resolution (address to name) |
+| `ens_normalize` | `normalize` | ENSIP-15 name normalization |
+| `ens_namehash` | `namehash`, `dnsEncode` | ENS namehash (EIP-137) and ENSIP-10 DNS-wire encoding |
+| `ens_resolver` | `resolve`, `getText`, `getContentHash` | Forward resolution, text records, contenthash via the Universal Resolver |
+| `ens_reverse` | `lookupAddress` | Forward-verified reverse resolution (address to name) |
+| `ens_contenthash` | `decode`, `ContentHash`, `Protocol` | EIP-1577 contenthash decoding (ipfs/ipns/swarm) |
 
 ## Client
 
