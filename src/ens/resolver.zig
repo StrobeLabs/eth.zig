@@ -56,8 +56,6 @@ const RESOLVER_ERROR_SELECTOR: [4]u8 = keccak.selector("ResolverError(bytes)");
 pub const ResolveError = error{
     /// The ABI-encoded response was too short or malformed.
     InvalidResponse,
-    /// No resolver is set for this name.
-    NoResolver,
     /// Memory allocation failure.
     OutOfMemory,
     /// The provider call failed (transport error, or a revert we cannot map).
@@ -190,6 +188,8 @@ fn callUniversalResolver(
 ///
 /// Exposed (not just `resolver.zig`-private) so `reverse.zig` can reuse the
 /// same forward-resolution "not found" family mapping for `reverse()` reverts.
+/// This is an internal helper exported for reuse within eth.zig's ENS
+/// modules, not a stable public API.
 pub fn mapRevert(provider: anytype) ResolveError!?[]u8 {
     const info = provider.lastError() orelse return error.ProviderError;
     const selector = parseSelector(info.data) orelse return error.ProviderError;
@@ -204,7 +204,11 @@ pub fn mapRevert(provider: anytype) ResolveError!?[]u8 {
 
 /// Parse the leading 4-byte selector out of a hex revert-data string such as
 /// `"0x556f1830...."`. Returns null if there are fewer than 4 hex-encoded bytes.
-fn parseSelector(data: []const u8) ?[4]u8 {
+///
+/// Exported so `reverse.zig` can reuse it for `ReverseAddressMismatch`
+/// detection. This is an internal helper exported for reuse within eth.zig's
+/// ENS modules, not a stable public API.
+pub fn parseSelector(data: []const u8) ?[4]u8 {
     var s = data;
     if (s.len >= 2 and s[0] == '0' and (s[1] == 'x' or s[1] == 'X')) s = s[2..];
     if (s.len < 8) return null;

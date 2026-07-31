@@ -111,26 +111,10 @@ fn buildReverseCall(allocator: std.mem.Allocator, address: Address) resolver_mod
 /// family / `OffchainLookupRequired` / `ProviderError` mapping.
 fn mapReverseRevert(provider: anytype) resolver_mod.ResolveError!?[]u8 {
     const info = provider.lastError() orelse return error.ProviderError;
-    if (parseSelector(info.data)) |selector| {
+    if (resolver_mod.parseSelector(info.data)) |selector| {
         if (std.mem.eql(u8, &selector, &REVERSE_ADDRESS_MISMATCH_SELECTOR)) return null;
     }
     return resolver_mod.mapRevert(provider);
-}
-
-/// Parse the leading 4-byte selector out of a hex revert-data string such as
-/// `"0xef9c03ce...."`. Returns null if there are fewer than 4 hex-encoded
-/// bytes. Duplicated from `resolver.zig`'s private helper of the same shape.
-fn parseSelector(data: []const u8) ?[4]u8 {
-    var s = data;
-    if (s.len >= 2 and s[0] == '0' and (s[1] == 'x' or s[1] == 'X')) s = s[2..];
-    if (s.len < 8) return null;
-    var out: [4]u8 = undefined;
-    for (0..4) |i| {
-        const hi = hex_mod.charToNibble(s[i * 2]) catch return null;
-        const lo = hex_mod.charToNibble(s[i * 2 + 1]) catch return null;
-        out[i] = (@as(u8, hi) << 4) | @as(u8, lo);
-    }
-    return out;
 }
 
 // ============================================================================

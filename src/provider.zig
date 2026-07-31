@@ -26,8 +26,10 @@ pub const Provider = struct {
     /// Inline backing storage for `last_error.message` (truncated to fit). Inline
     /// so the Provider holds no heap diagnostics state and needs no deinit.
     last_error_storage: [256]u8 = undefined,
-    /// Inline backing storage for `last_error.data` (truncated to fit). Sized
-    /// for a 4-byte selector plus 512 bytes of ABI-encoded revert data.
+    /// Inline backing storage for `last_error.data` (truncated to fit). Holds
+    /// the raw hex string ("0x" + up to 512 bytes of revert data as hex, i.e.
+    /// up to 1026 chars); the leading 4-byte selector (8 hex chars) always
+    /// survives truncation.
     last_error_data_storage: [1026]u8 = undefined,
 
     /// Structured diagnostics for a failed JSON-RPC call.

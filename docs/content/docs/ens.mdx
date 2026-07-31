@@ -115,12 +115,11 @@ The namehash algorithm recursively hashes each label separated by `.`. `ens_name
 | Error | Meaning |
 |-------|---------|
 | `OffchainLookupRequired` | The Universal Resolver reverted with EIP-3668's `OffchainLookup`: the record lives off-chain (e.g. a CCIP-Read gateway-backed wildcard name) and requires a gateway round-trip this synchronous API does not perform. Callers that need CCIP-Read support must implement the gateway fetch + `resolveWithProof` callback themselves. |
-| `NoResolver` | No resolver is set for this name. |
 | `InvalidResponse` | The ABI-encoded response from the Universal Resolver was too short or malformed. |
 | `ProviderError` | The provider call failed (transport error), or the Universal Resolver reverted with a custom error this library does not recognize. |
 | `LabelTooLong` | A label in the name exceeds the DNS-wire encoding's length limit while building the ENSIP-10 calldata. |
 | `OutOfMemory` | Allocation failure. |
-| *(ENSIP-15 normalization errors)* | `InvalidUtf8`, `EmptyLabel`, `DisallowedCharacter`, `IllegalMixture`, `WholeConfusable`, `LeadingUnderscore`, `InvalidLabelExtension`, `FencedLeading`, `FencedAdjacent`, `FencedTrailing`, `CombiningMarkLeading`, `CombiningMarkAfterEmoji`, `NsmDuplicate`, `NsmExcessive` -- the name failed ENSIP-15 normalization before any network call was made. See [Name Normalization](#name-normalization-ensip-15). |
+| *(ENSIP-15 normalization errors)* | `InvalidUtf8`, `EmptyLabel`, `DisallowedCharacter`, `IllegalMixture`, `WholeConfusable`, `LeadingUnderscore`, `InvalidLabelExtension`, `FencedLeading`, `FencedAdjacent`, `FencedTrailing`, `CombiningMarkLeading`, `CombiningMarkAfterEmoji`, `NsmDuplicate`, `NsmExcessive` -- the name failed ENSIP-15 normalization. Forward lookups (`resolve` / `getText` / `getContentHash`) fail before any network call is made, since the input name is normalized first. Reverse lookups (`lookupAddress`) can also surface this error *after* the network call, since the name returned by the Universal Resolver is normalized before being handed back to the caller. See [Name Normalization](#name-normalization-ensip-15). |
 
 A revert that means "no record" (e.g. the Universal Resolver's `ResolverNotFound`, `ResolverNotContract`, `UnsupportedResolverProfile`, `ResolverError`, or -- for reverse resolution -- `ReverseAddressMismatch`) is mapped to `null`, not an error, matching the `null`-for-"not set" convention used throughout eth.zig's ENS API.
 
