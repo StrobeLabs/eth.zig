@@ -6,7 +6,10 @@
 //! additionally verifies the forward record (`addr(bytes32)` for coinType 60)
 //! matches the address being reverse-resolved -- reverting with
 //! `ReverseAddressMismatch` when it does not. The name the UR returns is
-//! further normalized per ENSIP-15 before being handed back to the caller.
+//! checked against its own ENSIP-15 normalized form: ENS treats an
+//! unnormalized primary name as equivalent to no primary name being set, so
+//! this function returns `null` rather than rewriting it to a name whose
+//! forward record the UR never verified.
 
 const std = @import("std");
 const keccak = @import("../keccak.zig");
@@ -64,17 +67,25 @@ pub fn reverseNameOf(allocator: std.mem.Allocator, address: Address) ![]u8 {
 
 /// Reverse-resolve an address to its verified primary ENS name via the
 /// Universal Resolver (coinType 60). The UR checks the forward match
-/// on-chain; the returned name is additionally ENSIP-15 normalized.
+/// on-chain; the returned name is additionally checked against its own
+/// ENSIP-15 normalized form.
 ///
-/// Returns null when there is no reverse record, the record is empty, or the
-/// UR reports the forward record does not match (`ReverseAddressMismatch`) or
-/// a "not found" family revert. Caller owns the returned memory.
+/// Returns null when there is no reverse record, the record is empty, the
+/// stored primary name is not ENSIP-15 normalized (ENS treats this as
+/// equivalent to no primary name being set), or the UR reports the forward
+/// record does not match (`ReverseAddressMismatch`) or a "not found" family
+/// revert. Caller owns the returned memory.
 pub fn lookupAddress(allocator: std.mem.Allocator, provider: anytype, address: Address) resolver_mod.ResolveError!?[]u8 {
     const calldata = try buildReverseCall(allocator, address);
     defer allocator.free(calldata);
 
-    const response = provider.call(resolver_mod.UNIVERSAL_RESOLVER, calldata) catch {
-        return mapReverseRevert(provider);
+    const response = provider.call(resolver_mod.UNIVERSAL_RESOLVER, calldata) catch |e| {
+        // Only a revert carries diagnostics; any other failure (including an
+        // allocation failure) must not read a stale `lastError()` from an
+        // earlier call.
+        if (e == error.OutOfMemory) return error.OutOfMemory;
+        if (e == error.RpcError) return mapReverseRevert(provider);
+        return error.ProviderError;
     };
     defer allocator.free(response);
 
@@ -89,7 +100,16 @@ pub fn lookupAddress(allocator: std.mem.Allocator, provider: anytype, address: A
     const name = decoded[0].string;
     if (name.len == 0) return null;
 
-    return try ens_normalize.normalize(allocator, name);
+    // ENSIP-19: the UR verifies the forward record for the primary name
+    // exactly as stored. An unnormalized primary name is invalid -- ENS
+    // treats it as no primary name being set -- so do not rewrite it to a
+    // name the UR never verified.
+    const normalized = try ens_normalize.normalize(allocator, name);
+    if (!std.mem.eql(u8, normalized, name)) {
+        allocator.free(normalized);
+        return null;
+    }
+    return normalized;
 }
 
 /// Build calldata for `reverse(bytes,uint256)`: the 20 raw address bytes
@@ -153,10 +173,10 @@ const MockProvider = struct {
     }
 };
 
-/// Encode `(string name, address resolvedAddress, address resolver)` as the
-/// UR's `reverse(bytes,uint256)` would return it.
-fn encodeReverseTuple(allocator: std.mem.Allocator, name: []const u8, resolved: Address, resolver_addr: Address) ![]u8 {
-    const values = [_]AbiValue{ .{ .string = name }, .{ .address = resolved }, .{ .address = resolver_addr } };
+/// Encode `(string primary, address resolver, address reverseResolver)` as
+/// the UR's `reverse(bytes,uint256)` returns it.
+fn encodeReverseTuple(allocator: std.mem.Allocator, name: []const u8, resolver_addr: Address, reverse_resolver_addr: Address) ![]u8 {
+    const values = [_]AbiValue{ .{ .string = name }, .{ .address = resolver_addr }, .{ .address = reverse_resolver_addr } };
     return abi_encode.encodeValues(allocator, &values);
 }
 
@@ -264,12 +284,33 @@ test "lookupAddress decodes verified name from UR tuple" {
     try std.testing.expectEqualStrings("vitalik.eth", got);
 }
 
-test "lookupAddress normalizes the returned name" {
+test "lookupAddress rejects an unnormalized stored primary name" {
     const allocator = std.testing.allocator;
     const addr = try hex_mod.hexToBytesFixed(20, "d8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
     const resolver_addr: Address = @splat(0x22);
 
-    const response = try encodeReverseTuple(allocator, "Vitalik.ETH", addr, resolver_addr);
+    // The stored primary name is not ENSIP-15 normalized ("Vitalik.ETH" !=
+    // normalize("Vitalik.ETH") == "vitalik.eth"). ENS treats this as no
+    // primary name being set: the UR verified the forward record for
+    // "Vitalik.ETH" exactly as stored, never for the lowercased form, so it
+    // must not be rewritten and returned as if it were verified.
+    const response = try encodeReverseTuple(allocator, "Vitalik.ETH", resolver_addr, resolver_addr);
+    defer allocator.free(response);
+
+    var mock = MockProvider{ .allocator = allocator, .response = response };
+    defer mock.deinit();
+
+    try std.testing.expectEqual(@as(?[]u8, null), try lookupAddress(allocator, &mock, addr));
+}
+
+test "lookupAddress returns an already-normalized stored primary name unchanged" {
+    const allocator = std.testing.allocator;
+    const addr = try hex_mod.hexToBytesFixed(20, "d8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
+    const resolver_addr: Address = @splat(0x22);
+
+    // The stored primary name is already ENSIP-15 normalized, so it is
+    // returned as-is (it IS the verified stored name, not a rewrite).
+    const response = try encodeReverseTuple(allocator, "vitalik.eth", resolver_addr, resolver_addr);
     defer allocator.free(response);
 
     var mock = MockProvider{ .allocator = allocator, .response = response };

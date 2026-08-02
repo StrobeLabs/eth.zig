@@ -46,7 +46,7 @@ values -- never the same nonce twice.
 manager instead of making a per-send `eth_getTransactionCount` call:
 
 ```zig
-var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 var nonces = eth.nonce_manager.NonceManager.init(&provider, try wallet.address());
 wallet.nonce_manager = &nonces; // opt-in; leaving it null keeps the old behavior
 

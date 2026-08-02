@@ -54,7 +54,7 @@ pub fn main() !void {
     var provider = eth.provider.Provider.init(allocator, &transport);
 
     const recipient_address = try eth.hex.hexToBytesFixed(20, "0000000000000000000000000000000000000000");
-    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
     const tx_hash = try wallet.sendTransaction(.{
         .to = recipient_address,
         .value = eth.units.parseEther(1.0),

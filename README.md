@@ -66,7 +66,7 @@ var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.ex
 defer transport.deinit();
 var provider = eth.provider.Provider.init(allocator, &transport);
 
-var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 const tx_hash = try wallet.sendTransaction(.{
     .to = recipient_address,
     .value = eth.units.parseEther(1.0),

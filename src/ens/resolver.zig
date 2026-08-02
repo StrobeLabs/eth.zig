@@ -167,8 +167,13 @@ fn callUniversalResolver(
     const outer = try encodeCall(allocator, RESOLVE_SELECTOR, &values);
     defer allocator.free(outer);
 
-    const response = provider.call(UNIVERSAL_RESOLVER, outer) catch {
-        return mapRevert(provider);
+    const response = provider.call(UNIVERSAL_RESOLVER, outer) catch |e| {
+        // Only a revert carries diagnostics; any other failure (including an
+        // allocation failure) must not read a stale `lastError()` from an
+        // earlier call.
+        if (e == error.OutOfMemory) return error.OutOfMemory;
+        if (e == error.RpcError) return mapRevert(provider);
+        return error.ProviderError;
     };
     defer allocator.free(response);
 

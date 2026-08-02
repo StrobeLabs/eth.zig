@@ -129,8 +129,13 @@ pub const Decoder = struct {
     }
 
     /// Reads `n` values as zigzag-signed deltas: `v[i] = v[i-1] + asSigned(x)`,
-    /// with `v[-1]` treated as `-1`. Intermediate sums may go negative
-    /// mid-stream even though the final accumulated values are codepoints.
+    /// with `v[-1]` treated as `-1`. Each individual zigzag-decoded delta
+    /// (`asSigned(x)`) may be negative, but for valid upstream blobs the
+    /// accumulated `v[i]` values are always non-negative (verified against
+    /// the upstream `spec.json` / `nf.json` source data, whose encoded
+    /// deltas never drive the running sum below zero). The `i64` accumulator
+    /// in `readArray` is retained regardless, since nothing here enforces
+    /// that invariant for arbitrary (non-upstream) input.
     pub fn readUnsortedDeltas(self: *Decoder, allocator: std.mem.Allocator, n: usize) ![]u32 {
         return self.readArray(allocator, n, struct {
             fn f(prev: i64, x: u32) i64 {

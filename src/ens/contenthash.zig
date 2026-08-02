@@ -123,6 +123,13 @@ fn decodeIpfs(allocator: std.mem.Allocator, payload: []const u8) DecodeError!?Co
 
 /// Decode an ipns-ns CID as a base36 lowercase CIDv1 (`k...`).
 fn decodeIpns(allocator: std.mem.Allocator, payload: []const u8) DecodeError!?ContentHash {
+    // ipns records carry a CIDv1 (libp2p-key); reject anything else, matching
+    // the CID validation the ipfs and swarm paths already perform. Without
+    // this, an empty (or version-only) payload would silently encode to the
+    // unresolvable "ipns://k" URI.
+    const version = readVarint(payload) orelse return error.InvalidContentHash;
+    if (version.value != 1 or payload.len <= version.len) return error.InvalidContentHash;
+
     const b36 = try baseNEncode(allocator, base36_alphabet, payload);
     defer allocator.free(b36);
     // multibase prefix 'k' + base36(cid bytes).
@@ -297,6 +304,16 @@ test "contenthash decodes swarm bzz" {
 test "contenthash empty input is null" {
     const allocator = std.testing.allocator;
     try std.testing.expectEqual(@as(?ContentHash, null), try decode(allocator, ""));
+}
+
+test "contenthash decodeIpns rejects an empty payload" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidContentHash, decodeIpns(allocator, &.{}));
+}
+
+test "contenthash decodeIpns rejects a version-only payload with no CID body" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidContentHash, decodeIpns(allocator, &.{0x01}));
 }
 
 test "contenthash unknown multicodec is UnsupportedProtocol" {
