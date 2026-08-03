@@ -201,6 +201,11 @@ pub fn mapRevert(provider: anytype) ResolveError!?[]u8 {
     // revert data. Any other code is a server/transport error whose `data`
     // field, if present, must not be interpreted as a resolver revert.
     if (info.code != 3) return error.ProviderError;
+    // Deliberately selector-only: `lastError().data` is truncated to 512
+    // bytes of revert data by design, and legitimate OffchainLookup payloads
+    // (urls + callData) regularly exceed that. Full ABI validation of the
+    // error arguments would therefore reject real reverts; mapping only
+    // needs the error's identity, and the arguments are never consumed.
     const selector = parseSelector(info.data) orelse return error.ProviderError;
 
     if (std.mem.eql(u8, &selector, &OFFCHAIN_LOOKUP_SELECTOR)) return error.OffchainLookupRequired;
