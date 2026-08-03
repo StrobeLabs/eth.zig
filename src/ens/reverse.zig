@@ -131,8 +131,12 @@ fn buildReverseCall(allocator: std.mem.Allocator, address: Address) resolver_mod
 /// family / `OffchainLookupRequired` / `ProviderError` mapping.
 fn mapReverseRevert(provider: anytype) resolver_mod.ResolveError!?[]u8 {
     const info = provider.lastError() orelse return error.ProviderError;
-    if (resolver_mod.parseSelector(info.data)) |selector| {
-        if (std.mem.eql(u8, &selector, &REVERSE_ADDRESS_MISMATCH_SELECTOR)) return null;
+    // Same gate as `mapRevert`: only code 3 ("execution reverted") carries
+    // contract revert data; do not read server-error data as a revert.
+    if (info.code == 3) {
+        if (resolver_mod.parseSelector(info.data)) |selector| {
+            if (std.mem.eql(u8, &selector, &REVERSE_ADDRESS_MISMATCH_SELECTOR)) return null;
+        }
     }
     return resolver_mod.mapRevert(provider);
 }

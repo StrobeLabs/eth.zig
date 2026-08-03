@@ -197,6 +197,10 @@ fn callUniversalResolver(
 /// modules, not a stable public API.
 pub fn mapRevert(provider: anytype) ResolveError!?[]u8 {
     const info = provider.lastError() orelse return error.ProviderError;
+    // Only JSON-RPC error code 3 ("execution reverted") carries contract
+    // revert data. Any other code is a server/transport error whose `data`
+    // field, if present, must not be interpreted as a resolver revert.
+    if (info.code != 3) return error.ProviderError;
     const selector = parseSelector(info.data) orelse return error.ProviderError;
 
     if (std.mem.eql(u8, &selector, &OFFCHAIN_LOOKUP_SELECTOR)) return error.OffchainLookupRequired;
@@ -270,6 +274,7 @@ const Provider = @import("../provider.zig").Provider;
 const MockProvider = struct {
     response: []const u8 = "",
     err_data: []const u8 = "",
+    err_code: i64 = 3,
     fail: bool = false,
     captured_to: [20]u8 = undefined,
     captured_data: []u8 = &.{},
@@ -290,7 +295,7 @@ const MockProvider = struct {
 
     pub fn lastError(self: *const MockProvider) ?Provider.ErrorInfo {
         if (!self.fail) return null;
-        return .{ .code = 3, .message = "execution reverted", .data = self.err_data };
+        return .{ .code = self.err_code, .message = "execution reverted", .data = self.err_data };
     }
 };
 
@@ -384,6 +389,15 @@ test "resolve maps ResolverNotFound revert to null" {
     var mock = MockProvider{ .allocator = allocator, .fail = true, .err_data = "0x77209fe8" };
     defer mock.deinit();
     try std.testing.expectEqual(@as(?Address, null), try resolve(allocator, &mock, "vitalik.eth"));
+}
+
+test "resolve treats non-revert RPC error as ProviderError even with selector-shaped data" {
+    const allocator = std.testing.allocator;
+    // Server error (-32000) whose data field happens to parse as a known
+    // selector must NOT be mapped as a resolver revert.
+    var mock = MockProvider{ .allocator = allocator, .fail = true, .err_code = -32000, .err_data = "0x77209fe8" };
+    defer mock.deinit();
+    try std.testing.expectError(error.ProviderError, resolve(allocator, &mock, "vitalik.eth"));
 }
 
 test "resolve maps ResolverError revert to null" {
