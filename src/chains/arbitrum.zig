@@ -94,9 +94,3 @@ test "arbitrum sepolia is testnet" {
     try std.testing.expectEqualStrings("Arbitrum Sepolia", sepolia.name);
     try std.testing.expectEqual(true, sepolia.testnet);
 }
-
-test "arbitrum chains have no ens_registry" {
-    try std.testing.expect(one.ens_registry == null);
-    try std.testing.expect(nova.ens_registry == null);
-    try std.testing.expect(sepolia.ens_registry == null);
-}

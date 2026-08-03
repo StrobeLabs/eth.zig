@@ -1,9 +1,31 @@
 ---
 title: ENS Resolution
-description: Ethereum Name Service forward and reverse resolution with eth.zig.
+description: Ethereum Name Service resolution via the ENSIP-10 Universal Resolver, with ENSIP-15 normalization.
 ---
 
-eth.zig supports ENS (Ethereum Name Service) resolution -- converting human-readable names like `vitalik.eth` to Ethereum addresses and back.
+eth.zig supports ENS (Ethereum Name Service) resolution -- converting human-readable names like `vitalik.eth` to Ethereum addresses and back -- through the ENSIP-10 **Universal Resolver**, deployed at the same address on Ethereum mainnet and Sepolia:
+
+```
+0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe
+```
+
+Every lookup (`resolve`, `getText`, `getContentHash`, `lookupAddress`) first normalizes the name per **ENSIP-15**, then sends a single `resolve(bytes,bytes)` (or `reverse(bytes,uint256)`) call to the Universal Resolver. The Universal Resolver follows wildcard resolution (ENSIP-10) on-chain and reports when a name requires an off-chain CCIP-Read (EIP-3668) round-trip instead of silently returning a wrong or stale answer -- see [Error Handling](#error-handling) below.
+
+## Name Normalization (ENSIP-15)
+
+Every resolution function normalizes its input name before doing anything else, using the same conformance-tested implementation as `ens_normalize.normalize`:
+
+```zig
+const eth = @import("eth");
+
+const normalized = try eth.ens_normalize.normalize(allocator, "Vitalik.ETH");
+defer allocator.free(normalized);
+// normalized == "vitalik.eth"
+```
+
+Normalization enforces ENSIP-15's confusable-script, combining-mark, emoji and case-folding rules and **rejects** malformed input (mixed scripts, illegal combining-mark sequences, whole-script confusables, and more -- see the [error taxonomy](#error-handling)) rather than passing it through.
+
+**Names that fail normalization are rejected and MUST be treated as invalid for payment or identity use.** Never bypass normalization, and never accept a name for a payment or identity decision without it having passed through `resolve` / `lookupAddress` (which normalize internally) or `ens_normalize.normalize` directly.
 
 ## Forward Resolution
 
@@ -20,37 +42,7 @@ var provider = eth.provider.Provider.init(allocator, &transport);
 const addr = try eth.ens_resolver.resolve(allocator, &provider, "vitalik.eth");
 ```
 
-The resolver performs two on-chain lookups:
-1. Queries the ENS registry for the resolver contract address
-2. Calls `addr(bytes32)` on the resolver to get the Ethereum address
-
-Returns `null` if the name has no resolver or resolves to the zero address.
-
-## Reverse Resolution
-
-Resolve an address back to an ENS name:
-
-```zig
-const eth = @import("eth");
-
-const name = try eth.ens_reverse.reverseResolve(allocator, &provider, address);
-defer if (name) |n| allocator.free(n);
-
-// name == "vitalik.eth" (or null if no reverse record)
-```
-
-## Namehash
-
-Compute the ENS namehash (used internally for registry lookups):
-
-```zig
-const eth = @import("eth");
-
-const node = eth.ens_namehash.namehash("vitalik.eth");
-// node is a [32]u8 hash used as the ENS registry key
-```
-
-The namehash algorithm recursively hashes each label separated by `.`, as defined in [EIP-137](https://eips.ethereum.org/EIPS/eip-137).
+`resolve` normalizes the name, derives its namehash and ENSIP-10 DNS-wire encoding, and calls `addr(bytes32)` on the resolver the Universal Resolver finds -- all in one round-trip. Returns `null` when there is no resolver or the record is the zero address.
 
 ## Text Records
 
@@ -67,6 +59,70 @@ defer if (avatar) |a| allocator.free(a);
 
 Common text record keys: `avatar`, `url`, `email`, `description`, `com.twitter`, `com.github`.
 
+## Content Hash
+
+ENS names can point at content-addressed sites (IPFS, IPNS, Swarm) via the [EIP-1577](https://eips.ethereum.org/EIPS/eip-1577) `contenthash` record. Use `getContentHash` to look it up and decode it:
+
+```zig
+const eth = @import("eth");
+
+var maybe_ch = try eth.ens_resolver.getContentHash(allocator, &provider, "vitalik.eth");
+if (maybe_ch) |*ch| {
+    defer ch.deinit(allocator);
+    // ch.protocol is one of .ipfs, .ipns, .swarm
+    // ch.uri is e.g. "ipfs://Qm...", "ipns://k51...", or "bzz://<hex>"
+}
+```
+
+`getContentHash` returns `null` when there is no resolver or the record is empty, and `eth.ens_contenthash.decode` (used internally) can also be called directly on raw `contenthash(bytes32)` bytes from any source.
+
+<Callout type="warn">
+**Compatibility note:** eth.zig decodes IPFS content hashes to their CIDv0 form (`ipfs://Qm...`), which is [EIP-1577's canonical example](https://eips.ethereum.org/EIPS/eip-1577) and matches most CIDs actually stored in ENS records today (dag-pb + sha2-256). Some modern libraries instead render the same bytes as a base32 CIDv1 (`ipfs://bafy...`). Both encode the identical content, but a naive **string comparison** of the returned URI against another library's output can differ even though the underlying CID is equivalent. Any CID that is not dag-pb/sha2-256 -- which cannot be represented as CIDv0 -- is rendered as base32 CIDv1, matching other implementations.
+</Callout>
+
+## Reverse Resolution
+
+Resolve an address back to its verified primary ENS name:
+
+```zig
+const eth = @import("eth");
+
+const name = try eth.ens_reverse.lookupAddress(allocator, &provider, address);
+defer if (name) |n| allocator.free(n);
+
+// name == "vitalik.eth" (or null if there is no verified reverse record)
+```
+
+`lookupAddress` sends a single `reverse(bytes,uint256)` call (ENSIP-19, coinType 60) to the Universal Resolver, which resolves `<addr>.addr.reverse`, reads its primary name, and **additionally verifies the forward record for that name matches the address being reverse-resolved** -- it reverts (mapped to `null`) rather than returning an unverified name when the forward record doesn't match. The returned name is further normalized per ENSIP-15 before being handed back to the caller.
+
+## Namehash and DNS Encoding
+
+Compute the ENS namehash ([EIP-137](https://eips.ethereum.org/EIPS/eip-137)), used internally as the resolver record key:
+
+```zig
+const eth = @import("eth");
+
+const node = eth.ens_namehash.namehash("vitalik.eth");
+// node is a [32]u8 hash used as the resolver record key
+```
+
+The namehash algorithm recursively hashes each label separated by `.`. `ens_namehash.dnsEncode` produces the ENSIP-10 DNS-wire encoding of a name (used as the first argument to the Universal Resolver's `resolve(bytes,bytes)`); both are computed automatically inside `resolve` / `getText` / `getContentHash` and rarely need to be called directly.
+
+## Error Handling
+
+`resolve`, `getText`, and `getContentHash` share `ens_resolver.ResolveError`; `lookupAddress` reuses the same set. Every function normalizes the name first, so normalization failures surface through the same error union:
+
+| Error | Meaning |
+|-------|---------|
+| `OffchainLookupRequired` | The Universal Resolver reverted with EIP-3668's `OffchainLookup`: the record lives off-chain (e.g. a CCIP-Read gateway-backed wildcard name) and requires a gateway round-trip this synchronous API does not perform. Callers that need CCIP-Read support must implement the gateway fetch + `resolveWithProof` callback themselves. |
+| `InvalidResponse` | The ABI-encoded response from the Universal Resolver was too short or malformed. |
+| `ProviderError` | The provider call failed (transport error), or the Universal Resolver reverted with a custom error this library does not recognize. |
+| `LabelTooLong` | A label in the name exceeds the DNS-wire encoding's length limit while building the ENSIP-10 calldata. |
+| `OutOfMemory` | Allocation failure. |
+| *(ENSIP-15 normalization errors)* | `InvalidUtf8`, `EmptyLabel`, `DisallowedCharacter`, `IllegalMixture`, `WholeConfusable`, `LeadingUnderscore`, `InvalidLabelExtension`, `FencedLeading`, `FencedAdjacent`, `FencedTrailing`, `CombiningMarkLeading`, `CombiningMarkAfterEmoji`, `NsmDuplicate`, `NsmExcessive` -- the name failed ENSIP-15 normalization. Forward lookups (`resolve` / `getText` / `getContentHash`) fail before any network call is made, since the input name is normalized first. Reverse lookups (`lookupAddress`) can also surface this error *after* the network call, since the name returned by the Universal Resolver is normalized before being handed back to the caller. See [Name Normalization](#name-normalization-ensip-15). |
+
+A revert that means "no record" (e.g. the Universal Resolver's `ResolverNotFound`, `ResolverNotContract`, `UnsupportedResolverProfile`, `ResolverError`, or -- for reverse resolution -- `ReverseAddressMismatch`) is mapped to `null`, not an error, matching the `null`-for-"not set" convention used throughout eth.zig's ENS API.
+
 ## Requirements
 
-ENS resolution requires a connection to an Ethereum mainnet node (or a node with ENS registry deployed). The ENS registry contract is at `0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`.
+ENS resolution requires a connection to an Ethereum node that has the Universal Resolver deployed -- mainnet or Sepolia today. `OffchainLookupRequired` will surface on any name whose records are served off-chain via CCIP-Read; handling that case (fetching from the gateway URL(s) in the revert and resubmitting) is left to the caller.

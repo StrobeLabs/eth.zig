@@ -33,7 +33,6 @@ pub const Chain = struct {
     rpc_urls: []const []const u8,
     block_explorers: []const BlockExplorer,
     multicall3: ?Contract = null,
-    ens_registry: ?Contract = null,
     testnet: bool = false,
 };
 
@@ -130,25 +129,6 @@ test "addressFromHex produces correct bytes" {
     try std.testing.expectEqual(@as(u8, 0xca), addr[0]);
     try std.testing.expectEqual(@as(u8, 0x11), addr[1]);
     try std.testing.expectEqual(@as(u8, 0x11), addr[19]);
-}
-
-test "ethereum mainnet has ens_registry" {
-    const eth_mainnet = getChain(1);
-    try std.testing.expect(eth_mainnet != null);
-    try std.testing.expect(eth_mainnet.?.ens_registry != null);
-
-    const expected_ens = addressFromHex("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
-    try std.testing.expect(std.mem.eql(u8, &eth_mainnet.?.ens_registry.?.address, &expected_ens));
-}
-
-test "non-ethereum chains have no ens_registry" {
-    const arb = getChain(42161);
-    try std.testing.expect(arb != null);
-    try std.testing.expect(arb.?.ens_registry == null);
-
-    const op = getChain(10);
-    try std.testing.expect(op != null);
-    try std.testing.expect(op.?.ens_registry == null);
 }
 
 test "all chains have empty rpc_urls" {

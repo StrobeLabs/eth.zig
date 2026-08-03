@@ -10,6 +10,7 @@ build:
 ## Run unit tests (no network required)
 test:
 	$(ZIG) build test
+	$(ZIG) build vector-test
 
 ## Check formatting — mirrors the CI fmt job
 fmt:

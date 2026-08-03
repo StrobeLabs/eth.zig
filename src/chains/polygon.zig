@@ -72,8 +72,3 @@ test "polygon amoy is testnet" {
     try std.testing.expectEqualStrings("Polygon Amoy", amoy.name);
     try std.testing.expectEqual(true, amoy.testnet);
 }
-
-test "polygon chains have no ens_registry" {
-    try std.testing.expect(mainnet.ens_registry == null);
-    try std.testing.expect(amoy.ens_registry == null);
-}

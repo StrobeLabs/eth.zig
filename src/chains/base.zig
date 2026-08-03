@@ -72,8 +72,3 @@ test "base sepolia is testnet" {
     try std.testing.expectEqualStrings("Base Sepolia", sepolia.name);
     try std.testing.expectEqual(true, sepolia.testnet);
 }
-
-test "base chains have no ens_registry" {
-    try std.testing.expect(mainnet.ens_registry == null);
-    try std.testing.expect(sepolia.ens_registry == null);
-}

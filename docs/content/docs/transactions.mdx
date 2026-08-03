@@ -17,7 +17,7 @@ defer transport.deinit();
 var provider = eth.provider.Provider.init(allocator, &transport);
 
 const private_key = try eth.hex.hexToBytesFixed(32, "your_private_key_hex");
-var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 
 // Send 1 ETH -- nonce, gas, and chain_id are auto-filled
 const tx_hash = try wallet.sendTransaction(.{

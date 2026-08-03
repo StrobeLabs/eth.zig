@@ -29,6 +29,8 @@ jobs:
           version: ${{ matrix.zig-version }}
       - name: Run unit tests
         run: zig build test
+      - name: Run ENS conformance vectors
+        run: zig build vector-test
 
   fmt:
     name: Format check

@@ -1,0 +1,35 @@
+spec.bin and nf.bin are vendored unmodified from adraffy/go-ens-normalize
+  https://github.com/adraffy/go-ens-normalize
+  commit 165fa80d967c431535e77f04a1ee017c941746cd (2025-09-20)
+  License: MIT (Copyright (c) 2024 Andrew Raffensperger)
+The Zig sources in src/ens/normalize/ are a port of the same project.
+tests/data/ens-normalize/*.json are the upstream validation vectors
+(ens-normalize version 1.11.1, Unicode 17.0.0).
+
+--------------------------------------------------------------------------------
+
+The following license applies to the vendored spec.bin / nf.bin data and to
+the ported Zig sources in src/ens/normalize/, per the upstream project's MIT
+license (https://github.com/adraffy/go-ens-normalize/blob/165fa80d967c431535e77f04a1ee017c941746cd/LICENSE):
+
+MIT License
+
+Copyright (c) 2024 Andrew Raffensperger
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -193,7 +193,7 @@ test "Wallet.address derives correct address from private key" {
     var provider = eth.provider.Provider.init(allocator, &transport);
 
     const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
-    const wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    const wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 
     const addr = try wallet.address();
     const expected = try eth.primitives.addressFromHex(ACCOUNT_0_ADDR_HEX);
@@ -213,7 +213,7 @@ test "send ETH transfer and verify receipt" {
     var provider = eth.provider.Provider.init(allocator, &transport);
 
     const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
-    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 
     const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
     const send_value = eth.units.parseEther(0.01) orelse return error.ParseEtherFailed;
@@ -280,7 +280,7 @@ test "sendTransactionAndWait returns receipt directly" {
     var provider = eth.provider.Provider.init(allocator, &transport);
 
     const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
-    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 
     const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
     const send_value = eth.units.parseEther(0.001) orelse return error.ParseEtherFailed;
@@ -320,7 +320,7 @@ test "abigen send: bind ERC-20 and transfer against a deployed contract" {
     var provider = eth.provider.Provider.init(allocator, &transport);
 
     const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
-    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
     defer wallet.deinit();
 
     // Deploy the stub contract and recover its address from the receipt.
@@ -577,7 +577,7 @@ test "WsClient subscribe pending full streams an RpcTransaction" {
     defer http.deinit();
     var provider = eth.provider.Provider.init(allocator, &http);
     const private_key = try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX);
-    var wallet = eth.wallet.Wallet.init(allocator, private_key, &provider);
+    var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
     const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
     const send_value = eth.units.parseEther(0.001) orelse return error.ParseEtherFailed;
     const tx_hash = try wallet.sendTransaction(.{
@@ -655,4 +655,131 @@ test "LogWatcher pollOnce tracks mined blocks" {
     const logs2 = try watcher.pollOnce();
     defer eth.log_watcher.freeLogs(allocator, logs2);
     try std.testing.expectEqual(first.number + 1, watcher.cursor.?.number);
+}
+
+// ============================================================================
+// ENS resolution (Universal Resolver, mainnet -- requires ETH_RPC_URL)
+// ============================================================================
+//
+// Unlike every test above, these hit live Ethereum mainnet through the
+// Universal Resolver (0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe): Anvil has
+// no ENS registry or resolver state to fork against locally without a mainnet
+// RPC anyway, so these are gated on the ETH_RPC_URL environment variable
+// instead of `isAnvilAvailable()`. They skip via `error.SkipZigTest` (rather
+// than the silent `return` used above) when it is unset -- this is how CI
+// runs, since it has no mainnet RPC credential. Set ETH_RPC_URL to a mainnet
+// endpoint in your own shell to exercise them locally; never hardcode one
+// here.
+//
+// Env access note: Zig 0.16 removed `std.process.getEnvVarOwned` (ambient env
+// access moved behind the `Io` model). `std.c.getenv` is the portable POSIX
+// read eth.zig already relies on elsewhere (see `kms.zig`'s `envOwned`), and
+// works here because the library links libc.
+
+/// vitalik.eth has resolved to this address since 2017; a stable fixture for
+/// forward- and reverse-resolution tests.
+const VITALIK_ADDR_HEX = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+/// Read ETH_RPC_URL from the environment, or null if unset.
+fn ethRpcUrl() ?[]const u8 {
+    const raw = std.c.getenv("ETH_RPC_URL") orelse return null;
+    return std.mem.span(raw);
+}
+
+test "ENS resolve: vitalik.eth resolves to its known address" {
+    const rpc_url = ethRpcUrl() orelse return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const expected = try eth.primitives.addressFromHex(VITALIK_ADDR_HEX);
+    const resolved = try eth.ens_resolver.resolve(allocator, &provider, "vitalik.eth");
+    try std.testing.expect(resolved != null);
+    try std.testing.expectEqualSlices(u8, &expected, &resolved.?);
+}
+
+test "ENS resolve: mixed-case name normalizes to the same address" {
+    const rpc_url = ethRpcUrl() orelse return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    // "Vitalik.ETH" normalizes to "vitalik.eth" (ENSIP-15 lowercases ASCII
+    // letters), so it must resolve to the same address as the lowercase name.
+    const expected = try eth.primitives.addressFromHex(VITALIK_ADDR_HEX);
+    const resolved = try eth.ens_resolver.resolve(allocator, &provider, "Vitalik.ETH");
+    try std.testing.expect(resolved != null);
+    try std.testing.expectEqualSlices(u8, &expected, &resolved.?);
+}
+
+test "ENS getText: vitalik.eth has a non-empty url record" {
+    const rpc_url = ethRpcUrl() orelse return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const url = try eth.ens_resolver.getText(allocator, &provider, "vitalik.eth", "url");
+    defer if (url) |u| allocator.free(u);
+    try std.testing.expect(url != null);
+    try std.testing.expect(url.?.len > 0);
+}
+
+test "ENS lookupAddress: vitalik's address reverse-resolves to vitalik.eth" {
+    const rpc_url = ethRpcUrl() orelse return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const addr = try eth.primitives.addressFromHex(VITALIK_ADDR_HEX);
+    const name = try eth.ens_reverse.lookupAddress(allocator, &provider, addr);
+    defer if (name) |n| allocator.free(n);
+    try std.testing.expect(name != null);
+    try std.testing.expectEqualStrings("vitalik.eth", name.?);
+}
+
+test "ENS getContentHash: vitalik.eth has an ipfs contenthash" {
+    const rpc_url = ethRpcUrl() orelse return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const maybe_ch = try eth.ens_resolver.getContentHash(allocator, &provider, "vitalik.eth");
+    try std.testing.expect(maybe_ch != null);
+    var ch = maybe_ch.?;
+    defer ch.deinit(allocator);
+    try std.testing.expectEqual(eth.ens_contenthash.Protocol.ipfs, ch.protocol);
+}
+
+// "1.offchainexample.eth" is the ENS team's own reference CCIP-Read
+// (EIP-3668) demo domain -- a wildcard name whose resolver
+// (0xC1735677a60884ABbCF72295E88d47764BeDa1D on mainnet) has answered
+// `OffchainLookup` since the ENS offchain-resolver-examples deployment in
+// 2021, and is the fixture other ENS-ecosystem client libraries use for the
+// same purpose. Probed live against mainnet (via a public RPC, outside this
+// sandboxed environment where ETH_RPC_URL is unset) on the day this test was
+// written: the Universal Resolver's `resolve(bytes,bytes)` reverts with
+// `OffchainLookup(address,string[],bytes,bytes4,bytes)` (selector
+// 0x556f1830), which `resolve()` maps to `error.OffchainLookupRequired`. If
+// this ever stops being true (the demo resolver goes away), replace the name
+// with another currently-live wildcard/CCIP domain.
+test "ENS resolve: CCIP-Read wildcard name surfaces OffchainLookupRequired" {
+    const rpc_url = ethRpcUrl() orelse return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+
+    var transport = eth.http_transport.HttpTransport.init(allocator, rpc_url, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+
+    const result = eth.ens_resolver.resolve(allocator, &provider, "1.offchainexample.eth");
+    try std.testing.expectError(error.OffchainLookupRequired, result);
 }

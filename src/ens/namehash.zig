@@ -44,6 +44,40 @@ pub fn labelhash(label: []const u8) [32]u8 {
     return keccak.hash(label);
 }
 
+/// Encode an ENS name to DNS wire format (ENSIP-10).
+///
+/// Converts a dot-separated ENS name to DNS wire format: each label is
+/// prefixed with its length byte (0-63), followed by the label bytes, and
+/// the sequence is terminated with a zero byte (root label).
+///
+/// Empty name encodes to a single zero byte (representing the root).
+/// A label longer than 63 bytes returns error.LabelTooLong.
+/// Input is assumed already normalized (no double dots, no leading dots).
+pub fn dnsEncode(allocator: std.mem.Allocator, name: []const u8) error{ LabelTooLong, OutOfMemory }![]u8 {
+    var list: std.ArrayList(u8) = .empty;
+    errdefer list.deinit(allocator);
+
+    if (name.len == 0) {
+        try list.append(allocator, 0);
+        return list.toOwnedSlice(allocator);
+    }
+
+    var iter = std.mem.splitScalar(u8, name, '.');
+    while (iter.next()) |label| {
+        if (label.len == 0) {
+            continue;
+        }
+        if (label.len > 63) {
+            return error.LabelTooLong;
+        }
+        try list.append(allocator, @intCast(label.len));
+        try list.appendSlice(allocator, label);
+    }
+
+    try list.append(allocator, 0);
+    return list.toOwnedSlice(allocator);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -159,4 +193,36 @@ test "namehash trailing dot handling" {
     const with_dot = namehash("foo.eth.");
     const without_dot = namehash("foo.eth");
     try std.testing.expectEqualSlices(u8, &without_dot, &with_dot);
+}
+
+// ============================================================================
+// dnsEncode Tests
+// ============================================================================
+
+test "dnsEncode vitalik.eth" {
+    const allocator = std.testing.allocator;
+    const out = try dnsEncode(allocator, "vitalik.eth");
+    defer allocator.free(out);
+    try std.testing.expectEqualSlices(u8, "\x07vitalik\x03eth\x00", out);
+}
+
+test "dnsEncode empty name is root" {
+    const allocator = std.testing.allocator;
+    const out = try dnsEncode(allocator, "");
+    defer allocator.free(out);
+    try std.testing.expectEqualSlices(u8, "\x00", out);
+}
+
+test "dnsEncode rejects label over 63 bytes" {
+    const long_label = "a" ** 64 ++ ".eth";
+    try std.testing.expectError(error.LabelTooLong, dnsEncode(std.testing.allocator, long_label));
+}
+
+test "dnsEncode 63-byte label ok" {
+    const allocator = std.testing.allocator;
+    const name = "a" ** 63 ++ ".eth";
+    const out = try dnsEncode(allocator, name);
+    defer allocator.free(out);
+    try std.testing.expectEqual(@as(usize, 1 + 63 + 1 + 3 + 1), out.len);
+    try std.testing.expectEqual(@as(u8, 63), out[0]);
 }
