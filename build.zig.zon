@@ -1,6 +1,6 @@
 .{
     .name = .eth_zig,
-    .version = "0.8.1", // x-release-please-version
+    .version = "0.9.0", // x-release-please-version
     .fingerprint = 0xd0f21900fa26f179,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

@@ -232,7 +232,7 @@ Built something with eth.zig? Open a PR to add it here.
 
 <!-- x-release-please-start-version -->
 ```bash
-zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.8.1
+zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.9.0
 ```
 <!-- x-release-please-end -->
 
@@ -242,7 +242,7 @@ zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.8.1
 ```zig
 .dependencies = .{
     .eth = .{
-        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.8.1",
+        .url = "git+https://github.com/StrobeLabs/eth.zig.git#v0.9.0",
         .hash = "...", // run `zig build` and it will tell you the expected hash
     },
 },

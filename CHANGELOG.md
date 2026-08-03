@@ -5,6 +5,23 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0](https://github.com/StrobeLabs/eth.zig/compare/v0.8.1...v0.9.0) (2026-08-03)
+
+
+### Features
+
+* Universal Resolver migration with full ENSIP-15 normalization ([#113](https://github.com/StrobeLabs/eth.zig/issues/113)) ([df58766](https://github.com/StrobeLabs/eth.zig/commit/df5876663112f232f5f2072893cebfe81ab80d23))
+
+
+### Bug Fixes
+
+* double deinit of response buffer on non-200 HTTP responses ([#112](https://github.com/StrobeLabs/eth.zig/issues/112)) ([75aaafb](https://github.com/StrobeLabs/eth.zig/commit/75aaafbfa0f20f84acab19c8939402b26c0fd1b5))
+
+
+### Performance Improvements
+
+* route safeDiv through divLimbsDirect (not the builtin u256 /) ([#107](https://github.com/StrobeLabs/eth.zig/issues/107)) ([9da2547](https://github.com/StrobeLabs/eth.zig/commit/9da2547ecb333fd5aa32dbbee05b543f30389067))
+
 ## [Unreleased]
 
 ### Added
