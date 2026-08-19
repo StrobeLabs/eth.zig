@@ -11,6 +11,23 @@ pub const HttpTransport = struct {
     /// `Provider`) can inherit it as their single source of truth.
     io: std.Io,
     client: std.http.Client,
+    /// Diagnostics for the most recent failed request. See lastFailure().
+    last_failure: ?Failure = null,
+
+    /// The underlying cause behind the most recent `error.ConnectionFailed`
+    /// or `error.HttpError` from request()/requestBatch(). Those two error
+    /// names alone are undiagnosable from logs (prod 2026-08-19: an hour of
+    /// `ConnectionFailed` with no way to tell DNS from TLS from a dead pooled
+    /// connection), so the transport records what actually happened.
+    pub const Failure = union(enum) {
+        /// `std.http.Client.fetch` failed before an HTTP response arrived
+        /// (DNS, TCP connect, TLS handshake, broken pooled connection, ...).
+        /// Surfaced to callers as `error.ConnectionFailed`.
+        transport: anyerror,
+        /// The endpoint answered with a non-200 status (e.g. 429 capacity
+        /// limit). Surfaced to callers as `error.HttpError`.
+        http_status: std.http.Status,
+    };
 
     pub fn init(allocator: std.mem.Allocator, url: []const u8, io: std.Io) HttpTransport {
         return .{
@@ -19,6 +36,13 @@ pub const HttpTransport = struct {
             .io = io,
             .client = .{ .allocator = allocator, .io = io },
         };
+    }
+
+    /// The cause of the most recent request()/requestBatch() failure, or null
+    /// if the last request succeeded. Valid until the next request on this
+    /// transport.
+    pub fn lastFailure(self: *const HttpTransport) ?Failure {
+        return self.last_failure;
     }
 
     pub fn deinit(self: *HttpTransport) void {
@@ -66,6 +90,7 @@ pub const HttpTransport = struct {
     /// Send a batch JSON-RPC request and return the raw response body.
     /// Caller owns the returned memory.
     pub fn requestBatch(self: *HttpTransport, bodies: []const []const u8) ![]u8 {
+        self.last_failure = null;
         const batch_body = try buildBatchBody(self.allocator, bodies);
         defer self.allocator.free(batch_body);
 
@@ -85,10 +110,12 @@ pub const HttpTransport = struct {
 
         if (result) |res| {
             if (res.status != .ok) {
+                self.last_failure = .{ .http_status = res.status };
                 return error.HttpError;
             }
             return response_body.toOwnedSlice();
-        } else |_| {
+        } else |err| {
+            self.last_failure = .{ .transport = err };
             return error.ConnectionFailed;
         }
     }
@@ -96,6 +123,7 @@ pub const HttpTransport = struct {
     /// Send a JSON-RPC request and return the raw response body.
     /// Caller owns the returned memory.
     pub fn request(self: *HttpTransport, method: []const u8, params_json: []const u8, id: u64) ![]u8 {
+        self.last_failure = null;
         const body = try buildRequestBody(self.allocator, method, params_json, id);
         defer self.allocator.free(body);
 
@@ -115,10 +143,12 @@ pub const HttpTransport = struct {
 
         if (result) |res| {
             if (res.status != .ok) {
+                self.last_failure = .{ .http_status = res.status };
                 return error.HttpError;
             }
             return response_body.toOwnedSlice();
-        } else |_| {
+        } else |err| {
+            self.last_failure = .{ .transport = err };
             return error.ConnectionFailed;
         }
     }
@@ -313,5 +343,41 @@ test "request surfaces HttpError on non-200 status without double-freeing the re
     // Two calls: the second exercises the transport again after the first
     // error path, catching any allocator state corrupted by the first.
     try std.testing.expectError(error.HttpError, transport.request("eth_blockNumber", "[]", 1));
+    try std.testing.expectEqual(
+        HttpTransport.Failure{ .http_status = .too_many_requests },
+        transport.lastFailure().?,
+    );
     try std.testing.expectError(error.HttpError, transport.request("eth_blockNumber", "[]", 2));
+    try std.testing.expectEqual(
+        HttpTransport.Failure{ .http_status = .too_many_requests },
+        transport.lastFailure().?,
+    );
+}
+
+test "lastFailure captures the transport-level cause of ConnectionFailed" {
+    const allocator = std.testing.allocator;
+    const runtime = @import("runtime.zig");
+    const io = runtime.blockingIo();
+
+    // Bind an ephemeral port, then close the listener so connecting to it is
+    // refused. The transport must surface error.ConnectionFailed to the
+    // caller while recording the real cause in lastFailure().
+    const addr = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    var bound: std.c.sockaddr.in = undefined;
+    var bound_len: std.c.socklen_t = @sizeOf(@TypeOf(bound));
+    if (std.c.getsockname(server.socket.handle, @ptrCast(&bound), &bound_len) != 0)
+        return error.GetSockNameFailed;
+    const port = std.mem.bigToNative(u16, bound.port);
+    server.deinit(io);
+
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}", .{port});
+    var transport = HttpTransport.init(allocator, url, io);
+    defer transport.deinit();
+
+    try std.testing.expect(transport.lastFailure() == null);
+    try std.testing.expectError(error.ConnectionFailed, transport.request("eth_blockNumber", "[]", 1));
+    const failure = transport.lastFailure() orelse return error.TestExpectedFailureRecorded;
+    try std.testing.expect(failure == .transport);
 }
