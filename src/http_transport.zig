@@ -38,9 +38,11 @@ pub const HttpTransport = struct {
         };
     }
 
-    /// The cause of the most recent request()/requestBatch() failure, or null
-    /// if the last request succeeded. Valid until the next request on this
-    /// transport.
+    /// The cause of the most recent request()/requestBatch() failure that was
+    /// surfaced as `error.ConnectionFailed` or `error.HttpError`. Null after a
+    /// successful request, but also after failures outside those two paths
+    /// (e.g. request-body allocation), so null is not proof the last request
+    /// succeeded. Valid until the next request on this transport.
     pub fn lastFailure(self: *const HttpTransport) ?Failure {
         return self.last_failure;
     }
@@ -380,4 +382,5 @@ test "lastFailure captures the transport-level cause of ConnectionFailed" {
     try std.testing.expectError(error.ConnectionFailed, transport.request("eth_blockNumber", "[]", 1));
     const failure = transport.lastFailure() orelse return error.TestExpectedFailureRecorded;
     try std.testing.expect(failure == .transport);
+    try std.testing.expectEqual(@as(anyerror, error.ConnectionRefused), failure.transport);
 }
