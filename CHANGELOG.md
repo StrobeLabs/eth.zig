@@ -5,6 +5,13 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1](https://github.com/StrobeLabs/eth.zig/compare/v0.9.0...v0.9.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* record the underlying cause of transport failures for diagnostics ([#115](https://github.com/StrobeLabs/eth.zig/issues/115)) ([508a9eb](https://github.com/StrobeLabs/eth.zig/commit/508a9eb82307a4371047a960269226399508091d))
+
 ## [0.9.0](https://github.com/StrobeLabs/eth.zig/compare/v0.8.1...v0.9.0) (2026-08-03)
 
 
