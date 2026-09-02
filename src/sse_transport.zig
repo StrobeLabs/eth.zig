@@ -144,9 +144,15 @@ pub const SseParser = struct {
         } else if (std.mem.eql(u8, field, "data")) {
             // Append to data buffer, joining multiple data: lines with '\n'.
             // Mark that a data: line was seen even if the value is empty.
-            if (self.has_data and self.data_len < self.data_buf.len) {
-                self.data_buf[self.data_len] = '\n';
-                self.data_len += 1;
+            if (self.has_data) {
+                if (self.data_len < self.data_buf.len) {
+                    self.data_buf[self.data_len] = '\n';
+                    self.data_len += 1;
+                } else {
+                    // The separator itself no longer fits, so the joined data
+                    // is incomplete even when this value is empty.
+                    self.data_truncated = true;
+                }
             }
             self.has_data = true;
             const remaining = self.data_buf.len - self.data_len;
@@ -198,7 +204,8 @@ pub const StreamOpts = struct {
     /// Size of the reader transfer buffer. Lines that fit here are read
     /// without allocating; larger ones fall back to the overflow buffer.
     transfer_buffer_size: usize = default_transfer_buffer_size,
-    /// Maximum length of a single line. Exceeding it fails the read with
+    /// Maximum length of a single line, enforced whether or not the line fit
+    /// the transfer buffer. Exceeding it fails the read with
     /// `error.LineTooLong` rather than allocating without bound.
     max_line_size: usize = default_max_line_size,
 };
@@ -246,6 +253,9 @@ pub const LineReader = struct {
     /// slice is valid only until the next call.
     pub fn next(self: *LineReader) Error![]const u8 {
         if (self.reader.takeDelimiterInclusive('\n')) |line| {
+            // The bound is on the line, not on the overflow buffer: a line that
+            // happens to fit the transfer buffer is still subject to it.
+            if (line.len - 1 > self.max_line_size) return error.LineTooLong;
             return line[0 .. line.len - 1];
         } else |err| switch (err) {
             // The line does not fit the transfer buffer. `peekDelimiterInclusive`
@@ -782,4 +792,50 @@ test "all public declarations compile" {
     // network), so force semantic analysis of every declaration to keep
     // lazily-compiled API breakage out of the consumer path.
     std.testing.refAllDecls(@This());
+}
+
+test "LineReader enforces max_line_size on a line that fits the transfer buffer" {
+    const allocator = std.testing.allocator;
+
+    const line_len = 5 * 1024;
+    const line = try allocator.alloc(u8, line_len);
+    defer allocator.free(line);
+    @memset(line, 'f');
+
+    var stream_bytes: std.Io.Writer.Allocating = .init(allocator);
+    defer stream_bytes.deinit();
+    try stream_bytes.writer.writeAll(line);
+    try stream_bytes.writer.writeAll("\n");
+
+    // The line fits the transfer buffer, so it never reaches the overflow
+    // path -- the configured bound must still hold.
+    var transfer_buf: [8 * 1024]u8 = undefined;
+    var src = TestSliceReader.init(stream_bytes.written(), &transfer_buf);
+
+    var lines = LineReader.init(allocator, &src.interface, 4 * 1024);
+    defer lines.deinit();
+
+    try std.testing.expectError(error.LineTooLong, lines.next());
+}
+
+test "SseParser flags a dropped data separator as truncated" {
+    const allocator = std.testing.allocator;
+
+    var parser = SseParser{};
+
+    // Fill data_buf exactly: "data: " prefix plus a value of exactly its length.
+    const filling = try allocator.alloc(u8, parser.data_buf.len + 6);
+    defer allocator.free(filling);
+    @memset(filling, 'w');
+    @memcpy(filling[0..6], "data: ");
+    try std.testing.expect(parser.feedLine(filling) == null);
+    try std.testing.expect(!parser.data_truncated);
+    try std.testing.expectEqual(parser.data_buf.len, parser.data_len);
+
+    // A second, empty data: line still owes a '\n' separator that no longer
+    // fits, so the dispatched data is incomplete.
+    try std.testing.expect(parser.feedLine("data:") == null);
+
+    const evt = parser.feedLine("").?;
+    try std.testing.expect(evt.truncated);
 }
