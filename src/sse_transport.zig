@@ -20,6 +20,11 @@ pub const SseEvent = struct {
     /// when the event is dispatched (may be an empty slice when the server sent
     /// a bare `data:` line with no value).
     data: []const u8,
+    /// True when the event's data exceeded the parser's fixed data buffer and
+    /// `data` therefore holds a prefix rather than the whole payload. Consumers
+    /// that parse `data` should check this before reporting a parse failure --
+    /// truncated JSON is a size problem, not a malformed-server problem.
+    truncated: bool = false,
 };
 
 pub const SseError = error{
@@ -104,6 +109,7 @@ pub const SseParser = struct {
                 .id = if (self.id_len > 0) self.id_buf[0..self.id_len] else null,
                 .event = if (self.event_len > 0) self.event_buf[0..self.event_len] else null,
                 .data = self.data_buf[0..self.data_len],
+                .truncated = self.data_truncated,
             } else null;
 
             // Clear per-event state; last_event_id and retry_ms persist.
@@ -176,6 +182,130 @@ pub const SseParser = struct {
 };
 
 // ============================================================================
+// Line reader
+// ============================================================================
+
+/// Default size of the reader transfer buffer used by the SSE transports.
+/// Lines that fit here are returned without allocating.
+pub const default_transfer_buffer_size = 64 * 1024;
+
+/// Default upper bound on a single accumulated line. A server streaming an
+/// unbounded line would otherwise grow the overflow buffer without limit.
+pub const default_max_line_size = 1024 * 1024;
+
+/// Sizing knobs for the SSE read path.
+pub const StreamOpts = struct {
+    /// Size of the reader transfer buffer. Lines that fit here are read
+    /// without allocating; larger ones fall back to the overflow buffer.
+    transfer_buffer_size: usize = default_transfer_buffer_size,
+    /// Maximum length of a single line. Exceeding it fails the read with
+    /// `error.LineTooLong` rather than allocating without bound.
+    max_line_size: usize = default_max_line_size,
+};
+
+/// Reads `\n`-delimited lines from a `std.Io.Reader`, transparently handling
+/// lines longer than the reader's transfer buffer.
+///
+/// `std.Io.Reader.takeDelimiterInclusive` fails with `error.StreamTooLong`
+/// when a line does not fit the transfer buffer, which kills an SSE stream on
+/// the first oversized event. This wrapper keeps that call as the fast path
+/// (no allocation, the returned slice points into the reader buffer) and falls
+/// back to accumulating into a heap buffer only for lines that overflow it.
+pub const LineReader = struct {
+    reader: *std.Io.Reader,
+    overflow: std.Io.Writer.Allocating,
+    max_line_size: usize,
+
+    pub const Error = error{
+        /// The stream ended. A trailing line without a final `\n` is
+        /// discarded, matching the delimiter-based read it replaces.
+        EndOfStream,
+        ReadFailed,
+        /// A single line exceeded `max_line_size`.
+        LineTooLong,
+        OutOfMemory,
+    };
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        reader: *std.Io.Reader,
+        max_line_size: usize,
+    ) LineReader {
+        return .{
+            .reader = reader,
+            .overflow = .init(allocator),
+            .max_line_size = max_line_size,
+        };
+    }
+
+    pub fn deinit(self: *LineReader) void {
+        self.overflow.deinit();
+    }
+
+    /// Return the next line with its trailing `\n` stripped. The returned
+    /// slice is valid only until the next call.
+    pub fn next(self: *LineReader) Error![]const u8 {
+        if (self.reader.takeDelimiterInclusive('\n')) |line| {
+            return line[0 .. line.len - 1];
+        } else |err| switch (err) {
+            // The line does not fit the transfer buffer. `peekDelimiterInclusive`
+            // leaves the stream state untouched in this case, so the buffered
+            // bytes are picked up again by the accumulating path below.
+            error.StreamTooLong => {},
+            error.EndOfStream => return error.EndOfStream,
+            error.ReadFailed => return error.ReadFailed,
+        }
+
+        self.overflow.clearRetainingCapacity();
+        _ = self.reader.streamDelimiterLimit(
+            &self.overflow.writer,
+            '\n',
+            .limited(self.max_line_size),
+        ) catch |err| switch (err) {
+            error.StreamTooLong => return error.LineTooLong,
+            // The only way an allocating writer fails.
+            error.WriteFailed => return error.OutOfMemory,
+            error.ReadFailed => return error.ReadFailed,
+        };
+
+        // `streamDelimiterLimit` stops on the delimiter without consuming it and
+        // leaves it buffered; an empty buffer means the stream ended first.
+        if (self.reader.bufferedLen() == 0) return error.EndOfStream;
+        self.reader.toss(1);
+
+        return self.overflow.written();
+    }
+};
+
+/// Drive `parser` from `reader` until the stream closes, invoking `onEvent`
+/// for each dispatched event.
+///
+/// Returns normally when the stream closes cleanly. Lines longer than the
+/// reader's transfer buffer are handled by `LineReader`, so an oversized event
+/// no longer terminates the stream.
+pub fn pumpEvents(
+    allocator: std.mem.Allocator,
+    reader: *std.Io.Reader,
+    parser: *SseParser,
+    max_line_size: usize,
+    context: anytype,
+    comptime onEvent: fn (@TypeOf(context), SseEvent) anyerror!void,
+) !void {
+    var lines = LineReader.init(allocator, reader, max_line_size);
+    defer lines.deinit();
+
+    while (true) {
+        const line = lines.next() catch |err| switch (err) {
+            error.EndOfStream => return, // normal close
+            else => |e| return e,
+        };
+        if (parser.feedLine(line)) |evt| {
+            try onEvent(context, evt);
+        }
+    }
+}
+
+// ============================================================================
 // Transport
 // ============================================================================
 
@@ -197,6 +327,7 @@ pub fn subscribe(
     io: std.Io,
     extra_headers: []const std.http.Header,
     parser: *SseParser,
+    opts: StreamOpts,
     callback: *const fn (event: SseEvent) void,
 ) !void {
     var client = std.http.Client{ .allocator = allocator, .io = io };
@@ -242,20 +373,18 @@ pub fn subscribe(
     // Reset per-event state but preserve last_event_id and retry_ms.
     parser.reset();
 
-    var transfer_buf: [8192]u8 = undefined;
-    const reader = response.reader(&transfer_buf);
+    const transfer_buf = try allocator.alloc(u8, opts.transfer_buffer_size);
+    defer allocator.free(transfer_buf);
+    const reader = response.reader(transfer_buf);
 
-    while (true) {
-        const line_with_nl = reader.takeDelimiterInclusive('\n') catch |err| switch (err) {
-            error.EndOfStream => return, // normal close
-            else => return err,
-        };
-        const line = line_with_nl[0 .. line_with_nl.len - 1];
-
-        if (parser.feedLine(line)) |evt| {
-            callback(evt);
+    const Shim = struct {
+        cb: *const fn (event: SseEvent) void,
+        fn onEvent(self: *const @This(), evt: SseEvent) anyerror!void {
+            self.cb(evt);
         }
-    }
+    };
+    const shim = Shim{ .cb = callback };
+    try pumpEvents(allocator, reader, parser, opts.max_line_size, &shim, Shim.onEvent);
 }
 
 /// Options for `subscribeWithReconnect`.
@@ -268,6 +397,8 @@ pub const ReconnectOpts = struct {
     /// Optional callback invoked before each reconnect attempt.
     /// Receives the backoff delay that will be applied.
     on_reconnect: ?*const fn (backoff_ms: u64) void = null,
+    /// Read-path sizing passed through to `subscribe`.
+    stream: StreamOpts = .{},
 };
 
 /// Connect to an SSE endpoint and stream events forever, reconnecting with
@@ -293,7 +424,7 @@ pub fn subscribeWithReconnect(
     var backoff_ms = opts.initial_backoff_ms;
 
     while (true) {
-        if (subscribe(allocator, url, io, extra_headers, &parser, callback)) |_| {
+        if (subscribe(allocator, url, io, extra_headers, &parser, opts.stream, callback)) |_| {
             // Clean close -- reset backoff.
             backoff_ms = opts.initial_backoff_ms;
         } else |_| {}
@@ -466,4 +597,189 @@ test "SseParser ignores unknown fields" {
     const evt = parser.feedLine("").?;
     try std.testing.expectEqualStrings("perp_price", evt.event.?);
     try std.testing.expectEqualStrings("test_data", evt.data);
+}
+
+// ============================================================================
+// LineReader tests
+// ============================================================================
+
+/// Test-only reader over a fixed slice, driven through a caller-sized buffer
+/// so lines longer than that buffer exercise the overflow path.
+const TestSliceReader = struct {
+    data: []const u8,
+    pos: usize = 0,
+    interface: std.Io.Reader,
+
+    fn init(data: []const u8, buffer: []u8) TestSliceReader {
+        return .{
+            .data = data,
+            .interface = .{
+                .vtable = &.{ .stream = stream },
+                .buffer = buffer,
+                .seek = 0,
+                .end = 0,
+            },
+        };
+    }
+
+    fn stream(
+        r: *std.Io.Reader,
+        w: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) std.Io.Reader.StreamError!usize {
+        const self: *TestSliceReader = @alignCast(@fieldParentPtr("interface", r));
+        if (self.pos >= self.data.len) return error.EndOfStream;
+        const chunk = limit.sliceConst(self.data[self.pos..]);
+        w.writeAll(chunk) catch return error.WriteFailed;
+        self.pos += chunk.len;
+        return chunk.len;
+    }
+};
+
+test "LineReader returns a line longer than the transfer buffer" {
+    const allocator = std.testing.allocator;
+
+    const long_len = 20_000;
+    const long = try allocator.alloc(u8, long_len);
+    defer allocator.free(long);
+    @memset(long, 'x');
+
+    var stream_bytes: std.Io.Writer.Allocating = .init(allocator);
+    defer stream_bytes.deinit();
+    try stream_bytes.writer.writeAll("data: short\n");
+    try stream_bytes.writer.writeAll(long);
+    try stream_bytes.writer.writeAll("\n");
+    try stream_bytes.writer.writeAll("data: after\n");
+
+    var transfer_buf: [512]u8 = undefined;
+    var src = TestSliceReader.init(stream_bytes.written(), &transfer_buf);
+
+    var lines = LineReader.init(allocator, &src.interface, default_max_line_size);
+    defer lines.deinit();
+
+    try std.testing.expectEqualStrings("data: short", try lines.next());
+
+    const big = try lines.next();
+    try std.testing.expectEqual(@as(usize, long_len), big.len);
+    try std.testing.expect(std.mem.allEqual(u8, big, 'x'));
+
+    try std.testing.expectEqualStrings("data: after", try lines.next());
+    try std.testing.expectError(error.EndOfStream, lines.next());
+}
+
+test "pumpEvents dispatches an event whose data line exceeds the transfer buffer" {
+    const allocator = std.testing.allocator;
+
+    const payload_len = 20_000;
+    const payload = try allocator.alloc(u8, payload_len);
+    defer allocator.free(payload);
+    @memset(payload, 'j');
+
+    var stream_bytes: std.Io.Writer.Allocating = .init(allocator);
+    defer stream_bytes.deinit();
+    try stream_bytes.writer.writeAll("event: transaction\n");
+    try stream_bytes.writer.writeAll("data: ");
+    try stream_bytes.writer.writeAll(payload);
+    try stream_bytes.writer.writeAll("\n\n");
+
+    var transfer_buf: [512]u8 = undefined;
+    var src = TestSliceReader.init(stream_bytes.written(), &transfer_buf);
+
+    const Collector = struct {
+        seen: usize = 0,
+        data_len: usize = 0,
+        event_name_len: usize = 0,
+
+        fn onEvent(self: *@This(), evt: SseEvent) anyerror!void {
+            self.seen += 1;
+            self.data_len = evt.data.len;
+            self.event_name_len = if (evt.event) |e| e.len else 0;
+        }
+    };
+    var collector = Collector{};
+
+    var parser = SseParser{};
+    try pumpEvents(allocator, &src.interface, &parser, default_max_line_size, &collector, Collector.onEvent);
+
+    try std.testing.expectEqual(@as(usize, 1), collector.seen);
+    try std.testing.expectEqual(@as(usize, payload_len), collector.data_len);
+    try std.testing.expectEqual(@as(usize, "transaction".len), collector.event_name_len);
+}
+
+test "SseParser flags an event whose data exceeds the parser buffer" {
+    const allocator = std.testing.allocator;
+
+    var parser = SseParser{};
+    const fits = parser.feedLine("data: small");
+    try std.testing.expect(fits == null);
+    const small = parser.feedLine("").?;
+    try std.testing.expect(!small.truncated);
+
+    const oversized = try allocator.alloc(u8, parser.data_buf.len + 1024);
+    defer allocator.free(oversized);
+    @memset(oversized, 'z');
+    @memcpy(oversized[0..6], "data: ");
+
+    try std.testing.expect(parser.feedLine(oversized) == null);
+    const evt = parser.feedLine("").?;
+    try std.testing.expect(evt.truncated);
+    try std.testing.expectEqual(parser.data_buf.len, evt.data.len);
+}
+
+test "LineReader rejects a line beyond max_line_size" {
+    const allocator = std.testing.allocator;
+
+    const long_len = 40_000;
+    const long = try allocator.alloc(u8, long_len);
+    defer allocator.free(long);
+    @memset(long, 'y');
+
+    var stream_bytes: std.Io.Writer.Allocating = .init(allocator);
+    defer stream_bytes.deinit();
+    try stream_bytes.writer.writeAll(long);
+    try stream_bytes.writer.writeAll("\n");
+
+    var transfer_buf: [512]u8 = undefined;
+    var src = TestSliceReader.init(stream_bytes.written(), &transfer_buf);
+
+    var lines = LineReader.init(allocator, &src.interface, 4096);
+    defer lines.deinit();
+
+    try std.testing.expectError(error.LineTooLong, lines.next());
+}
+
+test "LineReader handles consecutive oversized lines" {
+    const allocator = std.testing.allocator;
+
+    const long_len = 9_000;
+    const long = try allocator.alloc(u8, long_len);
+    defer allocator.free(long);
+    @memset(long, 'a');
+
+    var stream_bytes: std.Io.Writer.Allocating = .init(allocator);
+    defer stream_bytes.deinit();
+    for (0..3) |_| {
+        try stream_bytes.writer.writeAll(long);
+        try stream_bytes.writer.writeAll("\n");
+    }
+
+    var transfer_buf: [1024]u8 = undefined;
+    var src = TestSliceReader.init(stream_bytes.written(), &transfer_buf);
+
+    var lines = LineReader.init(allocator, &src.interface, default_max_line_size);
+    defer lines.deinit();
+
+    for (0..3) |_| {
+        const line = try lines.next();
+        try std.testing.expectEqual(@as(usize, long_len), line.len);
+        try std.testing.expect(std.mem.allEqual(u8, line, 'a'));
+    }
+    try std.testing.expectError(error.EndOfStream, lines.next());
+}
+
+test "all public declarations compile" {
+    // `subscribe` and `subscribeWithReconnect` have no unit tests (they need a
+    // network), so force semantic analysis of every declaration to keep
+    // lazily-compiled API breakage out of the consumer path.
+    std.testing.refAllDecls(@This());
 }

@@ -85,6 +85,24 @@ while (true) {
 }
 ```
 
+### Large Hints
+
+Mainnet hints carrying big `logs` or `calldata` arrays are longer than the default
+read buffer. `on` handles those transparently: lines that fit the transfer buffer are
+read without allocating, and longer lines are accumulated on the heap up to
+`max_line_size`. Both bounds are tunable on the client:
+
+```zig
+var client = eth.mev_share.MevShareClient.initMainnet(allocator, auth_key, io);
+client.stream_opts = .{
+    .transfer_buffer_size = 256 * 1024, // lines below this never allocate
+    .max_line_size = 4 * 1024 * 1024,   // error.LineTooLong beyond this
+};
+```
+
+An event whose data exceeds the parser's fixed 64 KiB data buffer arrives with
+`truncated` set; `on` skips those rather than reporting a JSON parse failure.
+
 ### Backrun Loop Sketch
 
 A minimal backrunner: watch for hints touching a target pool, then submit a bundle
