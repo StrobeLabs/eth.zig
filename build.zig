@@ -15,6 +15,46 @@ pub fn build(b: *std.Build) void {
     addSecp256k1(b, eth_module);
     addKzg(b, eth_module);
 
+    // Optional, versioned native ABI. Only the C surface is exported; the
+    // existing Zig module and its crypto backends remain unchanged.
+    const c_lib_step = b.step("c-lib", "Install static/shared C libraries and eth.h");
+    const c_test_step = b.step("c-test", "Run C ABI tests against static and shared libraries");
+    inline for (.{ std.builtin.LinkMode.static, std.builtin.LinkMode.dynamic }) |linkage| {
+        const c_module = b.createModule(.{
+            .root_source_file = b.path("src/c_api.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .pic = true,
+        });
+        c_module.addIncludePath(b.path("include"));
+        addXkcp(b, c_module, target);
+        addSecp256k1(b, c_module);
+        const lib = b.addLibrary(.{
+            .name = "ethzig",
+            .root_module = c_module,
+            .linkage = linkage,
+            .version = .{ .major = 1, .minor = 0, .patch = 0 },
+        });
+        lib.installHeader(b.path("include/eth.h"), "eth.h");
+        c_lib_step.dependOn(&b.addInstallArtifact(lib, .{}).step);
+        const c_test_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        c_test_module.addCSourceFile(.{
+            .file = b.path("tests/c_api_test.c"),
+            .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" },
+        });
+        c_test_module.linkLibrary(lib);
+        const c_tests = b.addExecutable(.{
+            .name = "c-api-test-" ++ @tagName(linkage),
+            .root_module = c_test_module,
+        });
+        c_test_step.dependOn(&b.addRunArtifact(c_tests).step);
+    }
+
     // Unit tests. Root the test artifact at src/root.zig so its test block
     // (which direct-imports every module file) actually collects and runs the
     // per-module `test` blocks. Aggregating via `_ = eth.module` field access

@@ -1,7 +1,7 @@
 ZIG ?= zig
 KCOV ?= kcov
 
-.PHONY: build test fmt fmt-fix lint ci integration-test bench bench-u256 bench-keccak coverage docs clean
+.PHONY: build test fmt fmt-fix lint ci c-lib c-test integration-test bench bench-u256 bench-keccak coverage docs clean
 
 ## Build the library (default)
 build:
@@ -36,7 +36,15 @@ docs:
 lint: fmt test
 
 ## Full CI check: build + fmt + test (matches all CI jobs, still no Anvil)
-ci: build fmt test
+ci: build fmt test c-test
+
+## Build static/shared native libraries and install the C header
+c-lib:
+	$(ZIG) build c-lib
+
+## Test the public ABI from C, with both static and shared linkage
+c-test:
+	$(ZIG) build c-test
 
 ## Run integration tests (requires Anvil running on localhost:8545)
 integration-test:

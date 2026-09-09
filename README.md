@@ -226,6 +226,17 @@ eth.zig
 
 Built something with eth.zig? Open a PR to add it here.
 
+## Use from C or Python
+
+Build the native library with Zig 0.16.0, then sign a transaction from Python without pip dependencies or an RPC connection:
+
+```sh
+zig build c-lib -Doptimize=ReleaseSafe
+python3 examples/ffi/sign_transaction.py
+```
+
+See the [C header](include/eth.h) and [FFI examples](examples/ffi/) for buffer ownership, supported types, and static/shared linking.
+
 ## Installation
 
 **One-liner:**
