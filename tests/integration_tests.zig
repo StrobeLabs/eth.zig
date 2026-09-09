@@ -10,9 +10,9 @@
 const std = @import("std");
 const eth = @import("eth");
 
-const ANVIL_URL = "http://127.0.0.1:8545";
+const ANVIL_PORT = @import("integration_options").anvil_port;
+const ANVIL_URL = std.fmt.comptimePrint("http://127.0.0.1:{d}", .{ANVIL_PORT});
 const ANVIL_HOST = "127.0.0.1";
-const ANVIL_PORT = 8545;
 
 // Anvil pre-funded account #0
 const ACCOUNT_0_KEY_HEX = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -483,7 +483,7 @@ test "callWithOverrides without an override matches plain call" {
 // WsClient: resilient WebSocket subscriptions (issue #35)
 // ============================================================================
 
-const ANVIL_WS_URL = "ws://127.0.0.1:8545";
+const ANVIL_WS_URL = std.fmt.comptimePrint("ws://127.0.0.1:{d}", .{ANVIL_PORT});
 
 /// Trigger a block on Anvil so newHeads subscriptions emit a notification.
 fn anvilMineOne(allocator: std.mem.Allocator) !void {
@@ -782,4 +782,36 @@ test "ENS resolve: CCIP-Read wildcard name surfaces OffchainLookupRequired" {
 
     const result = eth.ens_resolver.resolve(allocator, &provider, "1.offchainexample.eth");
     try std.testing.expectError(error.OffchainLookupRequired, result);
+}
+
+test "simulateV1 applies overrides and returns success plus a reverting call" {
+    if (!isAnvilAvailable()) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var transport = eth.http_transport.HttpTransport.init(allocator, ANVIL_URL, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(allocator, &transport);
+    var overrides = eth.state_overrides.StateOverrides.init(allocator);
+    defer overrides.deinit();
+    const sender = try eth.primitives.addressFromHex(ACCOUNT_0_ADDR_HEX);
+    const reverting: [20]u8 = @splat(0xaa);
+    const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
+    // PUSH1 0, PUSH1 0, REVERT. Installed only in simulation state.
+    try overrides.setCode(reverting, &.{ 0x60, 0, 0x60, 0, 0xfd });
+    const before = try provider.getBalance(recipient);
+    var result = try provider.simulateV1(.{
+        .block_state_calls = &.{.{
+            .state_overrides = &overrides,
+            .calls = &.{
+                .{ .from = sender, .to = recipient, .value = 100, .gas = 21_000 },
+                .{ .from = sender, .to = reverting, .gas = 100_000 },
+            },
+        }},
+    }, .{ .tag = .latest });
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 1), result.value.len);
+    try std.testing.expectEqual(@as(usize, 2), result.value[0].calls.len);
+    try std.testing.expectEqual(.success, result.value[0].calls[0].status);
+    try std.testing.expectEqual(@as(u64, 21_000), result.value[0].calls[0].gas_used);
+    try std.testing.expectEqual(.failure, result.value[0].calls[1].status);
+    try std.testing.expectEqual(before, try provider.getBalance(recipient));
 }

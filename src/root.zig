@@ -42,6 +42,7 @@ pub const subscription = @import("subscription.zig");
 pub const ws_client = @import("ws_client.zig");
 pub const state_overrides = @import("state_overrides.zig");
 pub const provider = @import("provider.zig");
+pub const simulation = @import("simulation.zig");
 pub const retry_provider = @import("retry_provider.zig");
 pub const RetryingProvider = retry_provider.RetryingProvider;
 pub const RetryOpts = retry_provider.RetryOpts;
@@ -135,6 +136,7 @@ test {
     _ = @import("ws_client.zig");
     _ = @import("state_overrides.zig");
     _ = @import("provider.zig");
+    _ = @import("simulation.zig");
     _ = @import("retry_provider.zig");
     _ = @import("fallback_provider.zig");
     // Layer 7: Client

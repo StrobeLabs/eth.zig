@@ -397,6 +397,7 @@ test "isFailoverError - transport errors trigger failover" {
 test "isFailoverError - RpcError is a real answer and does NOT fail over" {
     // The critical classification: a node that answered must not be retried.
     try testing.expect(!isFailoverError(error.RpcError));
+    try testing.expect(!isFailoverError(error.MethodNotFound));
 }
 
 test "isFailoverError - local errors do NOT fail over" {
