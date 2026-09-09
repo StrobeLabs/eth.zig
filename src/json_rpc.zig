@@ -57,6 +57,7 @@ pub const Method = struct {
 
     // Transactions
     pub const eth_call = "eth_call";
+    pub const eth_simulateV1 = "eth_simulateV1";
     pub const eth_estimateGas = "eth_estimateGas";
     pub const eth_sendRawTransaction = "eth_sendRawTransaction";
     pub const eth_getTransactionByHash = "eth_getTransactionByHash";
