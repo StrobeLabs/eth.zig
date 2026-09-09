@@ -194,6 +194,8 @@ fn abiValue(value: c.eth_abi_value) !abi_encode.AbiValue {
 }
 
 fn abiCapacity(values: [*c]const c.eth_abi_value, count: usize) !usize {
+    // This is also the entire workspace bound: encodeValues must allocate
+    // only its exact output size, with no temporary allocations.
     if (count > c.ETH_ABI_MAX_VALUES) return error.TooManyValues;
     if (count != 0 and values == null) return error.InvalidArgument;
     var total = try mul(count, 32);
@@ -221,6 +223,8 @@ export fn eth_abi_encode(values: [*c]const c.eth_abi_value, count: usize, out: [
     var native: [c.ETH_ABI_MAX_VALUES]abi_encode.AbiValue = undefined;
     for (0..count) |i| native[i] = abiValue(values[i]) catch |err| return status(err);
     var fba = std.heap.FixedBufferAllocator.init(output(out, capacity) catch |err| return status(err));
+    // The encoder's single exact-size allocation places the result at out.
+    // Temporary allocations would require increasing abiCapacity's bound.
     const encoded = abi_encode.encodeValues(fba.allocator(), native[0..count]) catch |err| return status(err);
     n.* = encoded.len;
     return c.ETH_OK;

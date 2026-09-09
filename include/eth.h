@@ -12,8 +12,9 @@ extern "C" {
  * All integers wider than 64 bits are big-endian byte arrays.
  * No function retains caller pointers. Results and serialization workspace
  * are caller-owned; secp256k1 lazily allocates its shared backend context.
- * Input and output
- * buffers must not overlap. NULL is allowed for a byte buffer only if len=0.
+ * Calls may run concurrently with separate output and workspace buffers.
+ * Input and output buffers must not overlap. NULL is allowed for a byte
+ * buffer only if len=0.
  * On failure, output contents are unspecified and written is zero.
  * max_len helpers include workspace and return 0 on invalid input/overflow.
  */

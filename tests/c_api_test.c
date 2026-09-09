@@ -8,6 +8,7 @@
     fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); exit(1); \
 } } while (0)
 
+/** Decode a fixed hexadecimal test vector into its expected byte representation. */
 static void unhex(const char *hex, uint8_t *out, size_t len) {
     CHECK(strlen(hex) == len * 2);
     for (size_t i = 0; i < len; ++i) {
@@ -17,11 +18,13 @@ static void unhex(const char *hex, uint8_t *out, size_t len) {
     }
 }
 
+/** Write a small test integer as a zero-padded, big-endian ABI word. */
 static void word(uint8_t out[32], uint64_t n) {
     memset(out, 0, 32);
     for (size_t i = 0; i < 8; ++i) { out[31 - i] = (uint8_t)n; n >>= 8; }
 }
 
+/** Check known crypto vectors, address formatting, and invalid arguments. */
 static void crypto(void) {
     uint8_t expected[32], hash[32], key[32] = {0}, sig[65], address[20];
     char checksum[43];
@@ -49,6 +52,7 @@ static void crypto(void) {
     CHECK(eth_address_from_pubkey(pubkey, address) == ETH_ERR_INVALID_ARGUMENT);
 }
 
+/** Verify signed transaction bytes, hashing, access lists, and workspace bounds. */
 static void transaction(void) {
     /* Same independent viem vector as wallet.zig: exact bytes AND tx hash. */
     uint8_t key[32], data[] = {0xa9, 0x05, 0x9c, 0xbb}, expected[115], hash[32], expected_hash[32];
@@ -98,6 +102,7 @@ static void transaction(void) {
     CHECK(eth_tx_sign_max_len(&tx) == 0);
 }
 
+/** Check ABI layout, dynamic-value ownership, and malformed-input rejection. */
 static void abi(void) {
     uint8_t selector[4];
     CHECK(eth_abi_selector("transfer(address,uint256)", selector) == ETH_OK);
@@ -145,6 +150,7 @@ static void abi(void) {
     CHECK(written == 0);
 }
 
+/** Exercise RLP string/list envelopes, consumed lengths, and invalid encodings. */
 static void rlp_roundtrip(void) {
     uint8_t out[128], decoded[128]; size_t written, used, n; int kind;
     CHECK(eth_rlp_encode(ETH_RLP_STRING, (const uint8_t *)"dog", 3, out, sizeof(out), &written) == ETH_OK);
@@ -165,6 +171,7 @@ static void rlp_roundtrip(void) {
     CHECK(eth_rlp_encode_max_len(SIZE_MAX) == 0);
 }
 
+/** Run the same public-interface checks under static and shared linkage. */
 int main(void) {
     crypto(); transaction(); abi(); rlp_roundtrip();
     puts("C ABI: crypto, transaction vectors, ABI/RLP and error cases passed");

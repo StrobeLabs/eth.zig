@@ -38,6 +38,7 @@ class Transaction(C.Structure):
 
 
 def main():
+    """Sign the reference transaction and verify its hash through the C ABI."""
     root = Path(__file__).resolve().parents[2]
     name = "libethzig.1.dylib" if sys.platform == "darwin" else "libethzig.so.1"
     lib = C.CDLL(str(root / "zig-out" / "lib" / name))
