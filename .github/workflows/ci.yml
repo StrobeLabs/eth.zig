@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Stacked feature PRs need the same checks before their base merges.
   pull_request:
-    branches: [main]
 
 # Least privilege: these jobs only read the repo (and upload artifacts via the
 # Actions runtime token, which needs no extra GITHUB_TOKEN scope).
