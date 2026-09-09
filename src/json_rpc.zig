@@ -58,6 +58,10 @@ pub const Method = struct {
     // Transactions
     pub const eth_call = "eth_call";
     pub const eth_simulateV1 = "eth_simulateV1";
+    pub const debug_traceTransaction = "debug_traceTransaction";
+    pub const debug_traceCall = "debug_traceCall";
+    pub const trace_call = "trace_call";
+    pub const trace_transaction = "trace_transaction";
     pub const eth_estimateGas = "eth_estimateGas";
     pub const eth_sendRawTransaction = "eth_sendRawTransaction";
     pub const eth_getTransactionByHash = "eth_getTransactionByHash";

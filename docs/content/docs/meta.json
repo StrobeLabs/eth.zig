@@ -7,6 +7,7 @@
     "examples",
     "transactions",
     "simulation",
+    "tracing",
     "kzg",
     "contracts",
     "abigen",
