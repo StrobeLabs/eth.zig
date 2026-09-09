@@ -1,5 +1,6 @@
 // Integration tests for eth.zig against a local Anvil instance.
-// These tests require Anvil running at http://127.0.0.1:8545.
+// These tests require local Anvil; port 8545 is the default.
+// For a custom port, pair `anvil --port PORT` with `-Danvil-port=PORT` below.
 //
 // Start Anvil before running:
 //   anvil
