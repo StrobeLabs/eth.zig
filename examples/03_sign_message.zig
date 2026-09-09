@@ -13,7 +13,8 @@ pub fn main() !void {
     // Hardhat/Anvil account #0 private key
     const private_key = try eth.hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-    const signer = eth.signer.Signer.init(private_key);
+    var signer = eth.signer.Signer.fromPrivateKey(private_key);
+    defer signer.deinit();
     const addr = try signer.address();
     const checksum = eth.primitives.addressToChecksum(&addr);
 

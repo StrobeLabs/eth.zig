@@ -60,6 +60,9 @@ jobs:
           version: "0.16.0"
       - name: Build library
         run: zig build
+      - name: Check examples (offline)
+        working-directory: examples
+        run: zig build check
 
   coverage:
     name: Coverage (kcov)
