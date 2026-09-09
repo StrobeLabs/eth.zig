@@ -244,7 +244,7 @@ See the [C header](include/eth.h) and [FFI examples](examples/ffi/) for buffer o
 
 <!-- x-release-please-start-version -->
 ```bash
-zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.9.1
+zig fetch --save=eth git+https://github.com/StrobeLabs/eth.zig.git#v0.9.1
 ```
 <!-- x-release-please-end -->
 
