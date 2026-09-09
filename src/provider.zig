@@ -10,6 +10,7 @@ const rpc_transaction_mod = @import("rpc_transaction.zig");
 const HttpTransport = @import("http_transport.zig").HttpTransport;
 const runtime = @import("runtime.zig");
 const simulation = @import("simulation.zig");
+const tracing = @import("tracing.zig");
 
 /// Read-only Ethereum JSON-RPC provider.
 ///
@@ -219,6 +220,44 @@ pub const Provider = struct {
         const raw = try self.requestJson(json_rpc.Method.eth_simulateV1, params);
         defer self.allocator.free(raw);
         return simulation.parseResult(self.allocator, raw);
+    }
+
+    /// Trace a mined transaction using Geth's debug namespace. Free all
+    /// returned frames/accounts/JSON with result.deinit().
+    pub fn debugTraceTransaction(self: *Provider, hash: [32]u8, options: tracing.Options) !tracing.Result {
+        const params = try tracing.transactionParams(self.allocator, hash, options);
+        defer self.allocator.free(params);
+        return self.debugTrace(json_rpc.Method.debug_traceTransaction, params, options.tracer);
+    }
+
+    /// Trace a hypothetical call without broadcasting. MethodNotFound is an
+    /// endpoint capability response, not a transport failure.
+    pub fn debugTraceCall(self: *Provider, message_call: simulation.Call, block: json_rpc.BlockParam, options: tracing.Options) !tracing.Result {
+        const params = try tracing.callParams(self.allocator, message_call, block, options);
+        defer self.allocator.free(params);
+        return self.debugTrace(json_rpc.Method.debug_traceCall, params, options.tracer);
+    }
+
+    fn debugTrace(self: *Provider, method: []const u8, params: []const u8, tracer: tracing.Tracer) !tracing.Result {
+        const raw = try self.requestJson(method, params);
+        defer self.allocator.free(raw);
+        return tracing.parseResult(self.allocator, raw, tracer);
+    }
+
+    /// Thin Erigon/Nethermind trace_call surface. Returns caller-owned JSON;
+    /// free it with the provider allocator. Supports trace/vmTrace/stateDiff.
+    pub fn traceCall(self: *Provider, message_call: simulation.Call, block: json_rpc.BlockParam, types: []const tracing.TraceType) ![]u8 {
+        const params = try tracing.parityCallParams(self.allocator, message_call, block, types);
+        defer self.allocator.free(params);
+        return self.requestJson(json_rpc.Method.trace_call, params);
+    }
+
+    /// Thin Erigon/Nethermind trace_transaction surface. Caller owns JSON.
+    pub fn traceTransaction(self: *Provider, hash: [32]u8) ![]u8 {
+        const hash_text = hex_mod.bytesToHexBuf(32, &hash);
+        const params = try std.json.Stringify.valueAlloc(self.allocator, .{&hash_text}, .{});
+        defer self.allocator.free(params);
+        return self.requestJson(json_rpc.Method.trace_transaction, params);
     }
 
     /// Raw escape hatch for structured RPCs. Returns the JSON result value

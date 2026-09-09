@@ -1,0 +1,114 @@
+---
+title: Transaction tracing
+description: Inspect internal calls and state changes with Geth and Erigon-compatible tracing APIs.
+---
+
+`Provider.debugTraceTransaction` replays a mined transaction;
+`Provider.debugTraceCall` traces a hypothetical call. Both accept
+`eth.tracing.Options` and return an owned result. The default tracer is
+`callTracer`.
+
+```zig
+var result = try provider.debugTraceTransaction(tx_hash, .{
+    .tracer = .{ .call_tracer = .{ .withLog = true } },
+    .timeout = "5s",
+});
+defer result.deinit();
+
+const frame = result.value.call_tracer;
+for (frame.calls) |child| {
+    // child.from, child.to, child.value, child.gas_used, child.calls
+    if (child.error_message) |message| {
+        // child.output keeps the revert bytes; revert_reason may be absent.
+        _ = message;
+    }
+}
+```
+
+Call trees retain nested calls, return/revert bytes, optional log events, and
+the full JSON frame in `raw`. Addresses and quantities are native Zig values.
+Some frame fields are optional because failed creations and SELFDESTRUCT can
+omit them. Typed parsing returns `error.TraceTooDeep` beyond 128 frame levels;
+use the raw escape hatch if you need a deeper result.
+
+## Prestate and state differences
+
+```zig
+var result = try provider.debugTraceCall(.{
+    .from = sender,
+    .to = recipient,
+    .value = 100,
+}, .{ .tag = .latest }, .{
+    .tracer = .{ .prestate_tracer = .{ .diffMode = true } },
+});
+defer result.deinit();
+
+const diff = result.value.prestate_tracer.diff;
+for (diff.post) |account| {
+    // account.address; optional balance, nonce, code, storage
+    // Missing post-state fields mean unchanged, not zero.
+    _ = account;
+}
+```
+
+With `diffMode = false` (the default), read
+`result.value.prestate_tracer.accounts`. Options also include `disableCode`
+and `disableStorage`. Account maps become slices of typed accounts, and storage
+maps become slot/value entries. Absence and explicit zero remain distinct.
+
+## Erigon / Nethermind methods
+
+The alternate namespace exposes a thin surface with caller-owned JSON:
+
+```zig
+const raw = try provider.traceCall(.{ .to = contract, .data = calldata },
+    .{ .tag = .latest }, &.{ .trace, .stateDiff });
+defer allocator.free(raw);
+
+const transaction_trace = try provider.traceTransaction(tx_hash);
+defer allocator.free(transaction_trace);
+```
+
+Use the provider's allocator to free these buffers. Select `trace`, `vmTrace`,
+or `stateDiff` as needed. Availability depends on the node and RPC plan.
+
+## Custom tracers and raw JSON
+
+Set `.tracer = .{ .raw = .{ .name = js_source, .config = config_value } }`
+to run a custom JavaScript tracer and access its result as
+`result.value.raw`. JavaScript tracers require node support; Anvil does not
+provide the same JavaScript runtime as Geth. Tracer strings and configuration
+are JSON-escaped, not interpolated into requests.
+
+For a JSON result buffer with no tracer-specific parsing, or debug options
+outside the typed surface, use `Provider.requestJson`:
+
+```zig
+const raw = try provider.requestJson("debug_traceCall", params_json);
+defer allocator.free(raw);
+```
+
+`params_json` must be a JSON array. The returned bytes contain the result value,
+without its JSON-RPC envelope. They preserve the JSON value but not original
+whitespace or formatting. This also permits state/block overrides or other
+client-specific debug options. No tracer output pointers outlive the owned
+result; free it once with `deinit()`.
+
+## Errors and verification
+
+All these methods return `error.MethodNotFound` for JSON-RPC `-32601`, preserving
+`Provider.lastError()` diagnostics. Other RPC errors remain `error.RpcError`.
+Neither triggers transport failover. An EVM revert within a call trace remains
+a successful RPC response with `error_message` and return data in the frame.
+
+Offline tests cover a three-frame tree, reverted creation, logs, prestate/diff
+results, malformed responses, recursion limits, and allocation failures. The
+Anvil integration suite exercises debug tracing, `trace_transaction`, prestate
+and diff mode, the raw tracer path, and unsupported-method handling. The
+`trace_call` test reports a skip when that method is unavailable; the local
+Anvil version used during development does not expose it. Its parameter
+serialization is covered offline; a supported Erigon/Nethermind endpoint is
+still needed to verify a live success response.
+
+See [Geth built-in tracers](https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
+and the [debug RPC reference](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug).

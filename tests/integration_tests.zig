@@ -816,3 +816,80 @@ test "simulateV1 applies overrides and returns success plus a reverting call" {
     try std.testing.expectEqual(.failure, result.value[0].calls[1].status);
     try std.testing.expectEqual(before, try provider.getBalance(recipient));
 }
+
+test "debug tracers and transaction traces against Anvil" {
+    if (!isAnvilAvailable()) return error.SkipZigTest;
+    const a = std.testing.allocator;
+    var transport = eth.http_transport.HttpTransport.init(a, ANVIL_URL, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(a, &transport);
+    const sender = try eth.primitives.addressFromHex(ACCOUNT_0_ADDR_HEX);
+    const recipient = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX);
+    const call = eth.simulation.Call{ .from = sender, .to = recipient, .value = 100, .gas = 21_000 };
+    var trace_call = try provider.debugTraceCall(call, .{ .tag = .latest }, .{});
+    defer trace_call.deinit();
+    try std.testing.expectEqualSlices(u8, &recipient, &trace_call.value.call_tracer.to.?);
+    try std.testing.expectEqual(@as(?u256, 100), trace_call.value.call_tracer.value);
+    try std.testing.expectEqual(@as(?u64, 21_000), trace_call.value.call_tracer.gas_used);
+
+    var wallet = eth.wallet.Wallet.initLocal(a, try eth.hex.hexToBytesFixed(32, ACCOUNT_0_KEY_HEX), &provider);
+    defer wallet.deinit();
+    const hash = try wallet.sendTransaction(.{ .to = recipient, .value = 100 });
+    const mined = (try wallet.waitForReceipt(hash, 10)) orelse return error.ReceiptTimeout;
+    defer {
+        for (mined.logs) |log| {
+            a.free(log.topics);
+            a.free(log.data);
+        }
+        a.free(mined.logs);
+    }
+    var trace_tx = try provider.debugTraceTransaction(hash, .{});
+    defer trace_tx.deinit();
+    try std.testing.expectEqual(@as(?u64, 21_000), trace_tx.value.call_tracer.gas_used);
+    var prestate = try provider.debugTraceTransaction(hash, .{ .tracer = .{ .prestate_tracer = .{} } });
+    defer prestate.deinit();
+    try std.testing.expect(prestate.value.prestate_tracer.accounts.len >= 2);
+    var diff = try provider.debugTraceTransaction(hash, .{ .tracer = .{ .prestate_tracer = .{ .diffMode = true } } });
+    defer diff.deinit();
+    try std.testing.expect(diff.value.prestate_tracer.diff.pre.len >= 2);
+
+    const parity_tx = try provider.traceTransaction(hash);
+    defer a.free(parity_tx);
+    const tx_json = try std.json.parseFromSlice(std.json.Value, a, parity_tx, .{});
+    defer tx_json.deinit();
+    try std.testing.expect(tx_json.value.array.items.len >= 1);
+
+    // Select a built-in by name through the raw escape hatch to avoid relying
+    // on a JavaScript engine (not all nodes, including Anvil, ship one).
+    var raw = try provider.debugTraceTransaction(hash, .{ .tracer = .{ .raw = .{ .name = "callTracer" } } });
+    defer raw.deinit();
+    try std.testing.expectEqualStrings("CALL", raw.value.raw.object.get("type").?.string);
+    try std.testing.expectError(error.MethodNotFound, provider.requestJson("ethzig_unsupportedMethod", "[]"));
+    try std.testing.expectEqual(@as(i64, -32601), provider.lastError().?.code);
+}
+
+test "trace_call on nodes exposing the Erigon-compatible method" {
+    if (!isAnvilAvailable()) return error.SkipZigTest;
+    const a = std.testing.allocator;
+    var transport = eth.http_transport.HttpTransport.init(a, ANVIL_URL, eth.runtime.blockingIo());
+    defer transport.deinit();
+    var provider = eth.provider.Provider.init(a, &transport);
+    const raw = provider.traceCall(.{
+        .from = try eth.primitives.addressFromHex(ACCOUNT_0_ADDR_HEX),
+        .to = try eth.primitives.addressFromHex(ACCOUNT_1_ADDR_HEX),
+        .value = 100,
+        .gas = 21_000,
+    }, .{ .tag = .latest }, &.{.trace}) catch |err| switch (err) {
+        error.MethodNotFound => {
+            // Anvil versions without trace_call still exercise capability
+            // handling; do not claim live success for an unsupported method.
+            try std.testing.expectEqual(@as(i64, -32601), provider.lastError().?.code);
+            return error.SkipZigTest;
+        },
+        else => return err,
+    };
+    defer a.free(raw);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, raw, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.object.get("trace").?.array.items.len >= 1);
+}
