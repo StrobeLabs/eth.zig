@@ -37,13 +37,14 @@ const std = @import("std");
 const eth = @import("eth");
 
 pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // WARNING: This is the default Anvil/Hardhat test key. Never use it for real funds.
     const private_key = try eth.hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-    const signer = eth.signer.Signer.init(private_key);
+    var signer = eth.signer.Signer.fromPrivateKey(private_key);
+    defer signer.deinit();
     const addr = try signer.address();
     const checksum = eth.primitives.addressToChecksum(&addr);
     _ = checksum;
@@ -57,7 +58,7 @@ pub fn main() !void {
     var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
     const tx_hash = try wallet.sendTransaction(.{
         .to = recipient_address,
-        .value = eth.units.parseEther(1.0),
+        .value = eth.units.parseEther(1.0) orelse return error.InvalidAmount,
     });
     _ = tx_hash;
 }

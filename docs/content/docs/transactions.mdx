@@ -22,7 +22,7 @@ var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 // Send 1 ETH -- nonce, gas, and chain_id are auto-filled
 const tx_hash = try wallet.sendTransaction(.{
     .to = recipient_address,
-    .value = eth.units.parseEther(1.0),
+    .value = eth.units.parseEther(1.0) orelse return error.InvalidAmount,
 });
 ```
 
@@ -52,7 +52,7 @@ const tx = eth.transaction.Transaction{ .legacy = .{
     .gas_price = 20_000_000_000, // 20 Gwei
     .gas_limit = 21_000,
     .to = recipient,
-    .value = eth.units.parseEther(1.0),
+    .value = eth.units.parseEther(1.0) orelse return error.InvalidAmount,
     .data = &.{},
     .chain_id = 1,
 }};
@@ -70,7 +70,7 @@ const tx = eth.transaction.Transaction{ .eip1559 = .{
     .max_fee_per_gas = 30_000_000_000, // 30 Gwei max
     .gas_limit = 21_000,
     .to = recipient,
-    .value = eth.units.parseEther(1.0),
+    .value = eth.units.parseEther(1.0) orelse return error.InvalidAmount,
     .data = &.{},
     .access_list = &.{},
 }};
@@ -111,7 +111,7 @@ transaction. A `chain_id` of `0` makes the authorization valid on any chain.
 const eth = @import("eth");
 
 // The authority (the EOA whose code is being delegated) signs the authorization.
-var authority = eth.signer.Signer.init(authority_private_key);
+var authority = eth.signer.Signer.fromPrivateKey(authority_private_key);
 defer authority.deinit();
 
 // Delegate `authority`'s code to `delegate_contract` for chain 1, nonce 0.
@@ -138,7 +138,7 @@ const tx = eth.transaction.Transaction{ .eip7702 = .{
 }};
 
 // Sign the transaction with the sender's key and broadcast.
-var sender = eth.signer.Signer.init(sender_private_key);
+var sender = eth.signer.Signer.fromPrivateKey(sender_private_key);
 defer sender.deinit();
 
 const sighash = try eth.transaction.hashForSigning(allocator, tx);

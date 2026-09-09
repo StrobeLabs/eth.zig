@@ -14,7 +14,8 @@ pub fn main() !void {
     const private_key = try eth.hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // Create a signer from the private key
-    const signer = eth.signer.Signer.init(private_key);
+    var signer = eth.signer.Signer.fromPrivateKey(private_key);
+    defer signer.deinit();
 
     // Derive the Ethereum address
     const addr = try signer.address();

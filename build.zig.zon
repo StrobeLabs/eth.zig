@@ -8,6 +8,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "include",
         "src/crypto/blst",
         "src/crypto/c-kzg",
         "LICENSE",

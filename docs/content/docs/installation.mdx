@@ -5,7 +5,7 @@ description: How to add eth.zig to your Zig project.
 
 ## Prerequisites
 
-- Zig >= 0.15.2
+- Zig 0.16.0
 - [Anvil / Foundry](https://book.getfoundry.sh/getting-started/installation) (optional, for integration tests)
 
 ## Add as a Dependency
@@ -14,7 +14,7 @@ description: How to add eth.zig to your Zig project.
 
 {/* x-release-please-start-version */}
 ```bash
-zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.9.1
+zig fetch --save=eth git+https://github.com/StrobeLabs/eth.zig.git#v0.9.1
 ```
 {/* x-release-please-end */}
 
@@ -49,7 +49,8 @@ const eth = @import("eth");
 pub fn main() !void {
     // WARNING: This is a well-known Anvil/Hardhat test key. Never use it for real funds.
     const private_key = try eth.hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-    const signer = eth.signer.Signer.init(private_key);
+    var signer = eth.signer.Signer.fromPrivateKey(private_key);
+    defer signer.deinit();
     const addr = try signer.address();
     const checksum = eth.primitives.addressToChecksum(&addr);
     // checksum == "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"

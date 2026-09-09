@@ -13,7 +13,7 @@ The [`examples/`](https://github.com/StrobeLabs/eth.zig/tree/main/examples) dire
 | `04_send_transaction` | Send ETH with Wallet | Yes (Anvil) |
 | `05_read_erc20` | ERC-20 module API showcase | Yes |
 | `06_hd_wallet` | BIP-44 HD wallet derivation | No |
-| `07_comptime_selectors` | Comptime function selectors | No |
+| `07_selectors` | Comptime function selectors | No |
 | `08_mev_share_backrunner` | MEV-Share backrunner bot (SSE stream + bundle) | No (dry-run) |
 
 Run any example:
@@ -34,7 +34,8 @@ const private_key = try eth.hex.hexToBytesFixed(
     32,
     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
 );
-const signer = eth.signer.Signer.init(private_key);
+var signer = eth.signer.Signer.fromPrivateKey(private_key);
+defer signer.deinit();
 const addr = try signer.address();
 const checksum = eth.primitives.addressToChecksum(&addr);
 // "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
@@ -52,7 +53,7 @@ var provider = eth.provider.Provider.init(allocator, &transport);
 var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 const tx_hash = try wallet.sendTransaction(.{
     .to = recipient_address,
-    .value = eth.units.parseEther(1.0),
+    .value = eth.units.parseEther(1.0) orelse return error.InvalidAmount,
 });
 ```
 

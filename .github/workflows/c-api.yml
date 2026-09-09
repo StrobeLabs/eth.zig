@@ -1,0 +1,44 @@
+name: C ABI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: C ABI / ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: "0.16.0"
+      - run: zig build c-lib c-test -Doptimize=ReleaseSafe
+      - run: python3 examples/ffi/sign_transaction.py
+      - run: zig cc examples/ffi/main.c -I zig-out/include zig-out/lib/libethzig.a -o zig-out/ffi-example
+      - run: ./zig-out/ffi-example
+
+  cross-build:
+    name: C ABI / ${{ matrix.target }}
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64-linux-gnu, aarch64-linux-gnu, aarch64-macos]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: "0.16.0"
+      - run: zig build c-lib -Dtarget=${{ matrix.target }} -Dcpu=baseline -Doptimize=ReleaseSafe

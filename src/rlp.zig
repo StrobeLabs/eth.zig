@@ -433,15 +433,18 @@ pub fn decode(comptime T: type, data: []const u8) (RlpError || error{OutOfMemory
     }
 }
 
-const ItemKind = enum { string, list };
+pub const ItemKind = enum { string, list };
 
-const Item = struct {
+/// Borrowed views into one RLP item and the remaining input.
+pub const Item = struct {
     kind: ItemKind,
     payload: []const u8,
     rest: []const u8,
 };
 
-fn decodeItem(data: []const u8) RlpError!Item {
+/// Decode one string or list envelope without allocating. List payloads hold
+/// encoded child items; call decodeItem on that payload to walk the list.
+pub fn decodeItem(data: []const u8) RlpError!Item {
     if (data.len == 0) return error.InputTooShort;
 
     const prefix = data[0];
@@ -462,7 +465,7 @@ fn decodeItem(data: []const u8) RlpError!Item {
         if (data.len < 1 + len_bytes) return error.InputTooShort;
         const len = try readLength(data[1 .. 1 + len_bytes]);
         if (len < 56) return error.NonCanonical;
-        if (data.len < 1 + len_bytes + len) return error.InputTooShort;
+        if (len > data.len - 1 - len_bytes) return error.InputTooShort;
         return .{
             .kind = .string,
             .payload = data[1 + len_bytes .. 1 + len_bytes + len],
@@ -479,7 +482,7 @@ fn decodeItem(data: []const u8) RlpError!Item {
         if (data.len < 1 + len_bytes) return error.InputTooShort;
         const len = try readLength(data[1 .. 1 + len_bytes]);
         if (len < 56) return error.NonCanonical;
-        if (data.len < 1 + len_bytes + len) return error.InputTooShort;
+        if (len > data.len - 1 - len_bytes) return error.InputTooShort;
         return .{
             .kind = .list,
             .payload = data[1 + len_bytes .. 1 + len_bytes + len],

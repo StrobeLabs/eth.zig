@@ -62,6 +62,8 @@ pub const EncodeError = error{
 /// Encode a slice of ABI values according to the Solidity ABI specification.
 /// Returns the encoded bytes. Caller owns the returned memory.
 pub fn encodeValues(allocator: std.mem.Allocator, values: []const AbiValue) EncodeError![]u8 {
+    // The C ABI uses an exact-size FixedBufferAllocator for this function.
+    // Preserve the single output allocation and avoid temporary allocations.
     if (values.len > max_tuple_values) return error.TooManyValues;
     const total = calcEncodedSize(values);
     const buf = try allocator.alloc(u8, total);

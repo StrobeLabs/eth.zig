@@ -21,7 +21,8 @@ pub fn build(b: *std.Build) void {
         .{ "08_mev_share_backrunner", "08_mev_share_backrunner.zig" },
     };
 
-    inline for (examples) |example| {
+    const check = b.step("check", "Compile all examples and run the four offline examples");
+    inline for (examples, 0..) |example, i| {
         const exe = b.addExecutable(.{
             .name = example[0],
             .root_module = b.createModule(.{
@@ -34,5 +35,9 @@ pub fn build(b: *std.Build) void {
             }),
         });
         b.installArtifact(exe);
+        check.dependOn(&exe.step);
+        if (i == 0 or i == 2 or i == 5 or i == 6) {
+            check.dependOn(&b.addRunArtifact(exe).step);
+        }
     }
 }

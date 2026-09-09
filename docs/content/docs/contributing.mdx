@@ -7,7 +7,7 @@ Contributions are welcome! Here's everything you need to get started.
 
 ## Prerequisites
 
-- [Zig >= 0.15.2](https://ziglang.org/download/)
+- [Zig 0.16.0](https://ziglang.org/download/)
 - Git
 
 ## Getting Started
@@ -73,7 +73,7 @@ Layers 1-3 have zero I/O. Layers 1-5 have zero network dependencies.
 2. Write your code -- follow existing patterns in the codebase
 3. Add tests for new functionality
 4. Run `zig fmt src/ tests/` to format your code
-5. Run `zig build test` to make sure all tests pass
+5. Run `make ci` to build, check formatting, and run unit, conformance, C ABI, and offline example checks
 6. Open a PR against `main`
 
 ## Code Style
@@ -83,7 +83,7 @@ Layers 1-3 have zero I/O. Layers 1-5 have zero network dependencies.
 - Keep functions focused and small
 - Add doc comments (`///`) to public functions
 - Prefer comptime over runtime where possible -- this is a core design principle
-- No external dependencies -- everything builds on Zig's standard library
+- The core uses Zig's standard library and vendored native crypto backends; discuss new dependencies before adding them.
 
 ## Reporting Issues
 

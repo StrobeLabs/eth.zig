@@ -51,7 +51,8 @@ alloy.rs wins on address hex parsing (1.55x -- SIMD), hex encoding (1.08x), Unis
 const eth = @import("eth");
 
 const private_key = try eth.hex.hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-const signer = eth.signer.Signer.init(private_key);
+var signer = eth.signer.Signer.fromPrivateKey(private_key);
+defer signer.deinit();
 const addr = try signer.address();
 const checksum = eth.primitives.addressToChecksum(&addr);
 // "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
@@ -62,14 +63,14 @@ const checksum = eth.primitives.addressToChecksum(&addr);
 ```zig
 const eth = @import("eth");
 
-var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com");
+var transport = eth.http_transport.HttpTransport.init(allocator, "https://rpc.example.com", eth.runtime.blockingIo());
 defer transport.deinit();
 var provider = eth.provider.Provider.init(allocator, &transport);
 
 var wallet = eth.wallet.Wallet.initLocal(allocator, private_key, &provider);
 const tx_hash = try wallet.sendTransaction(.{
     .to = recipient_address,
-    .value = eth.units.parseEther(1.0),
+    .value = eth.units.parseEther(1.0) orelse return error.InvalidAmount,
 });
 ```
 
@@ -162,7 +163,7 @@ const addr = key.toAddress();
 ```zig
 const eth = @import("eth");
 
-const client = try eth.ws_client.WsClient.connect(allocator, "wss://mainnet.example.com/ws", .{});
+const client = try eth.ws_client.WsClient.connect(allocator, "wss://mainnet.example.com/ws", eth.runtime.blockingIo(), .{});
 defer client.deinit();
 
 const heads = try client.subscribe(.{ .new_heads = {} });
@@ -226,13 +227,24 @@ eth.zig
 
 Built something with eth.zig? Open a PR to add it here.
 
+## Use from C or Python
+
+Build the native library with Zig 0.16.0, then sign a transaction from Python without pip dependencies or an RPC connection:
+
+```sh
+zig build c-lib -Doptimize=ReleaseSafe
+python3 examples/ffi/sign_transaction.py
+```
+
+See the [C header](include/eth.h) and [FFI examples](examples/ffi/) for buffer ownership, supported types, and static/shared linking.
+
 ## Installation
 
 **One-liner:**
 
 <!-- x-release-please-start-version -->
 ```bash
-zig fetch --save git+https://github.com/StrobeLabs/eth.zig.git#v0.9.1
+zig fetch --save=eth git+https://github.com/StrobeLabs/eth.zig.git#v0.9.1
 ```
 <!-- x-release-please-end -->
 
@@ -271,7 +283,7 @@ The [`examples/`](examples/) directory contains self-contained programs demonstr
 | `04_send_transaction` | Send ETH with Wallet | Yes (Anvil) |
 | `05_read_erc20` | ERC-20 module API showcase | Yes |
 | `06_hd_wallet` | BIP-44 HD wallet derivation | No |
-| `07_comptime_selectors` | Comptime function selectors | No |
+| `07_selectors` | Comptime function selectors | No |
 | `08_mev_share_backrunner` | MEV-Share backrunner bot (SSE stream + bundle) | No (dry-run) |
 
 Run any example:
@@ -324,9 +336,10 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | ERC-20 typed wrapper | Complete |
 | ERC-721 typed wrapper | Complete |
 | JSON ABI parsing | Complete |
-| EIP-7702 transactions | Planned |
+| EIP-7702 transactions | Done |
 | IPC transport | Planned |
-| Provider middleware (retry, caching) | Planned |
+| Provider retry / endpoint failover | Done |
+| Provider response caching | Planned |
 | Hardware wallet signers | Planned |
 
 ## Comparison with Other Libraries
@@ -359,7 +372,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 
 ## Requirements
 
-- Zig >= 0.16.0
+- Zig 0.16.0
 
 ## Running Tests
 

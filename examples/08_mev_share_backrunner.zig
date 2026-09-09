@@ -315,7 +315,8 @@ pub fn main(init: std.process.Init) !void {
     const auth_key = try parseKey(auth_key_hex);
     const signer_key = try parseKey(signer_key_hex);
 
-    const backrun_signer = eth.signer.Signer.init(signer_key);
+    var backrun_signer = eth.signer.Signer.fromPrivateKey(signer_key);
+    defer backrun_signer.deinit();
     const signer_address = try backrun_signer.address();
 
     // MevShareClient bundles the authenticated relay (mev_sendBundle) with

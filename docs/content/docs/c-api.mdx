@@ -1,0 +1,52 @@
+---
+title: C and Python bindings
+description: Use eth.zig signing, hashing, ABI and RLP from native applications.
+---
+
+The optional C interface exposes eth.zig's compute operations to C, Python,
+and other languages with C interoperability. Build from a checkout with Zig
+0.16.0:
+
+```sh
+zig build c-lib -Doptimize=ReleaseSafe
+zig build c-test
+python3 examples/ffi/sign_transaction.py
+```
+
+The Python example signs an EIP-1559 transaction offline using `ctypes`, with
+no pip dependencies, and verifies its hash against a known vector. A minimal
+C example lives in `examples/ffi/main.c`.
+
+## Interface
+
+| Surface | Functions |
+| --- | --- |
+| Hashing | `eth_keccak256`, `eth_tx_hash`, `eth_abi_selector` |
+| Accounts | `eth_address_from_pubkey`, `eth_address_checksum` |
+| Signing | `eth_sign`, `eth_recover`, `eth_tx_sign` |
+| Encoding | `eth_abi_encode`, `eth_abi_decode`, `eth_rlp_encode`, `eth_rlp_decode` |
+
+`zig-out/include/eth.h` documents every argument and error code. The library
+installs static and versioned shared artifacts under `zig-out/lib`. The C ABI
+major is 1, independent of the Zig package version; incompatible changes require
+a shared-library major bump.
+
+## Ownership
+
+Call the operation's `*_max_len` helper, allocate a buffer, and pass its capacity.
+The helper includes any temporary workspace and returns zero for invalid input
+or size overflow. A successful operation returns `ETH_OK` and a written length.
+On failure, the written length is zero; discard the buffer contents. Inputs and
+outputs must not overlap, and no pointers are retained by the library.
+
+Integers wider than 64 bits are big-endian byte arrays. Raw signatures use
+`r[32] || s[32] || recovery_id[1]`, with recovery ID 0 or 1. Transactions support
+the full EIP-1559 field set, including access lists and contract creation.
+
+ABI encoding accepts flat tuples of up to 32 scalar, bytes, or string values;
+arrays and nested tuples are outside this initial C surface. Decoded dynamic
+values borrow the caller's output storage. RLP decoding unwraps one item and
+reports the input consumed, allowing the caller to walk nested lists.
+
+Networking stays in the host application. See the
+[complete FFI examples and buffer contract](https://github.com/StrobeLabs/eth.zig/tree/main/examples/ffi).
