@@ -116,6 +116,19 @@ const KZGSettings = opaque {};
 extern fn ethzig_kzg_settings_size() usize;
 extern fn ethzig_kzg_settings_align() usize;
 
+// The vendored C's own view of the sizes that determine how large the buffers
+// handed to it must be. Asserted against the Zig constants above in a test, so
+// a vendored-header change cannot silently make a caller-provided array too
+// small for what the C writes into it.
+extern fn ethzig_kzg_cells_per_ext_blob() usize;
+extern fn ethzig_kzg_bytes_per_cell() usize;
+extern fn ethzig_kzg_field_elements_per_cell() usize;
+extern fn ethzig_kzg_field_elements_per_blob() usize;
+extern fn ethzig_kzg_bytes_per_blob() usize;
+extern fn ethzig_kzg_bytes_per_commitment() usize;
+extern fn ethzig_kzg_bytes_per_proof() usize;
+extern fn ethzig_kzg_bytes_per_field_element() usize;
+
 const FILE = opaque {};
 
 extern fn blob_to_kzg_commitment(out: *CBytes48, blob: *const CBlob, s: *const KZGSettings) C_KZG_RET;
@@ -617,6 +630,25 @@ test "kzg verify rejects when not initialized" {
     var blob: Blob = @splat(0);
     try testing.expectError(error.NotInitialized, blobToKzgCommitment(&blob));
     // Restore for any subsequent ordering-independent tests.
+}
+
+test "kzg constants match the vendored C headers" {
+    // Every one of these sizes a buffer the C code writes into, or the length
+    // of a byte array crossing the FFI boundary. They are hand-written in Zig
+    // (Zig cannot read C macros without @cImport), so the shim reports the C
+    // side's values and they are compared here rather than trusted.
+    try testing.expectEqual(CELLS_PER_EXT_BLOB, ethzig_kzg_cells_per_ext_blob());
+    try testing.expectEqual(BYTES_PER_CELL, ethzig_kzg_bytes_per_cell());
+    try testing.expectEqual(FIELD_ELEMENTS_PER_CELL, ethzig_kzg_field_elements_per_cell());
+    try testing.expectEqual(FIELD_ELEMENTS_PER_BLOB, ethzig_kzg_field_elements_per_blob());
+    try testing.expectEqual(BLOB_SIZE, ethzig_kzg_bytes_per_blob());
+    try testing.expectEqual(BYTES_PER_FIELD_ELEMENT, ethzig_kzg_bytes_per_field_element());
+    try testing.expectEqual(@sizeOf(KzgCommitment), ethzig_kzg_bytes_per_commitment());
+    try testing.expectEqual(@sizeOf(KzgProof), ethzig_kzg_bytes_per_proof());
+    // The Zig types must be exactly the size the C writes.
+    try testing.expectEqual(BYTES_PER_CELL, @sizeOf(Cell));
+    try testing.expectEqual(BYTES_PER_CELL, FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT);
+    try testing.expectEqual(FIELD_ELEMENTS_PER_EXT_BLOB, CELLS_PER_EXT_BLOB * FIELD_ELEMENTS_PER_CELL);
 }
 
 test "kzg settings storage is sized by the C shim" {

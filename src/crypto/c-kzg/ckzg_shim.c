@@ -20,3 +20,44 @@ size_t ethzig_kzg_settings_size(void) {
 size_t ethzig_kzg_settings_align(void) {
     return _Alignof(KZGSettings);
 }
+
+/*
+ * The sizes that determine how large the buffers src/kzg.zig hands to c-kzg
+ * must be. The C code writes exactly CELLS_PER_EXT_BLOB cells and proofs into
+ * caller-provided arrays, so a mismatch between these macros and the Zig
+ * constants is the same class of memory-corruption bug the settings size
+ * above exists to rule out. src/kzg.zig asserts each one against its own
+ * constant in a test.
+ */
+
+size_t ethzig_kzg_cells_per_ext_blob(void) {
+    return CELLS_PER_EXT_BLOB;
+}
+
+size_t ethzig_kzg_bytes_per_cell(void) {
+    return BYTES_PER_CELL;
+}
+
+size_t ethzig_kzg_field_elements_per_cell(void) {
+    return FIELD_ELEMENTS_PER_CELL;
+}
+
+size_t ethzig_kzg_field_elements_per_blob(void) {
+    return FIELD_ELEMENTS_PER_BLOB;
+}
+
+size_t ethzig_kzg_bytes_per_blob(void) {
+    return BYTES_PER_BLOB;
+}
+
+size_t ethzig_kzg_bytes_per_commitment(void) {
+    return BYTES_PER_COMMITMENT;
+}
+
+size_t ethzig_kzg_bytes_per_proof(void) {
+    return BYTES_PER_PROOF;
+}
+
+size_t ethzig_kzg_bytes_per_field_element(void) {
+    return BYTES_PER_FIELD_ELEMENT;
+}
