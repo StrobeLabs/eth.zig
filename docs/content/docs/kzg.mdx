@@ -1,21 +1,26 @@
 ---
-title: KZG / EIP-4844
-description: Build EIP-4844 blob-transaction sidecars - KZG commitments and proofs over raw blob data - using the vendored c-kzg-4844 and blst reference implementations with the mainnet trusted setup embedded.
+title: KZG / EIP-4844 / EIP-7594
+description: Build blob-transaction sidecars (EIP-4844 commitments and proofs, EIP-7594 cell proofs for Fusaka), verify them, and produce the network encoding for eth_sendRawTransaction, using the vendored c-kzg-4844 and blst reference implementations with the mainnet trusted setup embedded.
 ---
 
 EIP-4844 ("blobs") attaches large data blobs to a transaction, each committed to
-with a **KZG commitment** and proven with a **KZG proof**. `eth.kzg` provides
-real, spec-correct KZG over the vendored
-[c-kzg-4844](https://github.com/ethereum/c-kzg-4844) reference implementation and
-its [blst](https://github.com/supranational/blst) dependency. The mainnet
-trusted setup (the KZG ceremony output) is **embedded in the library** via
-`@embedFile`, so you do not need to ship or locate an external setup file.
+with a **KZG commitment**. Before Fusaka a sidecar carried one **blob proof**
+per blob; since Fusaka (EIP-7594, PeerDAS) it carries **128 cell proofs** per
+blob, one for each 64-field-element cell of the extended blob, so that nodes can
+sample columns without downloading whole blobs. `eth.kzg` provides real,
+spec-correct KZG over the vendored
+[c-kzg-4844](https://github.com/ethereum/c-kzg-4844) reference implementation
+(v2.1.8) and its [blst](https://github.com/supranational/blst) dependency
+(v0.3.17). The mainnet trusted setup (the KZG ceremony output) is **embedded in
+the library** via `@embedFile`, so you do not need to ship or locate an external
+setup file.
 
 ## Initialize the trusted setup
 
 Load the trusted setup once at startup and free it at shutdown. `init` is
-idempotent and thread-safe (guarded by an atomic once-flag), so calling it more
-than once is harmless.
+idempotent and thread-safe: one caller loads while concurrent callers wait, and
+a failed load is reported to its caller and retried by the waiters instead of
+stranding them.
 
 ```zig
 const eth = @import("eth");
@@ -24,53 +29,175 @@ try eth.kzg.init(allocator);
 defer eth.kzg.deinit();
 ```
 
-## Build a blob sidecar
+The `allocator` backs a small opaque block that holds c-kzg's settings struct
+(sized at run time from the vendored C headers, never mirrored in Zig); the
+setup tables themselves are owned by the C code.
 
-The common task is turning raw blob bytes into a sidecar: the blob plus its KZG
-commitment and proof. `blob.buildSidecar` does exactly that.
+If you compute cell proofs often (a blob-posting service, a rollup batcher),
+c-kzg can trade memory for speed with precomputed fixed-base tables:
 
 ```zig
-// `raw_blob` is [131072]u8 (128 KiB = 4096 field elements x 32 bytes).
-// Each 32-byte field element must be a canonical BLS12-381 scalar (< modulus).
-var raw_blob: eth.blob.Blob = @splat(0);
-// ... fill raw_blob with your data ...
-
-const sidecar = try eth.blob.buildSidecar(allocator, raw_blob);
-// sidecar.blob, sidecar.commitment ([48]u8), sidecar.proof ([48]u8)
+try eth.kzg.initWithOptions(allocator, .{ .precompute = 8 });
 ```
 
-The blob-transaction `versioned hash` that goes on-chain is derived from the
-commitment:
+`precompute` (0..15, default 0) only affects `computeCellsAndKzgProofs` and
+`recoverCellsAndKzgProofs`. Upstream recommends 8 or 9 for frequent cell-proof
+computation: on an Apple M1 they cut `compute_cells_and_kzg_proofs` from about
+311 ms to about 181 ms / 170 ms, for about 96 MiB / 192 MiB of tables and about
+0.6 s / 1.1 s of extra load time. Every further step doubles the memory.
+
+## Build a Fusaka (version 1) sidecar
+
+The common task on a post-Fusaka network is turning raw blobs into a version-1
+sidecar: the blobs, their commitments and 128 cell proofs per blob.
 
 ```zig
-const versioned_hash = eth.blob.computeVersionedHash(sidecar.commitment);
+// Each blob is [131072]u8 (128 KiB = 4096 field elements x 32 bytes) and
+// every 32-byte big-endian field element must be below the BLS12-381 scalar
+// modulus (a zero top byte is the simplest way to guarantee that).
+var blobs: [1]eth.blob.Blob = .{@splat(0)};
+// ... fill blobs[0] with your data ...
+
+var sidecar = try eth.blob.buildSidecarV1(allocator, &blobs);
+defer sidecar.deinit(allocator);
+// sidecar.blobs, sidecar.commitments ([48]u8 each),
+// sidecar.cell_proofs (128 x [48]u8 per blob, blob-major; sidecar.cellProofsOf(i))
+```
+
+The versioned hashes that go into the transaction body are derived from the
+commitments:
+
+```zig
+const versioned_hash = eth.blob.computeVersionedHash(sidecar.commitments[0]);
 // versioned_hash[0] == 0x01 (the KZG version byte)
 ```
 
+`sidecar.verify(allocator)` recomputes the cells and runs
+`verify_cell_kzg_proof_batch` over all of them, which is the check nodes apply
+before accepting the transaction; the network wrapper below runs it for you by
+default.
+
+For pre-Fusaka networks, `eth.blob.buildSidecar(allocator, raw_blob)` still
+produces the single-blob version-0 `BlobSidecar` (blob, commitment, blob proof).
+
+## Broadcast: the network wrapper
+
+`eth_sendRawTransaction` does not take the signed transaction alone: a type-3
+transaction travels with its sidecar inside a wrapper list. eth.zig produces
+both wrapper versions from the signed bytes you already have:
+
+```zig
+// 1. Sign the type-3 transaction body as usual (blob_versioned_hashes set).
+const tx = eth.transaction.Transaction{ .eip4844 = .{ /* ... */ } };
+const hash = try eth.transaction.hashForSigning(allocator, tx);
+const sig = try signer.signHash(hash);
+const signed = try eth.transaction.serializeSigned(allocator, tx, sig.r, sig.s, sig.v);
+defer allocator.free(signed);
+
+// 2. Wrap it with the sidecar. Fusaka (EIP-7594, version 1):
+//    0x03 || rlp([tx_payload_body, 1, blobs, commitments, cell_proofs])
+const raw = try eth.transaction.wrapBlobTransaction(allocator, signed, .{ .v1 = sidecar }, .{});
+defer allocator.free(raw);
+// ... provider.sendRawTransaction(raw) ...
+```
+
+For a pre-Fusaka network use the legacy wrapper
+`0x03 || rlp([tx_payload_body, blobs, commitments, proofs])`:
+
+```zig
+const raw_v0 = try eth.transaction.wrapBlobTransaction(allocator, signed, .{ .v0 = .{
+    .blobs = &blobs,
+    .commitments = &.{v0_sidecar.commitment},
+    .proofs = &.{v0_sidecar.proof},
+} }, .{});
+```
+
+`wrapBlobTransaction` checks that the signed bytes are a type-3 transaction,
+that the sidecar's slices agree in length (128 cell proofs per blob for version
+1), and, unless you pass `.{ .verify_proofs = false }`, that every proof
+verifies against its commitment before the bytes ever leave the process
+(`error.SidecarVerificationFailed` otherwise). Both encodings are checked byte
+for byte against go-ethereum's `types.BlobTxSidecar` output (see Correctness).
+
 ## Lower-level API
 
-If you want the individual operations rather than a full sidecar:
+Blob-level (EIP-4844):
 
 ```zig
 const commitment = try eth.kzg.blobToKzgCommitment(&raw_blob); // [48]u8
 const proof = try eth.kzg.computeBlobKzgProof(&raw_blob, commitment); // [48]u8
-
 const ok = try eth.kzg.verifyBlobKzgProof(&raw_blob, commitment, proof);
-// ok == true
-
-// Batch verification over equal-length slices of blobs/commitments/proofs:
 const all_ok = try eth.kzg.verifyBlobKzgProofBatch(blobs, commitments, proofs);
 ```
 
+Point evaluation (the EIP-4844 precompile's prover and verifier):
+
+```zig
+const opening = try eth.kzg.computeKzgProof(&raw_blob, z); // .proof [48]u8, .y [32]u8
+const valid = try eth.kzg.verifyKzgProof(commitment, z, opening.y, opening.proof);
+```
+
+Cells (EIP-7594):
+
+```zig
+var cells: [eth.kzg.CELLS_PER_EXT_BLOB]eth.kzg.Cell = undefined; // 128 x [2048]u8
+var proofs: [eth.kzg.CELLS_PER_EXT_BLOB]eth.kzg.KzgProof = undefined;
+try eth.kzg.computeCellsAndKzgProofs(&raw_blob, &cells, &proofs);
+try eth.kzg.computeCells(&raw_blob, &cells); // cells only, cheaper
+
+// Verify any mix of cells from any blobs: cells[i] is cell cell_indices[i] of
+// the blob committed to by commitments[i], attested by proofs[i].
+const good = try eth.kzg.verifyCellKzgProofBatch(commitments, cell_indices, cells_slice, proofs_slice);
+
+// Recover all 128 cells (and proofs) from any 64 or more of them; the
+// indices must be strictly increasing.
+try eth.kzg.recoverCellsAndKzgProofs(cell_indices, known_cells, &cells, &proofs);
+```
+
+The 128-cell outputs are written through caller-provided arrays because 256 KiB
+of cells per blob does not belong on the stack; allocate them with
+`allocator.create([eth.kzg.CELLS_PER_EXT_BLOB]eth.kzg.Cell)` if you need
+them on the heap.
+
 Errors map c-kzg's `C_KZG_RET` codes onto a Zig `KzgError` set
 (`BadArgs`, `Internal`, `OutOfMemory`), plus `NotInitialized` if you call an
-operation before `kzg.init`.
+operation before `kzg.init` and `SetupLoadFailed` if the embedded setup cannot be
+loaded. A malformed point, a non-canonical field element, an out-of-range cell
+index or a length mismatch is `BadArgs`; a proof that simply does not verify is a
+`false` result, not an error.
+
+## Performance
+
+blst is built with its assembly backend on x86_64 and aarch64 (the portable C
+backend remains the fallback for other targets, or with `-Dblst-asm=false`).
+On an Apple M4 in ReleaseFast, minimum of repeated runs:
+
+| Operation | Portable C | Assembly | Speedup |
+| --- | ---: | ---: | ---: |
+| Trusted setup load (`init`) | 7383 ms | 1136 ms | 6.5x |
+| `blobToKzgCommitment` | 200 ms | 25.9 ms | 7.7x |
+| `computeBlobKzgProof` | 205 ms | 26.4 ms | 7.8x |
+| `verifyBlobKzgProof` | 7.26 ms | 1.10 ms | 6.6x |
+| `computeCellsAndKzgProofs` (precompute 0) | 1156 ms | 158 ms | 7.3x |
+| `verifyCellKzgProofBatch`, 1 cell | 12.2 ms | 1.67 ms | 7.3x |
+| `verifyCellKzgProofBatch`, 128 cells | 69.5 ms | 10.8 ms | 6.4x |
+| `recoverCellsAndKzgProofs` from 64 cells | 1233 ms | 173 ms | 7.1x |
+
+`zig build bench-kzg` reproduces the table (add `-Dblst-asm=false` for the
+portable column).
 
 ## Correctness
 
 The bindings are verified **byte-for-byte against the official ethereum/c-kzg-4844
-test vectors** (the same `blob_to_kzg_commitment`, `compute_blob_kzg_proof`, and
-`verify_blob_kzg_proof` vectors used by the reference implementation), in addition
-to round-trip and lifecycle tests. The vendored versions are pinned in
-`src/crypto/c-kzg/VENDOR.md` (c-kzg-4844 v2.1.1, blst v0.3.14, built in blst's
-portable no-assembly C mode for robustness across targets).
+v2.1.8 test vectors**: the `blob_to_kzg_commitment`, `compute_blob_kzg_proof`
+and `verify_blob_kzg_proof` vectors in the unit tests, and under
+`tests/vectors/kzg/` (run by `zig build vector-test`) all 122 `verify_kzg_proof`
+cases plus valid and invalid cases for `compute_kzg_proof`,
+`compute_cells_and_kzg_proofs`, `recover_cells_and_kzg_proofs` and
+`verify_cell_kzg_proof_batch`, including the point-at-infinity commitment
+regression, zero-cell batches, repeated cells, unsorted and out-of-range
+indices. The blob-transaction network encodings (both wrapper versions, the
+signature and the cell proofs) are additionally pinned to a known-answer vector
+generated with go-ethereum v1.16.8's `types.BlobTxSidecar`, whose KZG backend
+(go-eth-kzg) is independent of c-kzg-4844. The vendored versions, build flags
+and the single local patch are recorded in `src/crypto/c-kzg/VENDOR.md`.

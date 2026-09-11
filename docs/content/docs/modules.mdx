@@ -55,6 +55,7 @@ High-performance cryptographic primitives.
 | `signature` | `Signature`, `recoverAddress` | Signature type with v/r/s and recovery |
 | `keccak` | `keccak256` | Keccak-256 hashing |
 | `eip155` | `applyEip155`, `chainId` | EIP-155 replay protection |
+| `kzg` | `blobToKzgCommitment`, `computeBlobKzgProof`, `verifyBlobKzgProof`, `computeKzgProof`, `verifyKzgProof`, `computeCellsAndKzgProofs`, `recoverCellsAndKzgProofs`, `verifyCellKzgProofBatch` | EIP-4844 blob and point-evaluation KZG plus EIP-7594 cells (vendored c-kzg-4844 + blst) |
 
 ## Transaction Types
 
@@ -62,10 +63,10 @@ All Ethereum transaction formats.
 
 | Module | Key Exports | Description |
 |--------|-------------|-------------|
-| `transaction` | `Transaction`, `LegacyTx`, `Eip1559Tx`, `Eip4844Tx` | Legacy, EIP-2930, EIP-1559, EIP-4844 transaction types |
+| `transaction` | `Transaction`, `LegacyTx`, `Eip1559Tx`, `Eip4844Tx`, `wrapBlobTransaction` | Legacy, EIP-2930, EIP-1559, EIP-4844 transaction types and the blob network wrapper |
 | `receipt` | `TransactionReceipt` | Transaction receipt with logs and status |
 | `block` | `Block`, `BlockHeader` | Block and block header types |
-| `blob` | `Blob`, `BlobSidecar` | EIP-4844 blob transaction support |
+| `blob` | `Blob`, `BlobSidecar`, `BlobSidecarV1`, `buildSidecarV1`, `NetworkSidecar` | EIP-4844 blobs and EIP-7594 (Fusaka) cell-proof sidecars |
 | `access_list` | `AccessList`, `AccessListItem` | EIP-2930 access list types |
 
 ## Accounts

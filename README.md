@@ -286,8 +286,8 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 |-------|---------|-------------|
 | **Primitives** | `primitives`, `uint256`, `hex` | Address, Hash, Bytes32, u256, hex encoding |
 | **Encoding** | `rlp`, `abi_encode`, `abi_decode`, `abi_types` | RLP and ABI encoding/decoding |
-| **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155`, `kzg` | ECDSA signing (RFC 6979), Keccak-256, EIP-155, EIP-4844 KZG |
-| **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions |
+| **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155`, `kzg` | ECDSA signing (RFC 6979), Keccak-256, EIP-155, EIP-4844 KZG, EIP-7594 cells |
+| **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions and blob sidecars |
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |
 | **Transport** | `http_transport`, `ws_transport`, `sse_transport`, `json_rpc`, `provider`, `subscription`, `ws_client` | HTTP, WebSocket, and SSE transports; resilient WS client with auto-reconnect |
 | **ENS** | `ens_namehash`, `ens_resolver`, `ens_reverse`, `ens_normalize`, `ens_contenthash` | ENSIP-15 normalization, Universal Resolver forward/reverse resolution, contenthash decoding |
@@ -305,7 +305,9 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | Keccak-256 hashing | Complete |
 | secp256k1 ECDSA signing (RFC 6979, EIP-2 low-S) | Complete |
 | Transaction types (Legacy, EIP-2930, EIP-1559, EIP-4844) | Complete |
-| EIP-4844 KZG (blob commitments/proofs, vendored c-kzg-4844 + blst) | Complete |
+| EIP-4844 KZG (blob commitments/proofs, point evaluation; vendored c-kzg-4844 + blst) | Complete |
+| EIP-7594 cells (cell proofs, recovery, batch verification) | Complete |
+| Blob transaction network wrapper (pre-Fusaka v0 and EIP-7594 v1) | Complete |
 | EIP-155 replay protection | Complete |
 | EIP-191 personal message signing | Complete |
 | EIP-712 typed structured data signing | Complete |
@@ -365,8 +367,13 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 
 ```bash
 zig build test                # Unit tests
+zig build vector-test         # Conformance vectors (ENS normalization, KZG)
 zig build integration-test    # Integration tests (requires Anvil)
 ```
+
+The KZG vectors are the official ethereum/c-kzg-4844 cases (point evaluation
+and EIP-7594 cells) plus a go-ethereum known-answer vector for the blob
+transaction network encodings; see `tests/vectors/kzg/README.md`.
 
 ## Benchmarks
 
@@ -380,7 +387,12 @@ Or run individually:
 
 ```bash
 zig build bench          # eth.zig only
+zig build bench-kzg      # KZG: commitments, blob proofs, EIP-7594 cells
 ```
+
+blst is built with its assembly backend on x86_64 and aarch64, which is 6-8x
+faster than the portable C fallback across every KZG operation
+(`-Dblst-asm=false` selects the fallback; see `docs` for the table).
 
 ## Contributing
 
