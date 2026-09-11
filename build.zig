@@ -4,6 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Opt-in Noir UltraHonk verification (src/noir.zig). Off by default: the
+    // Barretenberg static library is a lazy dependency that is only fetched and
+    // linked when this is set, and the noir tests are only collected then.
+    const noir = b.option(bool, "noir", "Link Barretenberg v5.2.0 and enable eth.noir (UltraHonk proof verification)") orelse false;
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "noir", noir);
+    const build_options_module = build_options.createModule();
+
     // Main library module
     const eth_module = b.addModule("eth", .{
         .root_source_file = b.path("src/root.zig"),
@@ -14,6 +22,7 @@ pub fn build(b: *std.Build) void {
     addXkcp(b, eth_module, target);
     addSecp256k1(b, eth_module);
     addKzg(b, eth_module);
+    addNoir(b, eth_module, target, noir, build_options_module);
 
     // Unit tests. Root the test artifact at src/root.zig so its test block
     // (which direct-imports every module file) actually collects and runs the
@@ -31,6 +40,7 @@ pub fn build(b: *std.Build) void {
     addXkcp(b, unit_test_module, target);
     addSecp256k1(b, unit_test_module);
     addKzg(b, unit_test_module);
+    addNoir(b, unit_test_module, target, noir, build_options_module);
     const unit_tests = b.addTest(.{
         .root_module = unit_test_module,
     });
@@ -38,6 +48,24 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    // Noir/Barretenberg interop vectors (tests/vectors/noir/, embedded from
+    // tests/). A separate test binary, and part of `zig build test` only when
+    // -Dnoir=true links the library.
+    if (noir) {
+        const noir_vector_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/noir_vectors_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "eth", .module = eth_module },
+                },
+            }),
+        });
+        const run_noir_vector_tests = b.addRunArtifact(noir_vector_tests);
+        test_step.dependOn(&run_noir_vector_tests.step);
+    }
 
     // Install the unit-test binary so coverage tooling (kcov) can run it
     // out-of-band: `zig build install-test` writes it to zig-out/bin/test.
@@ -112,6 +140,7 @@ pub fn build(b: *std.Build) void {
     addXkcp(b, bench_module, target);
     addSecp256k1(b, bench_module);
     addKzg(b, bench_module);
+    addNoir(b, bench_module, target, noir, build_options_module);
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
@@ -317,4 +346,68 @@ fn addKzg(b: *std.Build, module: *std.Build.Module) void {
         .file = b.path("src/crypto/c-kzg/src/ckzg.c"),
         .flags = ckzg_flags,
     });
+}
+
+/// Expose the `noir` build option to src/root.zig and, when it is set, link the
+/// pinned Barretenberg v5.2.0 static library for the target.
+///
+/// The library is a lazy package dependency (build.zig.zon), one archive per
+/// supported host: nothing is fetched unless `-Dnoir=true`, and only the
+/// archive for the target being built. It is C++ (libc++ ABI, exceptions kept
+/// inside the library), so libc++ and libc are linked with it. See
+/// src/crypto/barretenberg/VENDOR.md for hashes, license and update steps.
+fn addNoir(
+    b: *std.Build,
+    module: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    enabled: bool,
+    build_options_module: *std.Build.Module,
+) void {
+    module.addImport("build_options", build_options_module);
+    if (!enabled) return;
+
+    const os = target.result.os.tag;
+    const arch = target.result.cpu.arch;
+    const dep_name: []const u8 = if (os == .macos and arch == .aarch64)
+        "barretenberg_arm64_darwin"
+    else if (os == .macos and arch == .x86_64)
+        "barretenberg_amd64_darwin"
+    else if (os == .linux and arch == .x86_64)
+        "barretenberg_amd64_linux"
+    else if (os == .linux and arch == .aarch64)
+        "barretenberg_arm64_linux"
+    else {
+        // No release archive for this target. Report it as an ordinary build
+        // error instead of aborting the runner while the graph is still being
+        // built: the failure is attached to the module's object-file input, so
+        // it fires exactly when something that needs Barretenberg is built and
+        // never for `zig build --help` or a step that does not link it.
+        const fail = b.addFail(b.fmt(
+            "-Dnoir=true is not supported for {s}-{s}; Barretenberg v5.2.0 static " ++
+                "libraries are wired up for aarch64-macos, x86_64-macos, x86_64-linux " ++
+                "and aarch64-linux only",
+            .{ @tagName(arch), @tagName(os) },
+        ));
+        const unreachable_object = b.addWriteFiles();
+        unreachable_object.step.dependOn(&fail.step);
+        module.addObjectFile(unreachable_object.add("noir-unsupported-target.o", ""));
+        return;
+    };
+
+    // Returns null (after scheduling the fetch) the first time the archive is
+    // needed; the build runner re-executes once it is available.
+    const dep = b.lazyDependency(dep_name, .{}) orelse return;
+    module.addObjectFile(dep.path("libbb-external.a"));
+    module.link_libcpp = true;
+    module.link_libc = true;
+
+    if (os.isDarwin()) {
+        // Strong C11 aligned_alloc so the archive's weak, hidden definition of
+        // that libc-named symbol is not bound to libSystem's strict version by
+        // Zig's Mach-O linker. See the comment in the file.
+        module.addCSourceFile(.{
+            .file = b.path("src/crypto/barretenberg/aligned_alloc_macos.c"),
+            .flags = &.{"-O2"},
+        });
+    }
 }

@@ -3,7 +3,32 @@
     .version = "0.9.1", // x-release-please-version
     .fingerprint = 0xd0f21900fa26f179,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        // Barretenberg v5.2.0 prebuilt static libraries (Apache-2.0), one per
+        // supported host. Lazy: fetched only when building with -Dnoir=true,
+        // and only the entry build.zig selects for the target. Hashes and the
+        // update procedure are recorded in src/crypto/barretenberg/VENDOR.md.
+        .barretenberg_arm64_darwin = .{
+            .url = "https://github.com/AztecProtocol/barretenberg/releases/download/v5.2.0/barretenberg-static-arm64-darwin.tar.gz",
+            .hash = "N-V-__8AAKAlJwOvxF9WMTWZ6_g3tK6kxoN1XqeG0j1bIxfK",
+            .lazy = true,
+        },
+        .barretenberg_amd64_darwin = .{
+            .url = "https://github.com/AztecProtocol/barretenberg/releases/download/v5.2.0/barretenberg-static-amd64-darwin.tar.gz",
+            .hash = "N-V-__8AAEi5uATDH1uT4EsKM7BxD_qgy01S6bvSVntg5M_O",
+            .lazy = true,
+        },
+        .barretenberg_amd64_linux = .{
+            .url = "https://github.com/AztecProtocol/barretenberg/releases/download/v5.2.0/barretenberg-static-amd64-linux.tar.gz",
+            .hash = "N-V-__8AABCloQVNS5sP_eXpnSbYWfq2xQBd4DQuiwYOKmDL",
+            .lazy = true,
+        },
+        .barretenberg_arm64_linux = .{
+            .url = "https://github.com/AztecProtocol/barretenberg/releases/download/v5.2.0/barretenberg-static-arm64-linux.tar.gz",
+            .hash = "N-V-__8AAB5oGQRtvwJEs6U1kH632yGzq9QqF7aGtv8LDL-y",
+            .lazy = true,
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
