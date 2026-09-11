@@ -213,8 +213,11 @@ cases plus valid and invalid cases for `compute_kzg_proof`,
 `compute_cells_and_kzg_proofs`, `recover_cells_and_kzg_proofs` and
 `verify_cell_kzg_proof_batch`, including the point-at-infinity commitment
 regression, zero-cell batches, repeated cells, unsorted and out-of-range
-indices. The blob-transaction network encodings (both wrapper versions, the
-signature and the cell proofs) are additionally pinned to a known-answer vector
-generated with go-ethereum v1.16.8's `types.BlobTxSidecar`, whose KZG backend
-(go-eth-kzg) is independent of c-kzg-4844. The vendored versions, build flags
-and the single local patch are recorded in `src/crypto/c-kzg/VENDOR.md`.
+indices, and full-entropy blobs whose 128 cells and proofs are all distinct so
+that per-index content is pinned rather than merely the multiset. The
+blob-transaction network encodings (both wrapper versions, the signature and
+the cell proofs) are additionally pinned to a known-answer vector generated
+with go-ethereum v1.16.8's `types.BlobTxSidecar`, whose KZG backend
+(go-eth-kzg) is independent of c-kzg-4844; it uses two distinct blobs, so the
+blob-major `cell_proofs` layout is pinned too. The vendored versions, build
+flags and the single local patch are recorded in `src/crypto/c-kzg/VENDOR.md`.
