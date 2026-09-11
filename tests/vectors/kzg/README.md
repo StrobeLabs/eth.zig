@@ -34,3 +34,26 @@ Cases whose inputs have the wrong byte length (`invalid_cell_2`/`_3`,
 constructed with eth.zig's fixed-size types; the test treats a construction
 failure as a rejection and requires the vector's expected output to be
 `null`, so the verdict is still checked.
+
+## go-ethereum blob transaction cross-check (`go-ethereum/`)
+
+`blobtx_sidecar_vector.json` is a known-answer vector for the blob
+transaction network encodings, generated independently of c-kzg-4844 by the
+Go program next to it (`main.go`, pinned to go-ethereum v1.16.8, whose
+`crypto/kzg4844` is backed by crate-crypto/go-eth-kzg). For one fixed
+transaction (Anvil account 0, chain id 1, nonce 7, one deterministic blob
+built from the recipe in the file) it records the commitment, the blob proof,
+the 128 cell proofs, the signature, and the length and keccak256 of the
+signed transaction, of the pre-Fusaka version-0 wrapper
+`0x03 || rlp([tx_payload_body, blobs, commitments, proofs])` and of the
+EIP-7594 version-1 wrapper
+`0x03 || rlp([tx_payload_body, 1, blobs, commitments, cell_proofs])`, exactly
+as `types.Transaction.MarshalBinary` emits them with a `BlobTxSidecar` of the
+matching version (go-ethereum also round-trips both encodings through its
+decoder before they are written). `tests/blob_sidecar_vectors_test.zig`
+rebuilds the same transaction and sidecar with eth.zig and compares all of
+it byte for byte (the full encodings via their keccak256 and length, which
+keeps the vector at 15 KiB instead of 540 KiB).
+
+Regenerate with `cd go-ethereum && go run .` (network access is needed the
+first time to fetch the pinned modules).

@@ -433,15 +433,24 @@ pub fn decode(comptime T: type, data: []const u8) (RlpError || error{OutOfMemory
     }
 }
 
-const ItemKind = enum { string, list };
+/// Whether an RLP item is a string (byte sequence) or a list.
+pub const ItemKind = enum { string, list };
 
-const Item = struct {
+/// One RLP item split off the front of a buffer: its kind, its payload (the
+/// bytes after the length prefix; for a list, the concatenated encodings of
+/// its elements) and the bytes that follow the item.
+pub const Item = struct {
     kind: ItemKind,
     payload: []const u8,
     rest: []const u8,
 };
 
-fn decodeItem(data: []const u8) RlpError!Item {
+/// Split the first RLP item off `data` without interpreting its payload.
+/// Walk a list by calling this on the list's `payload` until it is empty.
+/// Rejects non-canonical encodings (a single byte below 0x80 written with a
+/// length prefix, a long form used for a short length, a length with a
+/// leading zero) and truncated input.
+pub fn decodeItem(data: []const u8) RlpError!Item {
     if (data.len == 0) return error.InputTooShort;
 
     const prefix = data[0];
@@ -612,6 +621,21 @@ test "encode fixed bytes [4]u8" {
     const result = try encode(allocator, data);
     defer allocator.free(result);
     try std.testing.expectEqualSlices(u8, &.{ 0x84, 0xde, 0xad, 0xbe, 0xef }, result);
+}
+
+test "decodeItem walks a list of strings" {
+    // rlp(["cat", "dog"]) = 0xc8 0x83 'c' 'a' 't' 0x83 'd' 'o' 'g'
+    const encoded = [_]u8{ 0xc8, 0x83, 'c', 'a', 't', 0x83, 'd', 'o', 'g' };
+    const list = try decodeItem(&encoded);
+    try std.testing.expectEqual(ItemKind.list, list.kind);
+    try std.testing.expectEqual(@as(usize, 0), list.rest.len);
+    const first = try decodeItem(list.payload);
+    try std.testing.expectEqual(ItemKind.string, first.kind);
+    try std.testing.expectEqualStrings("cat", first.payload);
+    const second = try decodeItem(first.rest);
+    try std.testing.expectEqualStrings("dog", second.payload);
+    try std.testing.expectEqual(@as(usize, 0), second.rest.len);
+    try std.testing.expectError(error.InputTooShort, decodeItem(second.rest));
 }
 
 test "decode u8" {

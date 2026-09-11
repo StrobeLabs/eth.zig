@@ -122,6 +122,21 @@ pub fn build(b: *std.Build) void {
     const run_kzg_vector_tests = b.addRunArtifact(kzg_vector_tests);
     vector_step.dependOn(&run_kzg_vector_tests.step);
 
+    // Blob transaction network encodings (v0 and EIP-7594 v1 wrappers)
+    // against a go-ethereum known-answer vector (tests/vectors/kzg/go-ethereum/).
+    const blob_sidecar_vector_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/blob_sidecar_vectors_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "eth", .module = eth_module },
+            },
+        }),
+    });
+    const run_blob_sidecar_vector_tests = b.addRunArtifact(blob_sidecar_vector_tests);
+    vector_step.dependOn(&run_blob_sidecar_vector_tests.step);
+
     // Benchmarks (always ReleaseFast for meaningful numbers)
     const bench_module = b.addModule("eth_bench", .{
         .root_source_file = b.path("src/root.zig"),

@@ -2,6 +2,7 @@ const std = @import("std");
 const rlp = @import("rlp.zig");
 const keccak = @import("keccak.zig");
 const access_list_mod = @import("access_list.zig");
+const blob_mod = @import("blob.zig");
 
 pub const AccessListItem = access_list_mod.AccessListItem;
 pub const AccessList = access_list_mod.AccessList;
@@ -152,6 +153,119 @@ pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8,
         .eip4844 => |eip4844| return serializeTypedSigned(allocator, 0x03, eip4844, r, s, v),
         .eip7702 => |eip7702| return serializeTypedSigned(allocator, 0x04, eip7702, r, s, v),
     }
+}
+
+// ============================================================================
+// Blob transaction network wrapper (EIP-4844 v0 / EIP-7594 v1)
+// ============================================================================
+
+/// Type byte of an EIP-4844 blob transaction.
+pub const BLOB_TX_TYPE: u8 = 0x03;
+
+/// Errors from `wrapBlobTransaction` beyond allocation and KZG errors.
+pub const BlobWrapError = error{
+    /// `signed_tx` is not `0x03 || rlp([...])` (wrong type byte, not a single
+    /// RLP list, or trailing bytes).
+    NotABlobTransaction,
+    /// The sidecar's proofs do not verify against its blobs and commitments.
+    SidecarVerificationFailed,
+} || blob_mod.SidecarError;
+
+/// Options for `wrapBlobTransaction`.
+pub const WrapBlobOptions = struct {
+    /// Verify every proof in the sidecar against its blob and commitment
+    /// before encoding (`kzg.verifyBlobKzgProofBatch` for v0,
+    /// `kzg.verifyCellKzgProofBatch` over the recomputed cells for v1), the
+    /// same check nodes apply on receipt. Costs a few milliseconds per blob
+    /// and requires `kzg.init`; disable only when the sidecar was verified
+    /// already.
+    verify_proofs: bool = true,
+};
+
+/// Produce the network encoding of a signed EIP-4844 transaction for
+/// `eth_sendRawTransaction`: the wrapper list that carries the blobs and
+/// proofs alongside the signed transaction body.
+///
+/// `signed_tx` is the output of `serializeSigned` for a type-3 transaction,
+/// `0x03 || rlp([chainId, ..., blobVersionedHashes, y_parity, r, s])`. The
+/// result is
+///
+/// - version 0 (pre-Fusaka), `sidecar = .v0`:
+///   `0x03 || rlp([tx_payload_body, blobs, commitments, proofs])`
+/// - version 1 (Fusaka, EIP-7594), `sidecar = .v1`:
+///   `0x03 || rlp([tx_payload_body, 1, blobs, commitments, cell_proofs])`
+///
+/// where `tx_payload_body` is the signed transaction's own RLP list embedded
+/// as a list item, and each of the trailing lists holds fixed-size byte
+/// strings (131072-byte blobs, 48-byte commitments and proofs; 128 cell
+/// proofs per blob in version 1, blob-major). Rejects inputs that are not a
+/// type-3 transaction and sidecars whose slice lengths disagree, and (by
+/// default) sidecars whose proofs do not verify. Caller owns the returned
+/// slice. Nothing on the wire identifies which version a network expects:
+/// use `.v1` on and after Fusaka, `.v0` before.
+pub fn wrapBlobTransaction(
+    allocator: std.mem.Allocator,
+    signed_tx: []const u8,
+    sidecar: blob_mod.NetworkSidecar,
+    options: WrapBlobOptions,
+) ![]u8 {
+    if (signed_tx.len < 2 or signed_tx[0] != BLOB_TX_TYPE) return error.NotABlobTransaction;
+    const body = rlp.decodeItem(signed_tx[1..]) catch return error.NotABlobTransaction;
+    if (body.kind != .list or body.rest.len != 0) return error.NotABlobTransaction;
+    try sidecar.validateShape();
+    if (options.verify_proofs) {
+        if (!try sidecar.verify(allocator)) return error.SidecarVerificationFailed;
+    }
+
+    const blobs = sidecar.blobs();
+    const commitments = sidecar.commitments();
+    const proofs = sidecar.proofs();
+    const version_len: usize = switch (sidecar) {
+        .v0 => 0,
+        .v1 => 1, // the byte 0x01 encodes as itself
+    };
+    const blobs_payload = blobs.len * fixedItemLen(blob_mod.BLOB_SIZE);
+    const commitments_payload = commitments.len * fixedItemLen(48);
+    const proofs_payload = proofs.len * fixedItemLen(48);
+    const payload_len = (signed_tx.len - 1) + version_len +
+        rlp.lengthPrefixSize(blobs_payload) + blobs_payload +
+        rlp.lengthPrefixSize(commitments_payload) + commitments_payload +
+        rlp.lengthPrefixSize(proofs_payload) + proofs_payload;
+    const total = 1 + rlp.lengthPrefixSize(payload_len) + payload_len;
+
+    const out = try allocator.alloc(u8, total);
+    errdefer allocator.free(out);
+    var pos: usize = 0;
+    out[pos] = BLOB_TX_TYPE;
+    pos += 1;
+    pos += rlp.writeLengthDirect(out[pos..], payload_len, 0xc0);
+    @memcpy(out[pos..][0 .. signed_tx.len - 1], signed_tx[1..]);
+    pos += signed_tx.len - 1;
+    if (sidecar == .v1) {
+        out[pos] = blob_mod.SIDECAR_VERSION_V1;
+        pos += 1;
+    }
+    pos += rlp.writeLengthDirect(out[pos..], blobs_payload, 0xc0);
+    for (blobs) |*b| pos += writeFixedItem(out[pos..], b);
+    pos += rlp.writeLengthDirect(out[pos..], commitments_payload, 0xc0);
+    for (commitments) |*c| pos += writeFixedItem(out[pos..], c);
+    pos += rlp.writeLengthDirect(out[pos..], proofs_payload, 0xc0);
+    for (proofs) |*p| pos += writeFixedItem(out[pos..], p);
+    std.debug.assert(pos == total);
+    return out;
+}
+
+/// Encoded size of an RLP string of `n` bytes (n >= 2, so never the
+/// single-byte short form).
+fn fixedItemLen(n: usize) usize {
+    return rlp.lengthPrefixSize(n) + n;
+}
+
+/// Write `bytes` as an RLP string without copying it through a temporary.
+fn writeFixedItem(buf: []u8, bytes: []const u8) usize {
+    const n = rlp.writeLengthDirect(buf, bytes.len, 0x80);
+    @memcpy(buf[n..][0..bytes.len], bytes);
+    return n + bytes.len;
 }
 
 // ============================================================================
@@ -1487,4 +1601,218 @@ test "hashForSigning different chain IDs produce different hashes" {
     const h5 = try hashForSigning(allocator, tx_chain5);
 
     try std.testing.expect(!std.mem.eql(u8, &h1, &h5));
+}
+
+// ============================================================================
+// Blob transaction network wrapper tests
+// ============================================================================
+
+/// Split an RLP list payload into its items, asserting the expected kinds.
+fn expectItems(payload: []const u8, comptime n: usize) ![n]rlp.Item {
+    var items: [n]rlp.Item = undefined;
+    var rest = payload;
+    for (&items) |*it| {
+        it.* = try rlp.decodeItem(rest);
+        rest = it.rest;
+    }
+    try std.testing.expectEqual(@as(usize, 0), rest.len);
+    return items;
+}
+
+/// Decode a list of fixed-size strings and compare to the expected values.
+fn expectFixedList(comptime n: usize, list: rlp.Item, expected: []const [n]u8) !void {
+    try std.testing.expectEqual(rlp.ItemKind.list, list.kind);
+    var rest = list.payload;
+    for (expected) |*want| {
+        const it = try rlp.decodeItem(rest);
+        try std.testing.expectEqual(rlp.ItemKind.string, it.kind);
+        try std.testing.expectEqualSlices(u8, want, it.payload);
+        rest = it.rest;
+    }
+    try std.testing.expectEqual(@as(usize, 0), rest.len);
+}
+
+/// A signed type-3 transaction over the given versioned hashes (structural
+/// tests only; the signature values are arbitrary).
+fn signedBlobTx(allocator: std.mem.Allocator, hashes: []const [32]u8) ![]u8 {
+    const tx = Transaction{ .eip4844 = .{
+        .chain_id = 1,
+        .nonce = 7,
+        .max_priority_fee_per_gas = 1_000_000_000,
+        .max_fee_per_gas = 30_000_000_000,
+        .gas_limit = 21_000,
+        .to = @splat(0x11),
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+        .max_fee_per_blob_gas = 1_000_000_000,
+        .blob_versioned_hashes = hashes,
+    } };
+    return serializeSigned(allocator, tx, @splat(0x22), @splat(0x33), 1);
+}
+
+test "wrapBlobTransaction v1 round-trips through the RLP decoder" {
+    const allocator = std.testing.allocator;
+    const blobs = try allocator.alloc(blob_mod.Blob, 2);
+    defer allocator.free(blobs);
+    for (blobs, 0..) |*b, i| {
+        @memset(b, 0);
+        b[31] = @intCast(i + 1);
+    }
+    const commitments = [_]blob_mod.KzgCommitment{ @splat(0xc1), @splat(0xc2) };
+    const cell_proofs = try allocator.alloc(blob_mod.KzgProof, 2 * blob_mod.CELL_PROOFS_PER_BLOB);
+    defer allocator.free(cell_proofs);
+    for (cell_proofs, 0..) |*p, i| p.* = @splat(@intCast(i % 251));
+    const hashes = [_][32]u8{ blob_mod.computeVersionedHash(commitments[0]), blob_mod.computeVersionedHash(commitments[1]) };
+    const signed = try signedBlobTx(allocator, &hashes);
+    defer allocator.free(signed);
+
+    const sidecar = blob_mod.NetworkSidecar{ .v1 = .{ .blobs = blobs, .commitments = &commitments, .cell_proofs = cell_proofs } };
+    // Structural test: proofs are synthetic, so skip KZG verification.
+    const raw = try wrapBlobTransaction(allocator, signed, sidecar, .{ .verify_proofs = false });
+    defer allocator.free(raw);
+
+    try std.testing.expectEqual(BLOB_TX_TYPE, raw[0]);
+    const outer = try rlp.decodeItem(raw[1..]);
+    try std.testing.expectEqual(rlp.ItemKind.list, outer.kind);
+    try std.testing.expectEqual(@as(usize, 0), outer.rest.len);
+    const items = try expectItems(outer.payload, 5);
+
+    // Item 0 is the signed transaction's own list, byte for byte.
+    try std.testing.expectEqual(rlp.ItemKind.list, items[0].kind);
+    const body = try rlp.decodeItem(signed[1..]);
+    try std.testing.expectEqualSlices(u8, body.payload, items[0].payload);
+    // Item 1 is the version byte 0x01 (a single byte, encoded as itself).
+    try std.testing.expectEqual(rlp.ItemKind.string, items[1].kind);
+    try std.testing.expectEqualSlices(u8, &.{blob_mod.SIDECAR_VERSION_V1}, items[1].payload);
+    try expectFixedList(blob_mod.BLOB_SIZE, items[2], blobs);
+    try expectFixedList(48, items[3], &commitments);
+    try expectFixedList(48, items[4], cell_proofs);
+
+    // The wrapper is exactly the sum of its parts (no padding, no copies).
+    const per_blob = rlp.lengthPrefixSize(blob_mod.BLOB_SIZE) + blob_mod.BLOB_SIZE;
+    const per_48 = rlp.lengthPrefixSize(48) + 48;
+    const blobs_payload = 2 * per_blob;
+    const commitments_payload = 2 * per_48;
+    const proofs_payload = 2 * blob_mod.CELL_PROOFS_PER_BLOB * per_48;
+    const payload = (signed.len - 1) + 1 +
+        rlp.lengthPrefixSize(blobs_payload) + blobs_payload +
+        rlp.lengthPrefixSize(commitments_payload) + commitments_payload +
+        rlp.lengthPrefixSize(proofs_payload) + proofs_payload;
+    try std.testing.expectEqual(1 + rlp.lengthPrefixSize(payload) + payload, raw.len);
+}
+
+test "wrapBlobTransaction v0 round-trips through the RLP decoder" {
+    const allocator = std.testing.allocator;
+    const blobs = try allocator.alloc(blob_mod.Blob, 1);
+    defer allocator.free(blobs);
+    @memset(&blobs[0], 0);
+    const commitments = [_]blob_mod.KzgCommitment{@splat(0xc1)};
+    const proofs = [_]blob_mod.KzgProof{@splat(0xd1)};
+    const hashes = [_][32]u8{blob_mod.computeVersionedHash(commitments[0])};
+    const signed = try signedBlobTx(allocator, &hashes);
+    defer allocator.free(signed);
+
+    const sidecar = blob_mod.NetworkSidecar{ .v0 = .{ .blobs = blobs, .commitments = &commitments, .proofs = &proofs } };
+    const raw = try wrapBlobTransaction(allocator, signed, sidecar, .{ .verify_proofs = false });
+    defer allocator.free(raw);
+
+    try std.testing.expectEqual(BLOB_TX_TYPE, raw[0]);
+    const outer = try rlp.decodeItem(raw[1..]);
+    try std.testing.expectEqual(@as(usize, 0), outer.rest.len);
+    const items = try expectItems(outer.payload, 4);
+    const body = try rlp.decodeItem(signed[1..]);
+    try std.testing.expectEqualSlices(u8, body.payload, items[0].payload);
+    try expectFixedList(blob_mod.BLOB_SIZE, items[1], blobs);
+    try expectFixedList(48, items[2], &commitments);
+    try expectFixedList(48, items[3], &proofs);
+}
+
+test "wrapBlobTransaction rejects non-blob transactions and bad shapes" {
+    const allocator = std.testing.allocator;
+    const blobs = try allocator.alloc(blob_mod.Blob, 1);
+    defer allocator.free(blobs);
+    @memset(&blobs[0], 0);
+    const commitments = [_]blob_mod.KzgCommitment{@splat(0xc1)};
+    const proofs = [_]blob_mod.KzgProof{@splat(0xd1)};
+    const sidecar = blob_mod.NetworkSidecar{ .v0 = .{ .blobs = blobs, .commitments = &commitments, .proofs = &proofs } };
+    const no_verify = WrapBlobOptions{ .verify_proofs = false };
+
+    // An EIP-1559 transaction is not wrappable.
+    const eip1559 = Transaction{ .eip1559 = .{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 1,
+        .max_fee_per_gas = 2,
+        .gas_limit = 21_000,
+        .to = null,
+        .value = 0,
+        .data = &.{},
+        .access_list = &.{},
+    } };
+    const signed_1559 = try serializeSigned(allocator, eip1559, @splat(0x22), @splat(0x33), 0);
+    defer allocator.free(signed_1559);
+    try std.testing.expectError(error.NotABlobTransaction, wrapBlobTransaction(allocator, signed_1559, sidecar, no_verify));
+
+    // Truncated or padded type-3 bytes are rejected.
+    const hashes = [_][32]u8{blob_mod.computeVersionedHash(commitments[0])};
+    const signed = try signedBlobTx(allocator, &hashes);
+    defer allocator.free(signed);
+    try std.testing.expectError(error.NotABlobTransaction, wrapBlobTransaction(allocator, signed[0 .. signed.len - 1], sidecar, no_verify));
+    const padded = try std.mem.concat(allocator, u8, &.{ signed, &.{0x00} });
+    defer allocator.free(padded);
+    try std.testing.expectError(error.NotABlobTransaction, wrapBlobTransaction(allocator, padded, sidecar, no_verify));
+    try std.testing.expectError(error.NotABlobTransaction, wrapBlobTransaction(allocator, &.{}, sidecar, no_verify));
+
+    // Sidecar shape errors are reported before any encoding happens.
+    const short_v1 = blob_mod.NetworkSidecar{ .v1 = .{ .blobs = blobs, .commitments = &commitments, .cell_proofs = &proofs } };
+    try std.testing.expectError(error.SidecarShapeMismatch, wrapBlobTransaction(allocator, signed, short_v1, no_verify));
+    const no_blobs = blob_mod.NetworkSidecar{ .v0 = .{ .blobs = &.{}, .commitments = &.{}, .proofs = &.{} } };
+    try std.testing.expectError(error.SidecarShapeMismatch, wrapBlobTransaction(allocator, signed, no_blobs, no_verify));
+}
+
+test "wrapBlobTransaction verifies real proofs by default" {
+    const kzg = @import("kzg.zig");
+    const allocator = std.testing.allocator;
+    try kzg.init(allocator);
+    defer kzg.deinit();
+
+    const blobs = try allocator.alloc(blob_mod.Blob, 1);
+    defer allocator.free(blobs);
+    @memset(&blobs[0], 0);
+    blobs[0][31] = 0x2a;
+    var sidecar = try blob_mod.buildSidecarV1(allocator, blobs);
+    defer sidecar.deinit(allocator);
+    const hashes = [_][32]u8{blob_mod.computeVersionedHash(sidecar.commitments[0])};
+    const signed = try signedBlobTx(allocator, &hashes);
+    defer allocator.free(signed);
+
+    const raw = try wrapBlobTransaction(allocator, signed, .{ .v1 = sidecar }, .{});
+    defer allocator.free(raw);
+    try std.testing.expectEqual(BLOB_TX_TYPE, raw[0]);
+
+    // A corrupted cell proof is caught before broadcast.
+    const bad_proofs = try allocator.dupe(blob_mod.KzgProof, sidecar.cell_proofs);
+    defer allocator.free(bad_proofs);
+    bad_proofs[5] = bad_proofs[6];
+    const bad = blob_mod.NetworkSidecar{ .v1 = .{ .blobs = blobs, .commitments = sidecar.commitments, .cell_proofs = bad_proofs } };
+    try std.testing.expectError(error.SidecarVerificationFailed, wrapBlobTransaction(allocator, signed, bad, .{}));
+
+    // The v0 wrapper verifies the blob proof the same way.
+    const proof = try kzg.computeBlobKzgProof(&blobs[0], sidecar.commitments[0]);
+    const v0 = blob_mod.NetworkSidecar{ .v0 = .{ .blobs = blobs, .commitments = sidecar.commitments, .proofs = &.{proof} } };
+    const raw_v0 = try wrapBlobTransaction(allocator, signed, v0, .{});
+    defer allocator.free(raw_v0);
+    var wrong = proof;
+    wrong[1] ^= 0x01;
+    const v0_bad = blob_mod.NetworkSidecar{ .v0 = .{ .blobs = blobs, .commitments = sidecar.commitments, .proofs = &.{wrong} } };
+    // A flipped byte is either an invalid point (BadArgs) or a failing proof.
+    const res = wrapBlobTransaction(allocator, signed, v0_bad, .{});
+    if (res) |bytes| {
+        allocator.free(bytes);
+        return error.TestUnexpectedResult;
+    } else |err| switch (err) {
+        error.SidecarVerificationFailed, error.BadArgs => {},
+        else => return err,
+    }
 }
