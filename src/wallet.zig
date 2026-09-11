@@ -400,6 +400,14 @@ test "failed broadcast preserves its RPC error after receipt probes" {
                 "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":null}",
             };
             for (replies) |reply| {
+                // Bound teardown if the wallet returns before all receipt probes.
+                var pending = [_]std.c.pollfd{.{
+                    .fd = srv.socket.handle,
+                    .events = std.c.POLL.IN,
+                    .revents = 0,
+                }};
+                if (std.c.poll(&pending, pending.len, 5_000) <= 0 or
+                    pending[0].revents & std.c.POLL.IN == 0) return;
                 var stream = srv.accept(io_) catch return;
                 defer stream.close(io_);
                 var scratch: [4096]u8 = undefined;
