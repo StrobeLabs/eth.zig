@@ -366,4 +366,10 @@ fn addKzg(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTa
         .file = b.path("src/crypto/c-kzg/src/ckzg.c"),
         .flags = ckzg_flags,
     });
+    // eth.zig-owned shim exporting sizeof/alignof(KZGSettings) so src/kzg.zig
+    // can size opaque storage instead of mirroring the struct layout.
+    module.addCSourceFile(.{
+        .file = b.path("src/crypto/c-kzg/ckzg_shim.c"),
+        .flags = ckzg_flags,
+    });
 }

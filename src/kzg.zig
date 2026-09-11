@@ -15,14 +15,17 @@
 //! const ok = try kzg.verifyBlobKzgProof(&blob, commitment, proof);
 //! ```
 //!
-//! `init` is idempotent and guarded by an atomic once-flag, so it is safe to
-//! call from multiple threads; only the first call loads the setup. The
+//! `init` is idempotent and guarded by an atomic state machine, so it is safe
+//! to call from multiple threads; only one call loads the setup and the others
+//! wait for it. If that load fails, the waiting callers observe the failure
+//! and retry the load themselves rather than spinning forever. The
 //! verification/commitment functions themselves only read the shared setting,
 //! matching c-kzg's thread-safety model. Vendored versions and the blst build
 //! mode (assembly on x86_64/aarch64, portable C elsewhere) are documented in
 //! src/crypto/c-kzg/VENDOR.md.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const blob_mod = @import("blob.zig");
 
 const Blob = blob_mod.Blob;
@@ -56,22 +59,17 @@ const CBytes48 = extern struct {
     bytes: [48]u8,
 };
 
-/// Mirror of c-kzg's `KZGSettings` struct (setup/settings.h). All members are
-/// pointers or size_t, so this is a fixed-size, target-portable layout. We only
-/// ever pass a pointer to it across the FFI boundary; the C code owns the
-/// pointed-to allocations (freed by `free_trusted_setup`).
-const KZGSettings = extern struct {
-    roots_of_unity: ?*anyopaque,
-    brp_roots_of_unity: ?*anyopaque,
-    reverse_roots_of_unity: ?*anyopaque,
-    g1_values_monomial: ?*anyopaque,
-    g1_values_lagrange_brp: ?*anyopaque,
-    g2_values_monomial: ?*anyopaque,
-    x_ext_fft_columns: ?*anyopaque,
-    tables: ?*anyopaque,
-    wbits: usize,
-    scratch_size: usize,
-};
+/// c-kzg's `KZGSettings` (setup/settings.h), deliberately opaque. Its layout is
+/// never mirrored here: `init` sizes the backing storage at run time from the
+/// `ethzig_kzg_settings_size`/`_align` shim (src/crypto/c-kzg/ckzg_shim.c),
+/// which is compiled against the vendored header, so an upstream field
+/// addition can never silently corrupt memory. Only pointers to it cross the
+/// FFI boundary; the C code owns the pointed-to allocations (freed by
+/// `free_trusted_setup`).
+const KZGSettings = opaque {};
+
+extern fn ethzig_kzg_settings_size() usize;
+extern fn ethzig_kzg_settings_align() usize;
 
 const FILE = opaque {};
 
@@ -139,46 +137,92 @@ fn mapRet(ret: C_KZG_RET) KzgError!void {
 // Trusted-setup lifecycle (process-global, init-once)
 // ============================================================================
 
-// States for the once-flag: 0 = uninitialized, 1 = initializing, 2 = ready.
+// States for the init state machine. Transitions:
+//   UNINIT -> INITIALIZING (the caller that wins the cmpxchg loads the setup)
+//   INITIALIZING -> READY (load succeeded) | UNINIT (load failed)
+//   READY -> DEINITIALIZING -> UNINIT (deinit)
+// Callers that observe INITIALIZING or DEINITIALIZING wait and re-observe, so
+// a failed load never strands them: they see UNINIT and race to retry.
 const STATE_UNINIT: u8 = 0;
 const STATE_INITIALIZING: u8 = 1;
 const STATE_READY: u8 = 2;
+const STATE_DEINITIALIZING: u8 = 3;
 
 var init_state: u8 = STATE_UNINIT;
-var settings: KZGSettings = undefined;
+
+/// Alignment of the opaque `KZGSettings` storage. Generous for a struct of
+/// pointers and `size_t`s; `init` checks the C shim's `alignof` against it.
+const SETTINGS_ALIGN: std.mem.Alignment = .@"16";
+
+/// Opaque storage for the C `KZGSettings`, allocated by `init` with exactly
+/// `ethzig_kzg_settings_size()` bytes and released by `deinit`. Only valid
+/// while `init_state == STATE_READY`; published by the release store of that
+/// state and read after the matching acquire load.
+var settings_storage: []align(SETTINGS_ALIGN.toByteUnits()) u8 = &.{};
+var settings_allocator: std.mem.Allocator = undefined;
 
 /// The recommended `precompute` value (0 = no fixed-base MSM tables). 0 keeps
 /// init fast and memory modest; sidecar construction does not need the larger
 /// precomputed tables. c-kzg accepts any value 0..15.
 const PRECOMPUTE: u64 = 0;
 
+/// Test-only failure injection: when set, the caller that owns initialization
+/// invokes it right after claiming the INITIALIZING state and before loading
+/// the setup; an error it returns is reported exactly like a failed load.
+/// Never referenced outside test builds.
+var test_init_hook: ?*const fn () KzgError!void = null;
+
 /// Load and initialize the embedded trusted setup. Idempotent and thread-safe:
-/// only the first caller performs the load; concurrent callers spin until it is
-/// ready. Must be called (and succeed) before any commitment/proof/verify call.
+/// one caller performs the load while concurrent callers wait for it; if the
+/// load fails, its caller receives the error and the waiters retry the load
+/// (each receiving its own error if it keeps failing). Must be called (and
+/// succeed) before any commitment/proof/verify call.
 ///
-/// The `allocator` argument is accepted for API symmetry with the rest of the
-/// library; the underlying setup allocations are owned and managed by the C
-/// code (freed in `deinit`).
+/// The `allocator` backs the opaque `KZGSettings` storage (a few dozen bytes;
+/// the setup tables themselves are allocated by the C code) and must outlive
+/// the matching `deinit`, which frees through it. When several threads race,
+/// the allocator of the thread whose load succeeds is the one kept.
 pub fn init(allocator: std.mem.Allocator) KzgError!void {
-    _ = allocator;
-
-    // Fast path: already ready.
-    if (@atomicLoad(u8, &init_state, .acquire) == STATE_READY) return;
-
-    // Try to claim the initialization slot.
-    if (@cmpxchgStrong(u8, &init_state, STATE_UNINIT, STATE_INITIALIZING, .acquire, .acquire)) |current| {
-        // Lost the race (or already initializing/ready). Spin until ready.
-        var seen = current;
-        while (seen != STATE_READY) {
-            std.atomic.spinLoopHint();
-            seen = @atomicLoad(u8, &init_state, .acquire);
+    while (true) {
+        switch (@atomicLoad(u8, &init_state, .acquire)) {
+            STATE_READY => return,
+            STATE_INITIALIZING, STATE_DEINITIALIZING => {
+                // Another caller is loading or tearing down; wait for it to
+                // reach a terminal state, then re-observe.
+                std.atomic.spinLoopHint();
+                std.Thread.yield() catch {};
+                continue;
+            },
+            else => {},
         }
+
+        // Observed UNINIT: try to claim the load. Losing the race just means
+        // the state changed under us, so re-observe.
+        if (@cmpxchgWeak(u8, &init_state, STATE_UNINIT, STATE_INITIALIZING, .acquire, .acquire) != null) continue;
+
+        // We own initialization. On any error, roll the state back to UNINIT
+        // so a waiter (or a later caller) can retry.
+        loadSetup(allocator) catch |err| {
+            @atomicStore(u8, &init_state, STATE_UNINIT, .release);
+            return err;
+        };
+        @atomicStore(u8, &init_state, STATE_READY, .release);
         return;
     }
+}
 
-    // We own initialization. On any error, roll the state back to UNINIT so a
-    // later caller can retry.
-    errdefer @atomicStore(u8, &init_state, STATE_UNINIT, .release);
+/// Body of a claimed initialization: allocate the opaque settings storage and
+/// load the embedded setup into it. Leaves no allocation behind on error.
+fn loadSetup(allocator: std.mem.Allocator) KzgError!void {
+    if (builtin.is_test) {
+        if (test_init_hook) |hook| try hook();
+    }
+
+    const size = ethzig_kzg_settings_size();
+    if (size == 0 or ethzig_kzg_settings_align() > SETTINGS_ALIGN.toByteUnits()) return error.SetupLoadFailed;
+    const storage = allocator.alignedAlloc(u8, SETTINGS_ALIGN, size) catch return error.OutOfMemory;
+    errdefer allocator.free(storage);
+    @memset(storage, 0);
 
     const stream = fmemopen(
         TRUSTED_SETUP_TXT.ptr,
@@ -187,23 +231,29 @@ pub fn init(allocator: std.mem.Allocator) KzgError!void {
     ) orelse return error.SetupLoadFailed;
     defer _ = fclose(stream);
 
-    try mapRet(load_trusted_setup_file(&settings, stream, PRECOMPUTE));
+    try mapRet(load_trusted_setup_file(@ptrCast(storage.ptr), stream, PRECOMPUTE));
 
-    @atomicStore(u8, &init_state, STATE_READY, .release);
+    settings_storage = storage;
+    settings_allocator = allocator;
 }
 
 /// Free the trusted setup. After this, `init` may be called again to reload.
-/// Not safe to call concurrently with commitment/proof/verify operations.
+/// Not safe to call concurrently with commitment/proof/verify operations;
+/// concurrent `init`/`deinit` calls are serialized by the state machine.
 pub fn deinit() void {
-    // Atomically claim the teardown: only the thread that flips READY -> UNINIT
-    // frees the setup, so concurrent `deinit` calls cannot double-free.
-    if (@cmpxchgStrong(u8, &init_state, STATE_READY, STATE_UNINIT, .acq_rel, .acquire) != null) return;
-    free_trusted_setup(&settings);
+    // Only the caller that flips READY -> DEINITIALIZING frees the setup, so
+    // concurrent `deinit` calls cannot double-free, and an `init` racing with
+    // the teardown waits until the storage has been released.
+    if (@cmpxchgStrong(u8, &init_state, STATE_READY, STATE_DEINITIALIZING, .acq_rel, .acquire) != null) return;
+    free_trusted_setup(@ptrCast(settings_storage.ptr));
+    settings_allocator.free(settings_storage);
+    settings_storage = &.{};
+    @atomicStore(u8, &init_state, STATE_UNINIT, .release);
 }
 
 fn requireReady() KzgError!*const KZGSettings {
     if (@atomicLoad(u8, &init_state, .acquire) != STATE_READY) return error.NotInitialized;
-    return &settings;
+    return @ptrCast(settings_storage.ptr);
 }
 
 // ============================================================================
@@ -346,6 +396,101 @@ test "kzg verify rejects when not initialized" {
     var blob: Blob = @splat(0);
     try testing.expectError(error.NotInitialized, blobToKzgCommitment(&blob));
     // Restore for any subsequent ordering-independent tests.
+}
+
+test "kzg settings storage is sized by the C shim" {
+    // The layout is opaque on the Zig side; only sanity-check what the shim
+    // reports. v2.1.8's KZGSettings holds ten pointer/size_t members, so any
+    // future upstream layout can only grow from there.
+    const size = ethzig_kzg_settings_size();
+    const alignment = ethzig_kzg_settings_align();
+    try testing.expect(size >= 10 * @sizeOf(usize));
+    try testing.expect(alignment >= 1 and alignment <= SETTINGS_ALIGN.toByteUnits());
+    try testing.expectEqual(@as(usize, 0), size % alignment);
+}
+
+fn failingInitHook() KzgError!void {
+    return error.SetupLoadFailed;
+}
+
+test "kzg init reports a failed load and can be retried" {
+    deinit();
+    test_init_hook = failingInitHook;
+    defer test_init_hook = null;
+
+    try testing.expectError(error.SetupLoadFailed, init(testing.allocator));
+    // The failed attempt must leave the module uninitialized, not stuck in
+    // INITIALIZING, and must not leak its storage (checked by the testing
+    // allocator at the end of the test).
+    try testing.expectEqual(STATE_UNINIT, @atomicLoad(u8, &init_state, .acquire));
+    var blob: Blob = @splat(0);
+    try testing.expectError(error.NotInitialized, blobToKzgCommitment(&blob));
+
+    // Once the failure cause is gone, the same caller can retry successfully.
+    test_init_hook = null;
+    try init(testing.allocator);
+    defer deinit();
+    _ = try blobToKzgCommitment(&blob);
+}
+
+/// Shared state for the concurrent-init test.
+const ConcurrentInit = struct {
+    const num_threads = 8;
+
+    /// Threads that have called (or are about to call) `init`.
+    var entered = std.atomic.Value(u32).init(0);
+    /// Number of times the hook has run, i.e. of claimed init attempts.
+    var attempts = std.atomic.Value(u32).init(0);
+    var results: [num_threads]KzgError!void = undefined;
+
+    /// Fails exactly the first claimed attempt, but only once every thread
+    /// has entered `init`, so the other threads are guaranteed to be waiting
+    /// on the INITIALIZING state when the failure is published. Without the
+    /// retry-on-UNINIT logic those waiters would spin forever.
+    fn hook() KzgError!void {
+        if (attempts.fetchAdd(1, .acq_rel) != 0) return;
+        while (entered.load(.acquire) < num_threads) {
+            std.atomic.spinLoopHint();
+            std.Thread.yield() catch {};
+        }
+        return error.SetupLoadFailed;
+    }
+
+    fn worker(slot: usize) void {
+        _ = entered.fetchAdd(1, .acq_rel);
+        results[slot] = init(testing.allocator);
+    }
+};
+
+test "kzg concurrent init survives a failed first attempt" {
+    deinit();
+    ConcurrentInit.entered.store(0, .release);
+    ConcurrentInit.attempts.store(0, .release);
+    test_init_hook = ConcurrentInit.hook;
+    defer test_init_hook = null;
+
+    var threads: [ConcurrentInit.num_threads]std.Thread = undefined;
+    for (&threads, 0..) |*t, i| {
+        t.* = try std.Thread.spawn(.{}, ConcurrentInit.worker, .{i});
+    }
+    for (threads) |t| t.join();
+    defer deinit();
+
+    // Exactly one caller owned the failed attempt and received its error;
+    // every other caller either retried the load itself or observed the
+    // successful retry, and none of them hung.
+    var failures: usize = 0;
+    for (ConcurrentInit.results) |r| {
+        if (r) |_| {} else |err| {
+            try testing.expectEqual(error.SetupLoadFailed, err);
+            failures += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), failures);
+    try testing.expectEqual(@as(u32, 2), ConcurrentInit.attempts.load(.acquire));
+    try testing.expectEqual(STATE_READY, @atomicLoad(u8, &init_state, .acquire));
+    var blob: Blob = @splat(0);
+    _ = try blobToKzgCommitment(&blob);
 }
 
 test "kzg batch verify round trip" {

@@ -21,6 +21,11 @@ test-vector-verified KZG support for EIP-4844 blob transactions and EIP-7594
 `ckzg.c` is a single translation unit that `#include`s every other `.c` file,
 so the build compiles exactly one C file for c-kzg.
 
+`ckzg_shim.c` (next to this file, outside `src/`) is eth.zig-owned, not part
+of the release: it exports `sizeof`/`_Alignof(KZGSettings)` so `src/kzg.zig`
+can size opaque storage for the settings instead of mirroring the struct
+layout. Keep it when re-vendoring.
+
 Notable upstream changes since the previously vendored v2.1.1: the
 `verify_cell_kzg_proof_batch` Fiat-Shamir challenge now hashes the
 deduplicated commitment list (c-kzg #607, found in the Fusaka audit
