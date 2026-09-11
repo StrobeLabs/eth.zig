@@ -285,6 +285,12 @@ pub const InitOptions = struct {
 /// Never referenced outside test builds.
 var test_init_hook: ?*const fn () KzgError!void = null;
 
+/// Test-only observation point: when set, an `init` call that finds another
+/// caller mid-load invokes it once, the first time it parks. It lets a test
+/// establish that the waiters really are parked before the load's outcome is
+/// published. Never referenced outside test builds.
+var test_wait_hook: ?*const fn () void = null;
+
 /// Load and initialize the embedded trusted setup. Idempotent and thread-safe:
 /// one caller performs the load while concurrent callers wait for it; if the
 /// load fails, its caller receives the error and the waiters retry the load
@@ -304,12 +310,17 @@ pub fn init(allocator: std.mem.Allocator) KzgError!void {
 /// further calls with different options are no-ops until `deinit`.
 pub fn initWithOptions(allocator: std.mem.Allocator, options: InitOptions) KzgError!void {
     if (options.precompute > MAX_PRECOMPUTE) return error.BadArgs;
+    var parked = false;
     while (true) {
         switch (@atomicLoad(u8, &init_state, .acquire)) {
             STATE_READY => return,
             STATE_INITIALIZING, STATE_DEINITIALIZING => {
                 // Another caller is loading or tearing down; wait for it to
                 // reach a terminal state, then re-observe.
+                if (builtin.is_test and !parked) {
+                    parked = true;
+                    if (test_wait_hook) |hook| hook();
+                }
                 std.atomic.spinLoopHint();
                 std.Thread.yield() catch {};
                 continue;
@@ -359,8 +370,14 @@ fn loadSetup(allocator: std.mem.Allocator, options: InitOptions) KzgError!void {
 }
 
 /// Free the trusted setup. After this, `init` may be called again to reload.
-/// Not safe to call concurrently with commitment/proof/verify operations;
-/// concurrent `init`/`deinit` calls are serialized by the state machine.
+///
+/// A no-op unless the setup is fully loaded: a `deinit` that races an
+/// in-flight `init` finds the state `INITIALIZING`, does nothing and returns,
+/// leaving the setup loaded once that `init` finishes (it does not wait for it
+/// and does not cancel it). Concurrent `deinit` calls cannot double-free
+/// because only the caller that wins the `READY -> DEINITIALIZING` exchange
+/// frees, and an `init` that races a teardown waits for it to finish. Not safe
+/// to call concurrently with commitment/proof/verify operations.
 pub fn deinit() void {
     // Only the caller that flips READY -> DEINITIALIZING frees the setup, so
     // concurrent `deinit` calls cannot double-free, and an `init` racing with
@@ -690,37 +707,44 @@ test "kzg init reports a failed load and can be retried" {
 const ConcurrentInit = struct {
     const num_threads = 8;
 
-    /// Threads that have called (or are about to call) `init`.
-    var entered = std.atomic.Value(u32).init(0);
-    /// Number of times the hook has run, i.e. of claimed init attempts.
+    /// Calls that have parked on STATE_INITIALIZING at least once.
+    var parked = std.atomic.Value(u32).init(0);
+    /// Number of times the failure hook has run, i.e. of claimed init attempts.
     var attempts = std.atomic.Value(u32).init(0);
     var results: [num_threads]KzgError!void = undefined;
 
-    /// Fails exactly the first claimed attempt, but only once every thread
-    /// has entered `init`, so the other threads are guaranteed to be waiting
-    /// on the INITIALIZING state when the failure is published. Without the
-    /// retry-on-UNINIT logic those waiters would spin forever.
+    /// Fails exactly the first claimed attempt, and only once every other
+    /// thread has *parked* on the INITIALIZING state this call published --
+    /// not merely entered `init`. The waiters are therefore provably inside
+    /// the wait branch when the failure is stored, which is the state in
+    /// which the old code span forever.
     fn hook() KzgError!void {
         if (attempts.fetchAdd(1, .acq_rel) != 0) return;
-        while (entered.load(.acquire) < num_threads) {
+        while (parked.load(.acquire) < num_threads - 1) {
             std.atomic.spinLoopHint();
             std.Thread.yield() catch {};
         }
         return error.SetupLoadFailed;
     }
 
+    /// Invoked by each waiting `init` call the first time it parks.
+    fn onPark() void {
+        _ = parked.fetchAdd(1, .acq_rel);
+    }
+
     fn worker(slot: usize) void {
-        _ = entered.fetchAdd(1, .acq_rel);
         results[slot] = init(testing.allocator);
     }
 };
 
 test "kzg concurrent init survives a failed first attempt" {
     deinit();
-    ConcurrentInit.entered.store(0, .release);
+    ConcurrentInit.parked.store(0, .release);
     ConcurrentInit.attempts.store(0, .release);
     test_init_hook = ConcurrentInit.hook;
     defer test_init_hook = null;
+    test_wait_hook = ConcurrentInit.onPark;
+    defer test_wait_hook = null;
 
     var threads: [ConcurrentInit.num_threads]std.Thread = undefined;
     for (&threads, 0..) |*t, i| {
@@ -741,6 +765,9 @@ test "kzg concurrent init survives a failed first attempt" {
     }
     try testing.expectEqual(@as(usize, 1), failures);
     try testing.expectEqual(@as(u32, 2), ConcurrentInit.attempts.load(.acquire));
+    // Exactly one thread claimed the first load without waiting; the other
+    // seven parked on it, and the hook could not have returned otherwise.
+    try testing.expectEqual(@as(u32, ConcurrentInit.num_threads - 1), ConcurrentInit.parked.load(.acquire));
     try testing.expectEqual(STATE_READY, @atomicLoad(u8, &init_state, .acquire));
     var blob: Blob = @splat(0);
     _ = try blobToKzgCommitment(&blob);
