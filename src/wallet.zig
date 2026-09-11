@@ -162,8 +162,29 @@ pub const Wallet = struct {
         // briefly for a receipt and report success if the transaction landed.
         const tx_hash = keccak.hash(signed_bytes);
         _ = self.provider.sendRawTransaction(signed_bytes) catch |err| {
-            if (err == error.RpcError and self.transactionLanded(tx_hash)) {
-                return tx_hash;
+            if (err == error.RpcError) {
+                // Receipt probes use the same provider and replace its diagnostics.
+                // Keep an owned copy so a rejected broadcast remains diagnosable
+                // even when a probe returns a different RPC error.
+                const broadcast_error = self.provider.lastError();
+                var message: [256]u8 = undefined;
+                var data: [1026]u8 = undefined;
+                if (broadcast_error) |info| {
+                    @memcpy(message[0..info.message.len], info.message);
+                    @memcpy(data[0..info.data.len], info.data);
+                }
+                if (self.transactionLanded(tx_hash)) return tx_hash;
+                if (broadcast_error) |info| {
+                    @memcpy(self.provider.last_error_storage[0..info.message.len], message[0..info.message.len]);
+                    @memcpy(self.provider.last_error_data_storage[0..info.data.len], data[0..info.data.len]);
+                    self.provider.last_error = .{
+                        .code = info.code,
+                        .message = self.provider.last_error_storage[0..info.message.len],
+                        .data = self.provider.last_error_data_storage[0..info.data.len],
+                    };
+                } else {
+                    self.provider.last_error = null;
+                }
             }
             return err;
         };
@@ -357,6 +378,70 @@ test "signed-tx keccak matches the canonical transaction hash" {
 
     const expected_hash = try hex.hexToBytesFixed(32, "7a8921f4543662f78b5ff4917258d8a32ce704a3df7dc9789b24000dce29afab");
     try std.testing.expectEqualSlices(u8, &expected_hash, &keccak.hash(signed));
+}
+
+test "failed broadcast preserves its RPC error after receipt probes" {
+    const io = runtime.blockingIo();
+    const addr = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try addr.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var bound: std.c.sockaddr.in = undefined;
+    var bound_len: std.c.socklen_t = @sizeOf(@TypeOf(bound));
+    if (std.c.getsockname(server.socket.handle, @ptrCast(&bound), &bound_len) != 0)
+        return error.GetSockNameFailed;
+    const port = std.mem.bigToNative(u16, bound.port);
+
+    const serve = struct {
+        fn run(srv: *std.Io.net.Server, io_: std.Io) void {
+            const replies = [_][]const u8{
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"fee cap too low\",\"data\":\"0x12345678\"}}",
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32603,\"message\":\"receipt backend unavailable\",\"data\":\"0xabcdef012345\"}}",
+                "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":null}",
+                "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":null}",
+            };
+            for (replies) |reply| {
+                var stream = srv.accept(io_) catch return;
+                defer stream.close(io_);
+                var scratch: [4096]u8 = undefined;
+                _ = std.c.recv(stream.socket.handle, &scratch, scratch.len, 0);
+                var header_buf: [256]u8 = undefined;
+                const header = std.fmt.bufPrint(
+                    &header_buf,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n",
+                    .{reply.len},
+                ) catch return;
+                var wbuf: [512]u8 = undefined;
+                var writer = stream.writer(io_, &wbuf);
+                writer.interface.writeAll(header) catch return;
+                writer.interface.writeAll(reply) catch return;
+                writer.interface.flush() catch return;
+                stream.shutdown(io_, .send) catch {};
+                while (std.c.recv(stream.socket.handle, &scratch, scratch.len, 0) > 0) {}
+            }
+        }
+    }.run;
+    const server_thread = try std.Thread.spawn(.{}, serve, .{ &server, io });
+    defer server_thread.join();
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}", .{port});
+    var transport = http_transport_mod.HttpTransport.init(std.testing.allocator, url, io);
+    defer transport.deinit();
+    var provider = provider_mod.Provider.init(std.testing.allocator, &transport);
+    // Public Anvil fixture key, used only against the ephemeral local server.
+    const key = try @import("hex.zig").hexToBytesFixed(32, "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    var wallet = Wallet.initLocal(std.testing.allocator, key, &provider);
+    wallet.chain_id = 31337;
+    try std.testing.expectError(error.RpcError, wallet.sendTransaction(.{
+        .to = @as([20]u8, @splat(0xaa)),
+        .nonce = 0,
+        .gas_limit = 21000,
+        .max_fee_per_gas = 1,
+        .max_priority_fee_per_gas = 0,
+    }));
+    const info = provider.lastError() orelse return error.MissingBroadcastError;
+    try std.testing.expectEqual(@as(i64, -32000), info.code);
+    try std.testing.expectEqualStrings("fee cap too low", provider.lastError().?.message);
+    try std.testing.expectEqualStrings("0x12345678", provider.lastError().?.data);
 }
 
 test "SendTransactionOpts defaults" {
