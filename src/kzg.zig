@@ -863,13 +863,18 @@ test "kzg cells round trip: compute -> verify batch -> recover" {
         commitments[i] = commitment;
         indices[i] = @intCast(CELLS_PER_EXT_BLOB - 1 - i);
     }
-    var shuffled_cells: [CELLS_PER_EXT_BLOB]Cell = undefined;
-    var shuffled_proofs: [CELLS_PER_EXT_BLOB]KzgProof = undefined;
+    // 128 cells are 256 KiB; heap-allocate them for the same reason the API
+    // takes the outputs by pointer.
+    const shuffled_cells = try allocator.create([CELLS_PER_EXT_BLOB]Cell);
+    defer allocator.destroy(shuffled_cells);
+    const shuffled_proofs = try allocator.create([CELLS_PER_EXT_BLOB]KzgProof);
+    defer allocator.destroy(shuffled_proofs);
     for (0..CELLS_PER_EXT_BLOB) |i| {
-        shuffled_cells[i] = cells[indices[i]];
-        shuffled_proofs[i] = proofs[indices[i]];
+        const src: usize = @intCast(indices[i]);
+        shuffled_cells[i] = cells[src];
+        shuffled_proofs[i] = proofs[src];
     }
-    try testing.expect(try verifyCellKzgProofBatch(&commitments, &indices, &shuffled_cells, &shuffled_proofs));
+    try testing.expect(try verifyCellKzgProofBatch(&commitments, &indices, shuffled_cells, shuffled_proofs));
     try testing.expect(try verifyCellKzgProofBatch(&.{}, &.{}, &.{}, &.{}));
 
     // A cell attributed to the wrong index fails verification; mismatched
@@ -898,6 +903,25 @@ test "kzg cells round trip: compute -> verify batch -> recover" {
     // Proofs are optional on recovery.
     try recoverCellsAndKzgProofs(&half_indices, &half_cells, recovered, null);
     try testing.expectEqualSlices(u8, std.mem.asBytes(cells), std.mem.asBytes(recovered));
+
+    // All 128 cells present: c-kzg's "nothing to recover" copy fast path, a
+    // different branch from the vanishing-polynomial pipeline.
+    var all_indices: [CELLS_PER_EXT_BLOB]u64 = undefined;
+    for (0..CELLS_PER_EXT_BLOB) |i| all_indices[i] = @intCast(i);
+    try recoverCellsAndKzgProofs(&all_indices, cells, recovered, recovered_proofs);
+    try testing.expectEqualSlices(u8, std.mem.asBytes(cells), std.mem.asBytes(recovered));
+    try testing.expectEqualSlices(u8, std.mem.asBytes(proofs), std.mem.asBytes(recovered_proofs));
+
+    // More cells than an extended blob has is an argument error, caught on the
+    // Zig side before any C call.
+    const too_many_cells = try allocator.alloc(Cell, CELLS_PER_EXT_BLOB + 1);
+    defer allocator.free(too_many_cells);
+    @memcpy(too_many_cells[0..CELLS_PER_EXT_BLOB], cells);
+    too_many_cells[CELLS_PER_EXT_BLOB] = cells[0];
+    const too_many_indices = try allocator.alloc(u64, CELLS_PER_EXT_BLOB + 1);
+    defer allocator.free(too_many_indices);
+    for (too_many_indices, 0..) |*ix, i| ix.* = @intCast(i);
+    try testing.expectError(error.BadArgs, recoverCellsAndKzgProofs(too_many_indices, too_many_cells, recovered, null));
 
     // Unsorted indices, too few cells and length mismatches are rejected.
     var unsorted_indices = half_indices;
