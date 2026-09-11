@@ -18,8 +18,8 @@
 //! `init` is idempotent and guarded by an atomic once-flag, so it is safe to
 //! call from multiple threads; only the first call loads the setup. The
 //! verification/commitment functions themselves only read the shared setting,
-//! matching c-kzg's thread-safety model. Vendored versions and the
-//! portable-C blst build rationale are documented in
+//! matching c-kzg's thread-safety model. Vendored versions and the blst build
+//! mode (assembly on x86_64/aarch64, portable C elsewhere) are documented in
 //! src/crypto/c-kzg/VENDOR.md.
 
 const std = @import("std");

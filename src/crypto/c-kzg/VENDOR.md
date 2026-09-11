@@ -54,15 +54,28 @@ prover when `precompute > 0`) against an over-read and infinity inputs found
 in the zkSecurity 2025 PeerDAS audit; v0.3.17 caps stack use in
 `ptype##s_precompute_wbits` and refines the x86_64 carry chains.
 
-### Build mode: portable no-assembly C
+### Build mode: blst assembly on x86_64 and aarch64, portable C elsewhere
 
-blst is built with `-D__BLST_NO_ASM__` so it uses its pure-C field arithmetic
-(`src/no_asm.h`) instead of the platform assembly under `build/assembly.S`.
-The assembly sources are vendored alongside the C sources (see above) so the
-build can be switched per target without another vendoring pass.
+`build.zig` (`addKzg`) compiles blst the way upstream c-kzg-4844's own
+`build.zig` does on x86_64 and aarch64: `src/server.c` plus the pre-generated
+`build/assembly.S`, which `#include`s the `.s`/`.S` files for the target's
+object format (`elf/` on Linux, `mach-o/` on macOS, `coff/` on Windows). Both
+files get `-O2 -ffreestanding -D__BLST_PORTABLE__`; `__BLST_PORTABLE__` makes
+the x86_64 assembly carry both the ADX (`mulx`) and the baseline (`mulq`)
+variants and pick one at run time via `cpuid`, so a `-Dcpu=baseline` build
+still runs on any x86_64 CPU, and it disables the SHA CPU-intrinsics path in
+`src/sha256.h`. `assembly.S` is added as a C source file (not via
+`addAssemblyFile`) because it must be preprocessed with the same defines.
 
-`__BLST_PORTABLE__` is also defined to disable the optional SHA/crypto CPU
-intrinsics path in `src/sha256.h`.
+Every other target (and any x86_64/aarch64 build with `-Dblst-asm=false`)
+uses the portable no-assembly C backend: `-D__BLST_NO_ASM__` selects
+`src/no_asm.h` with 32-bit limbs (the vect.h patch above). That path is
+6-8x slower and exists only as a fallback.
+
+The earlier rationale for shipping the portable build everywhere ("GAS versus
+clang assembler conflicts") no longer applies: with Zig 0.16 the `.S` file is
+assembled by Zig's bundled clang, exactly as upstream's CI does on Linux,
+macOS and Windows.
 
 ## Trusted setup
 

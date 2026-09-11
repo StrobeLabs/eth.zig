@@ -3,6 +3,10 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // blst assembly backend (x86_64 and aarch64 only; other targets always use
+    // the portable C backend). Off is only useful for measuring the portable
+    // path or working around a toolchain that cannot assemble blst.
+    const blst_asm = b.option(bool, "blst-asm", "Build blst with its assembly backend on x86_64/aarch64 (default: true)") orelse true;
 
     // Main library module
     const eth_module = b.addModule("eth", .{
@@ -13,7 +17,7 @@ pub fn build(b: *std.Build) void {
     });
     addXkcp(b, eth_module, target);
     addSecp256k1(b, eth_module);
-    addKzg(b, eth_module);
+    addKzg(b, eth_module, target, blst_asm);
 
     // Unit tests. Root the test artifact at src/root.zig so its test block
     // (which direct-imports every module file) actually collects and runs the
@@ -30,7 +34,7 @@ pub fn build(b: *std.Build) void {
     });
     addXkcp(b, unit_test_module, target);
     addSecp256k1(b, unit_test_module);
-    addKzg(b, unit_test_module);
+    addKzg(b, unit_test_module, target, blst_asm);
     const unit_tests = b.addTest(.{
         .root_module = unit_test_module,
     });
@@ -111,7 +115,7 @@ pub fn build(b: *std.Build) void {
     });
     addXkcp(b, bench_module, target);
     addSecp256k1(b, bench_module);
-    addKzg(b, bench_module);
+    addKzg(b, bench_module, target, blst_asm);
 
     const bench_exe = b.addExecutable(.{
         .name = "bench",
@@ -162,6 +166,24 @@ pub fn build(b: *std.Build) void {
     const run_keccak_compare = b.addRunArtifact(keccak_compare_exe);
     const keccak_compare_step = b.step("bench-keccak", "Compare eth.zig Keccak vs stdlib (ReleaseFast)");
     keccak_compare_step.dependOn(&run_keccak_compare.step);
+
+    // KZG micro-benchmark (blob commitment/proof/verify latencies; used to
+    // compare the blst assembly and portable-C builds)
+    const kzg_bench_exe = b.addExecutable(.{
+        .name = "kzg-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/kzg_bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "eth", .module = bench_module },
+            },
+        }),
+    });
+
+    const run_kzg_bench = b.addRunArtifact(kzg_bench_exe);
+    const kzg_bench_step = b.step("bench-kzg", "Run KZG benchmarks (ReleaseFast)");
+    kzg_bench_step.dependOn(&run_kzg_bench.step);
 
     // Keccak CLI benchmark (for hyperfine comparison)
     const keccak_bench_exe = b.addExecutable(.{
@@ -278,30 +300,57 @@ fn addSecp256k1(b: *std.Build, module: *std.Build.Module) void {
     }
 }
 
-/// Add c-kzg-4844 + blst C sources for real EIP-4844 KZG operations.
+/// Add c-kzg-4844 + blst C sources for real EIP-4844 / EIP-7594 KZG operations.
 ///
-/// blst is built in portable no-assembly C mode (`-D__BLST_NO_ASM__`) so it
-/// uses its pure-C field arithmetic instead of per-arch assembly. This keeps
-/// the build robust across targets (no GAS-vs-clang assembler conflicts) at a
-/// modest performance cost, acceptable for sidecar construction. See
-/// src/crypto/c-kzg/VENDOR.md for pinned versions and rationale.
-fn addKzg(b: *std.Build, module: *std.Build.Module) void {
-    // blst: portable C backend. `__BLST_PORTABLE__` additionally disables the
-    // optional SHA CPU-intrinsics path in src/sha256.h. `-fno-sanitize=undefined`
-    // mirrors the other vendored C: blst does intentional unaligned accesses.
-    const blst_flags = &.{
-        "-D__BLST_NO_ASM__",
+/// On x86_64 and aarch64 blst is built the way upstream's own build.zig builds
+/// it: the C sources plus the pre-generated `build/assembly.S`, which pulls in
+/// the per-object-format `.s` files for the target (elf, mach-o or coff). The
+/// assembly backend is 6-8x faster than the portable C one across every KZG
+/// operation. `__BLST_PORTABLE__` keeps the x86_64 build free of an ADX
+/// requirement (both the mulx and mulq variants are assembled and selected at
+/// run time via cpuid) and disables the SHA CPU-intrinsics path. Every other
+/// target falls back to blst's portable no-assembly C backend
+/// (`-D__BLST_NO_ASM__`, 32-bit limbs). See src/crypto/c-kzg/VENDOR.md for the
+/// pinned versions and the one local patch.
+fn addKzg(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget, blst_asm: bool) void {
+    const arch = target.result.cpu.arch;
+    const use_asm = blst_asm and (arch == .x86_64 or arch == .aarch64);
+
+    // `-fno-sanitize=undefined` mirrors the other vendored C: blst does
+    // intentional unaligned accesses. `-ffreestanding` matches upstream's
+    // blst build flags.
+    const blst_asm_flags = &.{
         "-D__BLST_PORTABLE__",
         "-O2",
+        "-ffreestanding",
         "-fno-sanitize=undefined",
         "-Wno-unused-function",
     };
+    const blst_noasm_flags = &.{
+        "-D__BLST_NO_ASM__",
+        "-D__BLST_PORTABLE__",
+        "-O2",
+        "-ffreestanding",
+        "-fno-sanitize=undefined",
+        "-Wno-unused-function",
+    };
+    const blst_flags: []const []const u8 = if (use_asm) blst_asm_flags else blst_noasm_flags;
+
     module.addIncludePath(b.path("src/crypto/blst/bindings"));
     // server.c is blst's unity build: it #includes every other src/*.c.
     module.addCSourceFile(.{
         .file = b.path("src/crypto/blst/src/server.c"),
         .flags = blst_flags,
     });
+    if (use_asm) {
+        // assembly.S is preprocessed (it #includes the per-format .s files and
+        // keys on __BLST_PORTABLE__), so it is added as a C source file to get
+        // the same flags; addAssemblyFile cannot carry per-file flags.
+        module.addCSourceFile(.{
+            .file = b.path("src/crypto/blst/build/assembly.S"),
+            .flags = blst_flags,
+        });
+    }
 
     // c-kzg-4844: ckzg.c is the unity build including every other c-kzg .c file.
     // Needs its own src/ on the include path (so "common/...", "eip4844/..."
