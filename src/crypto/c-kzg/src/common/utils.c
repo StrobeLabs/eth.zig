@@ -105,8 +105,14 @@ C_KZG_RET bit_reversal_permutation(void *values, size_t size, size_t n) {
     byte *tmp = NULL;
     byte *v = (byte *)values;
 
-    /* Some sanity checks */
-    if (n < 2 || !is_power_of_two(n)) {
+    /* In these cases, do nothing */
+    if (n == 0 || n == 1) {
+        ret = C_KZG_OK;
+        goto out;
+    }
+
+    /* Ensure n is a power of two */
+    if (!is_power_of_two(n)) {
         ret = C_KZG_BADARGS;
         goto out;
     }
@@ -146,7 +152,7 @@ void compute_powers(fr_t *out, const fr_t *x, size_t n) {
     fr_t current_power = FR_ONE;
     for (size_t i = 0; i < n; i++) {
         out[i] = current_power;
-        blst_fr_mul(&current_power, &current_power, x);
+        fr_mul(&current_power, &current_power, x);
     }
 }
 

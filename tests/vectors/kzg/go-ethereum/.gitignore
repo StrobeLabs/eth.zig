@@ -1,0 +1,4 @@
+# `go run .` also writes the full encodings next to the vector for debugging.
+# They are ~1 MiB of hex; the JSON vector carries their lengths and keccak256
+# hashes instead, which is what the Zig test compares.
+*.hex

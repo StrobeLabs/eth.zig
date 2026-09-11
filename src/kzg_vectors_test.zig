@@ -1,7 +1,7 @@
 //! Byte-for-byte interop tests against the official c-kzg-4844 test vectors.
 //!
 //! The YAML files under src/crypto/c-kzg/test_vectors/ are vendored verbatim
-//! from the ethereum/c-kzg-4844 v2.1.1 test suite (see that directory's
+//! from the ethereum/c-kzg-4844 v2.1.8 test suite (see that directory's
 //! ATTRIBUTION.md). They live inside the package so `@embedFile` can reach them.
 //! These tests parse the official blob/commitment/proof inputs and assert that
 //! our bindings over the vendored c-kzg + blst reproduce the official outputs
@@ -15,10 +15,10 @@ const BLOB_SIZE = blob_mod.BLOB_SIZE;
 
 // Official vectors, embedded at compile time. They live under the package root
 // (src/) so `@embedFile` can reach them.
-const VEC_B2C = @embedFile("crypto/c-kzg/test_vectors/blob_to_kzg_commitment_19b3f3f8c98ea31e.yaml");
-const VEC_CBP = @embedFile("crypto/c-kzg/test_vectors/compute_blob_kzg_proof_19b3f3f8c98ea31e.yaml");
-const VEC_VERIFY_OK = @embedFile("crypto/c-kzg/test_vectors/verify_blob_kzg_proof_correct_19b3f3f8c98ea31e.yaml");
-const VEC_VERIFY_BAD = @embedFile("crypto/c-kzg/test_vectors/verify_blob_kzg_proof_incorrect_19b3f3f8c98ea31e.yaml");
+const VEC_B2C = @embedFile("crypto/c-kzg/test_vectors/blob_to_kzg_commitment_valid_blob_6.yaml");
+const VEC_CBP = @embedFile("crypto/c-kzg/test_vectors/compute_blob_kzg_proof_valid_blob_6.yaml");
+const VEC_VERIFY_OK = @embedFile("crypto/c-kzg/test_vectors/verify_blob_kzg_proof_correct_proof_6.yaml");
+const VEC_VERIFY_BAD = @embedFile("crypto/c-kzg/test_vectors/verify_blob_kzg_proof_incorrect_proof_6.yaml");
 
 /// Extract the quoted hex value for a `<key>:` line of the form
 /// `  key: '0x...'`. Returns the bytes between the surrounding single quotes,
