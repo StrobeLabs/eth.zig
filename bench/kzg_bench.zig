@@ -48,6 +48,10 @@ const Fixture = struct {
     blob: *const blob_mod.Blob,
     commitment: blob_mod.KzgCommitment,
     proof: blob_mod.KzgProof,
+    cells: *[kzg.CELLS_PER_EXT_BLOB]kzg.Cell,
+    cell_proofs: *[kzg.CELLS_PER_EXT_BLOB]blob_mod.KzgProof,
+    scratch_cells: *[kzg.CELLS_PER_EXT_BLOB]kzg.Cell,
+    scratch_proofs: *[kzg.CELLS_PER_EXT_BLOB]blob_mod.KzgProof,
 };
 
 fn opCommit(f: *const Fixture) !void {
@@ -67,6 +71,32 @@ fn opVerifyBatch(f: *const Fixture) !void {
     const commits = [_]blob_mod.KzgCommitment{f.commitment};
     const proofs = [_]blob_mod.KzgProof{f.proof};
     if (!try kzg.verifyBlobKzgProofBatch(&blobs, &commits, &proofs)) return error.ProofDidNotVerify;
+}
+
+fn opComputeCellsAndProofs(f: *const Fixture) !void {
+    try kzg.computeCellsAndKzgProofs(f.blob, f.scratch_cells, f.scratch_proofs);
+}
+
+fn opVerifyCells1(f: *const Fixture) !void {
+    const commitments = [_]blob_mod.KzgCommitment{f.commitment};
+    const indices = [_]u64{7};
+    if (!try kzg.verifyCellKzgProofBatch(&commitments, &indices, f.cells[7..8], f.cell_proofs[7..8])) return error.ProofDidNotVerify;
+}
+
+fn opVerifyCells128(f: *const Fixture) !void {
+    var commitments: [kzg.CELLS_PER_EXT_BLOB]blob_mod.KzgCommitment = undefined;
+    var indices: [kzg.CELLS_PER_EXT_BLOB]u64 = undefined;
+    for (0..kzg.CELLS_PER_EXT_BLOB) |i| {
+        commitments[i] = f.commitment;
+        indices[i] = @intCast(i);
+    }
+    if (!try kzg.verifyCellKzgProofBatch(&commitments, &indices, f.cells, f.cell_proofs)) return error.ProofDidNotVerify;
+}
+
+fn opRecoverHalf(f: *const Fixture) !void {
+    var indices: [kzg.CELLS_PER_EXT_BLOB / 2]u64 = undefined;
+    for (0..indices.len) |i| indices[i] = @intCast(i);
+    try kzg.recoverCellsAndKzgProofs(&indices, f.cells[0 .. kzg.CELLS_PER_EXT_BLOB / 2], f.scratch_cells, f.scratch_proofs);
 }
 
 pub fn main() !void {
@@ -97,9 +127,27 @@ pub fn main() !void {
         blob[i] &= 0x3f;
     }
 
-    var fx = Fixture{ .blob = blob, .commitment = undefined, .proof = undefined };
+    const cells = try allocator.create([kzg.CELLS_PER_EXT_BLOB]kzg.Cell);
+    defer allocator.destroy(cells);
+    const cell_proofs = try allocator.create([kzg.CELLS_PER_EXT_BLOB]blob_mod.KzgProof);
+    defer allocator.destroy(cell_proofs);
+    const scratch_cells = try allocator.create([kzg.CELLS_PER_EXT_BLOB]kzg.Cell);
+    defer allocator.destroy(scratch_cells);
+    const scratch_proofs = try allocator.create([kzg.CELLS_PER_EXT_BLOB]blob_mod.KzgProof);
+    defer allocator.destroy(scratch_proofs);
+
+    var fx = Fixture{
+        .blob = blob,
+        .commitment = undefined,
+        .proof = undefined,
+        .cells = cells,
+        .cell_proofs = cell_proofs,
+        .scratch_cells = scratch_cells,
+        .scratch_proofs = scratch_proofs,
+    };
     fx.commitment = try kzg.blobToKzgCommitment(blob);
     fx.proof = try kzg.computeBlobKzgProof(blob, fx.commitment);
+    try kzg.computeCellsAndKzgProofs(blob, cells, cell_proofs);
 
     try stdout.print("\n{s:<32} {s:>13} {s:>13} {s:>6}\n", .{ "kzg op", "min", "median", "iters" });
     try stdout.print("{s}\n", .{"" ++ @as([68]u8, @splat('-'))});
@@ -108,6 +156,10 @@ pub fn main() !void {
     try printRow(stdout, "compute_blob_kzg_proof", try measure(10, &fx, opProof));
     try printRow(stdout, "verify_blob_kzg_proof", try measure(30, &fx, opVerify));
     try printRow(stdout, "verify_blob_kzg_proof_batch(1)", try measure(30, &fx, opVerifyBatch));
+    try printRow(stdout, "compute_cells_and_kzg_proofs", try measure(5, &fx, opComputeCellsAndProofs));
+    try printRow(stdout, "verify_cell_kzg_proof_batch(1)", try measure(30, &fx, opVerifyCells1));
+    try printRow(stdout, "verify_cell_kzg_proof_batch(128)", try measure(10, &fx, opVerifyCells128));
+    try printRow(stdout, "recover_cells_and_kzg_proofs(64)", try measure(5, &fx, opRecoverHalf));
     try stdout.print("\n", .{});
     try stdout.flush();
 }

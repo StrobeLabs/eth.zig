@@ -103,8 +103,24 @@ pub fn build(b: *std.Build) void {
     });
 
     const run_vector_tests = b.addRunArtifact(vector_tests);
-    const vector_step = b.step("vector-test", "Run ENS normalization conformance vectors");
+    const vector_step = b.step("vector-test", "Run conformance vectors (ENS normalization, KZG)");
     vector_step.dependOn(&run_vector_tests.step);
+
+    // KZG reference vectors (official c-kzg-4844 v2.1.8 cases for the
+    // point-evaluation and EIP-7594 cell functions, embedded from
+    // tests/vectors/kzg/). Rooted in tests/ so @embedFile can reach them.
+    const kzg_vector_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/kzg_vectors_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "eth", .module = eth_module },
+            },
+        }),
+    });
+    const run_kzg_vector_tests = b.addRunArtifact(kzg_vector_tests);
+    vector_step.dependOn(&run_kzg_vector_tests.step);
 
     // Benchmarks (always ReleaseFast for meaningful numbers)
     const bench_module = b.addModule("eth_bench", .{

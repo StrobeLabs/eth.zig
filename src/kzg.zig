@@ -1,10 +1,12 @@
 //! Real EIP-4844 KZG support, backed by the vendored c-kzg-4844 + blst C code.
 //!
-//! This module exposes a small Zig API over c-kzg-4844 for building blob
-//! transaction sidecars: computing KZG commitments and proofs from raw blob
-//! data and verifying them. The mainnet trusted setup (the KZG ceremony
-//! output) is embedded via `@embedFile` and loaded once, so consumers need no
-//! external setup file.
+//! This module exposes a Zig API over c-kzg-4844: the EIP-4844 blob
+//! commitment/proof functions used to build blob-transaction sidecars, the
+//! point-evaluation pair (`computeKzgProof`/`verifyKzgProof`) behind the
+//! EIP-4844 precompile, and the EIP-7594 (PeerDAS) cell functions that
+//! produce and verify the per-cell proofs carried by Fusaka blob sidecars.
+//! The mainnet trusted setup (the KZG ceremony output) is embedded via
+//! `@embedFile` and loaded once, so consumers need no external setup file.
 //!
 //! Usage:
 //! ```zig
@@ -13,6 +15,11 @@
 //! const commitment = try kzg.blobToKzgCommitment(&blob);
 //! const proof = try kzg.computeBlobKzgProof(&blob, commitment);
 //! const ok = try kzg.verifyBlobKzgProof(&blob, commitment, proof);
+//!
+//! // EIP-7594 cells (Fusaka): 128 cells and 128 proofs per blob.
+//! var cells: [kzg.CELLS_PER_EXT_BLOB]kzg.Cell = undefined;
+//! var cell_proofs: [kzg.CELLS_PER_EXT_BLOB]kzg.KzgProof = undefined;
+//! try kzg.computeCellsAndKzgProofs(&blob, &cells, &cell_proofs);
 //! ```
 //!
 //! `init` is idempotent and guarded by an atomic state machine, so it is safe
@@ -28,10 +35,38 @@ const std = @import("std");
 const builtin = @import("builtin");
 const blob_mod = @import("blob.zig");
 
-const Blob = blob_mod.Blob;
-const KzgCommitment = blob_mod.KzgCommitment;
-const KzgProof = blob_mod.KzgProof;
+pub const Blob = blob_mod.Blob;
+pub const KzgCommitment = blob_mod.KzgCommitment;
+pub const KzgProof = blob_mod.KzgProof;
 const BLOB_SIZE = blob_mod.BLOB_SIZE;
+
+/// Size of one field element (a BLS12-381 scalar) in bytes.
+pub const BYTES_PER_FIELD_ELEMENT: usize = 32;
+/// Field elements in a blob (4096 x 32 bytes = 128 KiB).
+pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
+/// Field elements in an extended blob: the blob's polynomial evaluated over
+/// twice as many points (Reed-Solomon rate 1/2), which is what cells cover.
+pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
+/// Field elements in one cell.
+pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
+/// Size of one cell in bytes (64 x 32).
+pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
+/// Cells per extended blob (128). A Fusaka blob sidecar carries this many
+/// cell proofs per blob, and any 64 of the 128 cells recover the blob.
+pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
+/// Largest `precompute` value c-kzg accepts (blst's window-size limit).
+pub const MAX_PRECOMPUTE: u64 = 15;
+
+/// One EIP-7594 cell: 64 consecutive field elements of the extended blob.
+pub const Cell = [BYTES_PER_CELL]u8;
+/// A 32-byte field element (evaluation point `z` or claimed value `y`).
+pub const Bytes32 = [BYTES_PER_FIELD_ELEMENT]u8;
+/// Result of `computeKzgProof`: the opening proof and the polynomial's value
+/// at the requested point.
+pub const ProofAndEvaluation = struct {
+    proof: KzgProof,
+    y: Bytes32,
+};
 
 /// The mainnet trusted setup (KZG ceremony output), embedded so consumers need
 /// no external file. Vendored from c-kzg-4844 v2.1.8 (see VENDOR.md).
@@ -57,6 +92,16 @@ const CBlob = extern struct {
 /// both typedefs of Bytes48.
 const CBytes48 = extern struct {
     bytes: [48]u8,
+};
+
+/// Mirror of c-kzg's `Bytes32` (common/bytes.h).
+const CBytes32 = extern struct {
+    bytes: [32]u8,
+};
+
+/// Mirror of c-kzg's `Cell` (eip7594/cell.h): 2048 bytes.
+const CCell = extern struct {
+    bytes: [BYTES_PER_CELL]u8,
 };
 
 /// c-kzg's `KZGSettings` (setup/settings.h), deliberately opaque. Its layout is
@@ -96,6 +141,50 @@ extern fn verify_blob_kzg_proof_batch(
     commitments_bytes: [*]const CBytes48,
     proofs_bytes: [*]const CBytes48,
     n: u64,
+    s: *const KZGSettings,
+) C_KZG_RET;
+
+extern fn compute_kzg_proof(
+    proof_out: *CBytes48,
+    y_out: *CBytes32,
+    blob: *const CBlob,
+    z_bytes: *const CBytes32,
+    s: *const KZGSettings,
+) C_KZG_RET;
+
+extern fn verify_kzg_proof(
+    ok: *bool,
+    commitment_bytes: *const CBytes48,
+    z_bytes: *const CBytes32,
+    y_bytes: *const CBytes32,
+    proof_bytes: *const CBytes48,
+    s: *const KZGSettings,
+) C_KZG_RET;
+
+// EIP-7594. `cells`/`proofs` outputs may be NULL to skip that output.
+extern fn compute_cells_and_kzg_proofs(
+    cells: ?[*]CCell,
+    proofs: ?[*]CBytes48,
+    blob: *const CBlob,
+    s: *const KZGSettings,
+) C_KZG_RET;
+
+extern fn recover_cells_and_kzg_proofs(
+    recovered_cells: [*]CCell,
+    recovered_proofs: ?[*]CBytes48,
+    cell_indices: [*]const u64,
+    cells: [*]const CCell,
+    num_cells: u64,
+    s: *const KZGSettings,
+) C_KZG_RET;
+
+extern fn verify_cell_kzg_proof_batch(
+    ok: *bool,
+    commitments_bytes: [*]const CBytes48,
+    cell_indices: [*]const u64,
+    cells: [*]const CCell,
+    proofs_bytes: [*]const CBytes48,
+    num_cells: u64,
     s: *const KZGSettings,
 ) C_KZG_RET;
 
@@ -161,10 +250,21 @@ const SETTINGS_ALIGN: std.mem.Alignment = .@"16";
 var settings_storage: []align(SETTINGS_ALIGN.toByteUnits()) u8 = &.{};
 var settings_allocator: std.mem.Allocator = undefined;
 
-/// The recommended `precompute` value (0 = no fixed-base MSM tables). 0 keeps
-/// init fast and memory modest; sidecar construction does not need the larger
-/// precomputed tables. c-kzg accepts any value 0..15.
-const PRECOMPUTE: u64 = 0;
+/// Options for `initWithOptions`.
+pub const InitOptions = struct {
+    /// Window size of the fixed-base multi-scalar-multiplication tables c-kzg
+    /// builds for the FK20 cell-proof prover (0..15; 0 disables them and uses
+    /// Pippenger's algorithm). It only affects `computeCellsAndKzgProofs` and
+    /// `recoverCellsAndKzgProofs`; commitments, blob proofs and every verify
+    /// function are unaffected. The default of 0 keeps init fast and adds no
+    /// memory, which is right for occasional sidecar construction. Upstream
+    /// recommends 8 or 9 for applications that compute cell proofs often:
+    /// on an Apple M1 they cut compute_cells_and_kzg_proofs from ~311 ms to
+    /// ~181 ms / ~170 ms at the cost of ~96 MiB / ~192 MiB of tables and
+    /// ~0.6 s / ~1.1 s of extra load time (each further step doubles the
+    /// memory). Values above `MAX_PRECOMPUTE` are rejected with `BadArgs`.
+    precompute: u64 = 0,
+};
 
 /// Test-only failure injection: when set, the caller that owns initialization
 /// invokes it right after claiming the INITIALIZING state and before loading
@@ -183,6 +283,14 @@ var test_init_hook: ?*const fn () KzgError!void = null;
 /// the matching `deinit`, which frees through it. When several threads race,
 /// the allocator of the thread whose load succeeds is the one kept.
 pub fn init(allocator: std.mem.Allocator) KzgError!void {
+    return initWithOptions(allocator, .{});
+}
+
+/// `init` with explicit options (see `InitOptions`). The options of the call
+/// that performs the load are the ones in effect; once the setup is loaded,
+/// further calls with different options are no-ops until `deinit`.
+pub fn initWithOptions(allocator: std.mem.Allocator, options: InitOptions) KzgError!void {
+    if (options.precompute > MAX_PRECOMPUTE) return error.BadArgs;
     while (true) {
         switch (@atomicLoad(u8, &init_state, .acquire)) {
             STATE_READY => return,
@@ -202,7 +310,7 @@ pub fn init(allocator: std.mem.Allocator) KzgError!void {
 
         // We own initialization. On any error, roll the state back to UNINIT
         // so a waiter (or a later caller) can retry.
-        loadSetup(allocator) catch |err| {
+        loadSetup(allocator, options) catch |err| {
             @atomicStore(u8, &init_state, STATE_UNINIT, .release);
             return err;
         };
@@ -213,7 +321,7 @@ pub fn init(allocator: std.mem.Allocator) KzgError!void {
 
 /// Body of a claimed initialization: allocate the opaque settings storage and
 /// load the embedded setup into it. Leaves no allocation behind on error.
-fn loadSetup(allocator: std.mem.Allocator) KzgError!void {
+fn loadSetup(allocator: std.mem.Allocator, options: InitOptions) KzgError!void {
     if (builtin.is_test) {
         if (test_init_hook) |hook| try hook();
     }
@@ -231,7 +339,7 @@ fn loadSetup(allocator: std.mem.Allocator) KzgError!void {
     ) orelse return error.SetupLoadFailed;
     defer _ = fclose(stream);
 
-    try mapRet(load_trusted_setup_file(@ptrCast(storage.ptr), stream, PRECOMPUTE));
+    try mapRet(load_trusted_setup_file(@ptrCast(storage.ptr), stream, options.precompute));
 
     settings_storage = storage;
     settings_allocator = allocator;
@@ -315,6 +423,119 @@ pub fn verifyBlobKzgProofBatch(
     const cproofs: [*]const CBytes48 = @ptrCast(proofs.ptr);
     var ok: bool = false;
     try mapRet(verify_blob_kzg_proof_batch(&ok, cblobs, ccommits, cproofs, @intCast(blobs.len), s));
+    return ok;
+}
+
+/// Compute the KZG opening proof of a blob's polynomial at the point `z` and
+/// return it together with the evaluation `y = p(z)`. This is the prover side
+/// of the EIP-4844 point-evaluation precompile. `z` must be a canonical field
+/// element (big-endian, below the BLS12-381 scalar modulus) or `BadArgs` is
+/// returned. Wraps c-kzg `compute_kzg_proof`.
+pub fn computeKzgProof(blob: *const Blob, z: Bytes32) KzgError!ProofAndEvaluation {
+    const s = try requireReady();
+    const cblob: *const CBlob = @ptrCast(blob);
+    const cz = CBytes32{ .bytes = z };
+    var proof: CBytes48 = undefined;
+    var y: CBytes32 = undefined;
+    try mapRet(compute_kzg_proof(&proof, &y, cblob, &cz, s));
+    return .{ .proof = proof.bytes, .y = y.bytes };
+}
+
+/// Verify a KZG opening proof: that the polynomial committed to by
+/// `commitment` evaluates to `y` at `z`. This is the check performed by the
+/// EIP-4844 point-evaluation precompile. Returns whether the proof is valid;
+/// malformed points or non-canonical `z`/`y` return `BadArgs`. Wraps c-kzg
+/// `verify_kzg_proof`.
+pub fn verifyKzgProof(commitment: KzgCommitment, z: Bytes32, y: Bytes32, proof: KzgProof) KzgError!bool {
+    const s = try requireReady();
+    const ccommit = CBytes48{ .bytes = commitment };
+    const cz = CBytes32{ .bytes = z };
+    const cy = CBytes32{ .bytes = y };
+    const cproof = CBytes48{ .bytes = proof };
+    var ok: bool = false;
+    try mapRet(verify_kzg_proof(&ok, &ccommit, &cz, &cy, &cproof, s));
+    return ok;
+}
+
+/// Compute the 128 EIP-7594 cells of a blob (the extended blob split into
+/// 64-element cells) without proofs. Cheaper than `computeCellsAndKzgProofs`
+/// when only the data is needed. The blob must consist of canonical field
+/// elements or `BadArgs` is returned. Wraps c-kzg
+/// `compute_cells_and_kzg_proofs` with the proofs output disabled.
+pub fn computeCells(blob: *const Blob, cells_out: *[CELLS_PER_EXT_BLOB]Cell) KzgError!void {
+    const s = try requireReady();
+    const cblob: *const CBlob = @ptrCast(blob);
+    const ccells: [*]CCell = @ptrCast(cells_out);
+    try mapRet(compute_cells_and_kzg_proofs(ccells, null, cblob, s));
+}
+
+/// Compute the 128 EIP-7594 cells of a blob and the KZG proof of each cell.
+/// These are the `cell_proofs` a Fusaka (version 1) blob sidecar carries per
+/// blob. Cost is dominated by the FK20 prover; see `InitOptions.precompute`
+/// to trade memory for speed when calling this often. Wraps c-kzg
+/// `compute_cells_and_kzg_proofs`.
+pub fn computeCellsAndKzgProofs(
+    blob: *const Blob,
+    cells_out: *[CELLS_PER_EXT_BLOB]Cell,
+    proofs_out: *[CELLS_PER_EXT_BLOB]KzgProof,
+) KzgError!void {
+    const s = try requireReady();
+    const cblob: *const CBlob = @ptrCast(blob);
+    const ccells: [*]CCell = @ptrCast(cells_out);
+    const cproofs: [*]CBytes48 = @ptrCast(proofs_out);
+    try mapRet(compute_cells_and_kzg_proofs(ccells, cproofs, cblob, s));
+}
+
+/// Recover all 128 cells (and, when `proofs_out` is given, their proofs) of
+/// an extended blob from any subset of at least 64 of its cells. `cells[i]`
+/// is the cell at extended-blob position `cell_indices[i]`. Per the Fulu
+/// spec (c-kzg #594) the indices must be strictly increasing: unsorted or
+/// duplicated indices, indices at or above `CELLS_PER_EXT_BLOB`, fewer than
+/// 64 cells, more than 128 cells, mismatched slice lengths and non-canonical
+/// cell contents all return `BadArgs`. Wraps c-kzg
+/// `recover_cells_and_kzg_proofs`.
+pub fn recoverCellsAndKzgProofs(
+    cell_indices: []const u64,
+    cells: []const Cell,
+    cells_out: *[CELLS_PER_EXT_BLOB]Cell,
+    proofs_out: ?*[CELLS_PER_EXT_BLOB]KzgProof,
+) KzgError!void {
+    const s = try requireReady();
+    if (cell_indices.len != cells.len) return error.BadArgs;
+    if (cells.len == 0 or cells.len > CELLS_PER_EXT_BLOB) return error.BadArgs;
+    const cout: [*]CCell = @ptrCast(cells_out);
+    const pout: ?[*]CBytes48 = if (proofs_out) |p| @ptrCast(p) else null;
+    const ccells: [*]const CCell = @ptrCast(cells.ptr);
+    try mapRet(recover_cells_and_kzg_proofs(cout, pout, cell_indices.ptr, ccells, @intCast(cells.len), s));
+}
+
+/// Verify a batch of EIP-7594 cell proofs: for each `i`, that `cells[i]` is
+/// the cell at position `cell_indices[i]` of the blob committed to by
+/// `commitments[i]`, as attested by `proofs[i]`. Cells from different blobs
+/// may be mixed, the same cell may appear more than once, and indices need
+/// not be sorted. All four slices must have equal length or `BadArgs` is
+/// returned; an empty batch verifies. Malformed points, non-canonical cells
+/// and indices at or above `CELLS_PER_EXT_BLOB` return `BadArgs`; a proof
+/// that simply does not check out returns `false`. This is the check a
+/// sender runs on a Fusaka sidecar before broadcasting it (and the check
+/// consensus clients run on data-column sidecars). Wraps c-kzg
+/// `verify_cell_kzg_proof_batch`.
+pub fn verifyCellKzgProofBatch(
+    commitments: []const KzgCommitment,
+    cell_indices: []const u64,
+    cells: []const Cell,
+    proofs: []const KzgProof,
+) KzgError!bool {
+    const s = try requireReady();
+    if (commitments.len != cell_indices.len or commitments.len != cells.len or commitments.len != proofs.len) {
+        return error.BadArgs;
+    }
+    if (cells.len == 0) return true;
+    const ccommits: [*]const CBytes48 = @ptrCast(commitments.ptr);
+    const ccells: [*]const CCell = @ptrCast(cells.ptr);
+    const cproofs: [*]const CBytes48 = @ptrCast(proofs.ptr);
+    var ok: bool = false;
+    try mapRet(verify_cell_kzg_proof_batch(&ok, ccommits, cell_indices.ptr, ccells, cproofs, @intCast(cells.len), s));
     return ok;
 }
 
@@ -512,4 +733,148 @@ test "kzg batch verify round trip" {
     bad_proofs[0][0] ^= 0x01;
     const ok = verifyBlobKzgProofBatch(&blobs, &commits, &bad_proofs) catch false;
     try testing.expect(!ok);
+}
+
+/// Deterministic blob with full-width canonical field elements for the cell
+/// round-trip tests (the top byte of every element is masked below the
+/// modulus's top byte, 0x73).
+fn testBlob(allocator: std.mem.Allocator, seed: u64) !*Blob {
+    const blob = try allocator.create(Blob);
+    var prng = std.Random.DefaultPrng.init(seed);
+    prng.random().bytes(blob);
+    var i: usize = 0;
+    while (i < BLOB_SIZE) : (i += BYTES_PER_FIELD_ELEMENT) blob[i] &= 0x3f;
+    return blob;
+}
+
+test "kzg point evaluation round trip: computeKzgProof -> verifyKzgProof" {
+    const allocator = testing.allocator;
+    try init(allocator);
+    defer deinit();
+    const blob = try testBlob(allocator, 1);
+    defer allocator.destroy(blob);
+
+    const commitment = try blobToKzgCommitment(blob);
+    var z: Bytes32 = @splat(0);
+    z[31] = 0x2a;
+    const opening = try computeKzgProof(blob, z);
+    try testing.expect(try verifyKzgProof(commitment, z, opening.y, opening.proof));
+
+    // A different claimed value must not verify.
+    var wrong_y = opening.y;
+    wrong_y[31] ^= 0x01;
+    try testing.expect(!try verifyKzgProof(commitment, z, wrong_y, opening.proof));
+
+    // A non-canonical z (the modulus itself) is rejected, not evaluated.
+    const modulus = [_]u8{
+        0x73, 0xed, 0xa7, 0x53, 0x29, 0x9d, 0x7d, 0x48, 0x33, 0x39, 0xd8, 0x08, 0x09, 0xa1, 0xd8, 0x05,
+        0x53, 0xbd, 0xa4, 0x02, 0xff, 0xfe, 0x5b, 0xfe, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01,
+    };
+    try testing.expectError(error.BadArgs, computeKzgProof(blob, modulus));
+    try testing.expectError(error.BadArgs, verifyKzgProof(commitment, modulus, opening.y, opening.proof));
+}
+
+test "kzg cells round trip: compute -> verify batch -> recover" {
+    const allocator = testing.allocator;
+    try init(allocator);
+    defer deinit();
+    const blob = try testBlob(allocator, 2);
+    defer allocator.destroy(blob);
+
+    const commitment = try blobToKzgCommitment(blob);
+    const cells = try allocator.create([CELLS_PER_EXT_BLOB]Cell);
+    defer allocator.destroy(cells);
+    const proofs = try allocator.create([CELLS_PER_EXT_BLOB]KzgProof);
+    defer allocator.destroy(proofs);
+    try computeCellsAndKzgProofs(blob, cells, proofs);
+
+    // computeCells yields the same cells without proofs.
+    const cells_only = try allocator.create([CELLS_PER_EXT_BLOB]Cell);
+    defer allocator.destroy(cells_only);
+    try computeCells(blob, cells_only);
+    try testing.expectEqualSlices(u8, std.mem.asBytes(cells), std.mem.asBytes(cells_only));
+
+    // The first 64 cells are the blob itself (systematic code).
+    try testing.expectEqualSlices(u8, blob, std.mem.asBytes(cells[0 .. CELLS_PER_EXT_BLOB / 2]));
+
+    // Every cell proof verifies against the commitment, in any order.
+    var commitments: [CELLS_PER_EXT_BLOB]KzgCommitment = undefined;
+    var indices: [CELLS_PER_EXT_BLOB]u64 = undefined;
+    for (0..CELLS_PER_EXT_BLOB) |i| {
+        commitments[i] = commitment;
+        indices[i] = @intCast(CELLS_PER_EXT_BLOB - 1 - i);
+    }
+    var shuffled_cells: [CELLS_PER_EXT_BLOB]Cell = undefined;
+    var shuffled_proofs: [CELLS_PER_EXT_BLOB]KzgProof = undefined;
+    for (0..CELLS_PER_EXT_BLOB) |i| {
+        shuffled_cells[i] = cells[indices[i]];
+        shuffled_proofs[i] = proofs[indices[i]];
+    }
+    try testing.expect(try verifyCellKzgProofBatch(&commitments, &indices, &shuffled_cells, &shuffled_proofs));
+    try testing.expect(try verifyCellKzgProofBatch(&.{}, &.{}, &.{}, &.{}));
+
+    // A cell attributed to the wrong index fails verification; mismatched
+    // slice lengths and out-of-range indices are argument errors.
+    var bad_index = [_]u64{1};
+    try testing.expect(!try verifyCellKzgProofBatch(commitments[0..1], &bad_index, cells[0..1], proofs[0..1]));
+    try testing.expectError(error.BadArgs, verifyCellKzgProofBatch(commitments[0..1], indices[0..2], cells[0..2], proofs[0..2]));
+    bad_index[0] = CELLS_PER_EXT_BLOB;
+    try testing.expectError(error.BadArgs, verifyCellKzgProofBatch(commitments[0..1], &bad_index, cells[0..1], proofs[0..1]));
+
+    // Recovery from every other cell reproduces all cells and proofs.
+    var half_indices: [CELLS_PER_EXT_BLOB / 2]u64 = undefined;
+    var half_cells: [CELLS_PER_EXT_BLOB / 2]Cell = undefined;
+    for (0..CELLS_PER_EXT_BLOB / 2) |i| {
+        half_indices[i] = @intCast(2 * i);
+        half_cells[i] = cells[2 * i];
+    }
+    const recovered = try allocator.create([CELLS_PER_EXT_BLOB]Cell);
+    defer allocator.destroy(recovered);
+    const recovered_proofs = try allocator.create([CELLS_PER_EXT_BLOB]KzgProof);
+    defer allocator.destroy(recovered_proofs);
+    try recoverCellsAndKzgProofs(&half_indices, &half_cells, recovered, recovered_proofs);
+    try testing.expectEqualSlices(u8, std.mem.asBytes(cells), std.mem.asBytes(recovered));
+    try testing.expectEqualSlices(u8, std.mem.asBytes(proofs), std.mem.asBytes(recovered_proofs));
+
+    // Proofs are optional on recovery.
+    try recoverCellsAndKzgProofs(&half_indices, &half_cells, recovered, null);
+    try testing.expectEqualSlices(u8, std.mem.asBytes(cells), std.mem.asBytes(recovered));
+
+    // Unsorted indices, too few cells and length mismatches are rejected.
+    var unsorted_indices = half_indices;
+    std.mem.swap(u64, &unsorted_indices[0], &unsorted_indices[1]);
+    var unsorted_cells = half_cells;
+    std.mem.swap(Cell, &unsorted_cells[0], &unsorted_cells[1]);
+    try testing.expectError(error.BadArgs, recoverCellsAndKzgProofs(&unsorted_indices, &unsorted_cells, recovered, null));
+    try testing.expectError(error.BadArgs, recoverCellsAndKzgProofs(half_indices[0..63], half_cells[0..63], recovered, null));
+    try testing.expectError(error.BadArgs, recoverCellsAndKzgProofs(half_indices[0..64], half_cells[0..63], recovered, null));
+    try testing.expectError(error.BadArgs, recoverCellsAndKzgProofs(&.{}, &.{}, recovered, null));
+}
+
+test "kzg precompute option yields identical cells and proofs" {
+    const allocator = testing.allocator;
+    try testing.expectError(error.BadArgs, initWithOptions(allocator, .{ .precompute = MAX_PRECOMPUTE + 1 }));
+
+    const blob = try testBlob(allocator, 3);
+    defer allocator.destroy(blob);
+    const cells_a = try allocator.create([CELLS_PER_EXT_BLOB]Cell);
+    defer allocator.destroy(cells_a);
+    const proofs_a = try allocator.create([CELLS_PER_EXT_BLOB]KzgProof);
+    defer allocator.destroy(proofs_a);
+    const cells_b = try allocator.create([CELLS_PER_EXT_BLOB]Cell);
+    defer allocator.destroy(cells_b);
+    const proofs_b = try allocator.create([CELLS_PER_EXT_BLOB]KzgProof);
+    defer allocator.destroy(proofs_b);
+
+    try init(allocator);
+    try computeCellsAndKzgProofs(blob, cells_a, proofs_a);
+    deinit();
+
+    // A small window keeps the test fast (tables double per step); the
+    // fixed-base prover must produce byte-identical output to Pippenger.
+    try initWithOptions(allocator, .{ .precompute = 2 });
+    defer deinit();
+    try computeCellsAndKzgProofs(blob, cells_b, proofs_b);
+    try testing.expectEqualSlices(u8, std.mem.asBytes(cells_a), std.mem.asBytes(cells_b));
+    try testing.expectEqualSlices(u8, std.mem.asBytes(proofs_a), std.mem.asBytes(proofs_b));
 }

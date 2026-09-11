@@ -23,3 +23,7 @@ them. The `src/kzg_vectors_test.zig` test parses the
 `blob`/`commitment`/`proof`/`output` fields out of these files and asserts our
 c-kzg-4844 + blst bindings reproduce the official commitment and proof bytes
 byte-for-byte, and that the verify cases return the official true/false result.
+
+The EIP-7594 cell and point-evaluation vectors live under `tests/vectors/kzg/`
+(see the README there) because the `vector-test` build step is rooted in
+`tests/`.
