@@ -43,12 +43,16 @@ pub fn buildSidecar(allocator: std.mem.Allocator, raw_blob: Blob) !BlobSidecar {
     };
 }
 
-/// Compute the versioned hash from a KZG commitment.
+/// Compute the EIP-4844 versioned hash from a KZG commitment.
 ///
-/// The versioned hash is keccak256(commitment) with the first byte
-/// replaced by the version byte (0x01 for KZG).
+/// Per EIP-4844 this is `sha256(commitment)` with the first byte replaced by
+/// the version byte (0x01 for KZG) -- sha256, not keccak256, because the
+/// execution layer recomputes it that way when it checks a type-3
+/// transaction's `blob_versioned_hashes` against the sidecar commitments
+/// (and the point-evaluation precompile does the same).
 pub fn computeVersionedHash(commitment: KzgCommitment) [32]u8 {
-    var h = keccak.hash(&commitment);
+    var h: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(&commitment, &h, .{});
     h[0] = VERSIONED_HASH_VERSION_KZG;
     return h;
 }
@@ -72,16 +76,32 @@ test "BLOB_SIZE is 128 KiB" {
     try std.testing.expectEqual(@as(usize, 128 * 1024), BLOB_SIZE);
 }
 
-test "computeVersionedHash sets version byte" {
+test "computeVersionedHash sets version byte over sha256" {
     const commitment = @as([48]u8, @splat(0xaa));
     const versioned = computeVersionedHash(commitment);
 
     // First byte must be 0x01 (KZG version)
     try std.testing.expectEqual(@as(u8, 0x01), versioned[0]);
 
-    // Remaining 31 bytes should match keccak256(commitment)[1..32]
-    const full_hash = keccak.hash(&commitment);
+    // Remaining 31 bytes are sha256(commitment)[1..32], as EIP-4844 defines
+    // the versioned hash. keccak256 would be a consensus mismatch: the
+    // execution layer rejects a blob transaction whose versioned hashes do
+    // not equal sha256 of the sidecar commitments.
+    var full_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(&commitment, &full_hash, .{});
     try std.testing.expectEqualSlices(u8, full_hash[1..32], versioned[1..32]);
+    try std.testing.expect(!std.mem.eql(u8, keccak.hash(&commitment)[1..32], versioned[1..32]));
+}
+
+test "computeVersionedHash matches the EIP-4844 reference value" {
+    // sha256 of a 48-byte all-zero commitment, version byte applied. The
+    // digest is the well-known sha256 of 48 zero bytes.
+    const expected = [32]u8{
+        0x01, 0xb0, 0x76, 0x1f, 0x87, 0xb0, 0x81, 0xd5, 0xcf, 0x10, 0x75, 0x7c, 0xcc, 0x89, 0xf1, 0x2b,
+        0xe3, 0x55, 0xc7, 0x0e, 0x2e, 0x29, 0xdf, 0x28, 0x8b, 0x65, 0xb3, 0x07, 0x10, 0xdc, 0xbc, 0xd1,
+    };
+    const got = computeVersionedHash(@splat(0));
+    try std.testing.expectEqualSlices(u8, &expected, &got);
 }
 
 test "computeVersionedHash deterministic" {
