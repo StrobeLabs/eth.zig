@@ -192,8 +192,13 @@ const compute_kzg_proof_cases = [_][]const u8{
 };
 
 const compute_cells_and_kzg_proofs_cases = [_][]const u8{
+    // valid_0 is the zero blob: every cell equal, every proof the point at
+    // infinity. valid_2 is a full-entropy blob with 128 distinct cells and
+    // 128 distinct proofs, so it is the case that actually pins per-index
+    // content and ordering. Upstream's valid_1 is another constant blob and
+    // pins nothing valid_0 does not.
     "valid_0",
-    "valid_1",
+    "valid_2",
     "invalid_blob_0",
     "invalid_blob_1",
 };
@@ -211,8 +216,12 @@ const recover_cells_and_kzg_proofs_cases = [_][]const u8{
 };
 
 const verify_cell_kzg_proof_batch_cases = [_][]const u8{
+    // valid_0 is the zero blob (one distinct cell, proof and commitment);
+    // valid_2 is a full-entropy blob with 128 distinct cells and proofs, so
+    // it pins the cell-to-index pairing. Upstream's valid_1 duplicates
+    // valid_0's degenerate shape.
     "valid_0",
-    "valid_1",
+    "valid_2",
     "valid_multiple_blobs",
     "valid_not_sorted",
     "valid_regression1",

@@ -33,11 +33,12 @@ type vector struct {
 	MaxFeePerBlobGas  uint64   `json:"max_fee_per_blob_gas"`
 	PrivateKey        string   `json:"private_key"`
 	Sender            string   `json:"sender"`
-	BlobRecipe        string   `json:"blob_recipe"`
-	BlobSha256        string   `json:"blob_sha256"`
-	Commitment        string   `json:"commitment"`
-	VersionedHash     string   `json:"versioned_hash"`
-	BlobProof         string   `json:"blob_proof"`
+	BlobRecipes       []string `json:"blob_recipes"`
+	BlobSha256        []string `json:"blob_sha256"`
+	Commitments       []string `json:"commitments"`
+	VersionedHashes   []string `json:"versioned_hashes"`
+	BlobProofs        []string `json:"blob_proofs"`
+	CellProofsPerBlob int      `json:"cell_proofs_per_blob"`
 	CellProofs        []string `json:"cell_proofs"`
 	YParity           uint64   `json:"y_parity"`
 	R                 string   `json:"r"`
@@ -57,29 +58,73 @@ func must(err error) {
 	}
 }
 
-func main() {
-	// Deterministic blob: the same recipe as eth.zig's kzg round-trip test.
-	// Every 32-byte field element keeps its top byte zero, so it is canonical.
+// blobRecipes describes, in words, how each blob is filled. Two *different*
+// blobs are used on purpose: with a single blob the blob-major and cell-major
+// cell_proofs layouts are indistinguishable, so the vector could not pin the
+// one EIP-7594 specifies.
+var blobRecipes = []string{
+	"for each 32-byte field element fe (0..4095): blob[32*fe+31] = fe % 251; blob[32*fe+30] = (fe/251) % 251; all other bytes zero",
+	"for each 32-byte field element fe (0..4095): blob[32*fe+31] = (7*fe + 3) % 251; blob[32*fe+29] = (fe/251) % 251; all other bytes zero",
+}
+
+// fillBlob applies the recipe with the given index. Every 32-byte field
+// element keeps its top byte zero, so each is a canonical BLS12-381 scalar.
+func fillBlob(which int) kzg4844.Blob {
 	var blob kzg4844.Blob
 	for i := 0; i < len(blob); i += 32 {
 		fe := i / 32
-		blob[i+31] = byte(fe % 251)
-		blob[i+30] = byte((fe / 251) % 251)
+		switch which {
+		case 0:
+			blob[i+31] = byte(fe % 251)
+			blob[i+30] = byte((fe / 251) % 251)
+		case 1:
+			blob[i+31] = byte((7*fe + 3) % 251)
+			blob[i+29] = byte((fe / 251) % 251)
+		default:
+			panic("unknown blob recipe")
+		}
 	}
-	blobSum := sha256.Sum256(blob[:])
+	return blob
+}
 
-	commitment, err := kzg4844.BlobToCommitment(&blob)
-	must(err)
-	blobProof, err := kzg4844.ComputeBlobProof(&blob, commitment)
-	must(err)
-	cellProofs, err := kzg4844.ComputeCellProofs(&blob)
-	must(err)
-	if len(cellProofs) != kzg4844.CellProofsPerBlob {
-		panic("unexpected cell proof count")
+func main() {
+	blobs := []kzg4844.Blob{fillBlob(0), fillBlob(1)}
+	if blobs[0] == blobs[1] {
+		panic("blobs must differ for the ordering check to mean anything")
 	}
-	// Self-check the cell proofs with go-eth-kzg before emitting them.
-	must(kzg4844.VerifyCellProofs([]kzg4844.Blob{blob}, []kzg4844.Commitment{commitment}, cellProofs))
-	vh := kzg4844.CalcBlobHashV1(sha256.New(), &commitment)
+
+	var (
+		blobSums    []string
+		commitments []kzg4844.Commitment
+		blobProofs  []kzg4844.Proof
+		cellProofs  []kzg4844.Proof
+		hashes      []common.Hash
+	)
+	for i := range blobs {
+		sum := sha256.Sum256(blobs[i][:])
+		blobSums = append(blobSums, "0x"+hex.EncodeToString(sum[:]))
+
+		commitment, err := kzg4844.BlobToCommitment(&blobs[i])
+		must(err)
+		commitments = append(commitments, commitment)
+
+		blobProof, err := kzg4844.ComputeBlobProof(&blobs[i], commitment)
+		must(err)
+		blobProofs = append(blobProofs, blobProof)
+
+		// Blob-major: blob i's 128 proofs are appended as a block, which is
+		// what EIP-7594 specifies and what geth's BlobTxSidecar.ToV1 does.
+		perBlob, err := kzg4844.ComputeCellProofs(&blobs[i])
+		must(err)
+		if len(perBlob) != kzg4844.CellProofsPerBlob {
+			panic("unexpected cell proof count")
+		}
+		cellProofs = append(cellProofs, perBlob...)
+
+		hashes = append(hashes, common.Hash(kzg4844.CalcBlobHashV1(sha256.New(), &commitment)))
+	}
+	// Self-check every cell proof with go-eth-kzg before emitting them.
+	must(kzg4844.VerifyCellProofs(blobs, commitments, cellProofs))
 
 	keyHex := "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 	key, err := crypto.HexToECDSA(keyHex)
@@ -99,7 +144,7 @@ func main() {
 			Data:       nil,
 			AccessList: nil,
 			BlobFeeCap: uint256.NewInt(1_000_000_000),
-			BlobHashes: []common.Hash{common.Hash(vh)},
+			BlobHashes: hashes,
 			Sidecar:    sc,
 		}
 		tx, err := types.SignNewTx(key, types.NewCancunSigner(big.NewInt(1)), inner)
@@ -107,8 +152,8 @@ func main() {
 		return tx
 	}
 
-	v0 := mk(types.NewBlobTxSidecar(types.BlobSidecarVersion0, []kzg4844.Blob{blob}, []kzg4844.Commitment{commitment}, []kzg4844.Proof{blobProof}))
-	v1 := mk(types.NewBlobTxSidecar(types.BlobSidecarVersion1, []kzg4844.Blob{blob}, []kzg4844.Commitment{commitment}, cellProofs))
+	v0 := mk(types.NewBlobTxSidecar(types.BlobSidecarVersion0, blobs, commitments, blobProofs))
+	v1 := mk(types.NewBlobTxSidecar(types.BlobSidecarVersion1, blobs, commitments, cellProofs))
 
 	signed, err := v0.WithoutBlobTxSidecar().MarshalBinary()
 	must(err)
@@ -131,7 +176,7 @@ func main() {
 
 	vv, r, s := v0.RawSignatureValues()
 	out := vector{
-		Description:       "EIP-4844 blob tx with one deterministic blob: signed tx, v0 network wrapper rlp([tx_payload_body, blobs, commitments, proofs]) and EIP-7594 v1 wrapper rlp([tx_payload_body, 1, blobs, commitments, cell_proofs]). Generated with go-ethereum types.BlobTxSidecar + crypto/kzg4844 (go-eth-kzg backend).",
+		Description:       "EIP-4844 blob tx with two distinct deterministic blobs: signed tx, v0 network wrapper rlp([tx_payload_body, blobs, commitments, proofs]) and EIP-7594 v1 wrapper rlp([tx_payload_body, 1, blobs, commitments, cell_proofs]). Two blobs so the blob-major cell_proofs layout is pinned. Generated with go-ethereum types.BlobTxSidecar + crypto/kzg4844 (go-eth-kzg backend).",
 		GoEthereumVersion: "v1.16.8",
 		ChainID:           1,
 		Nonce:             7,
@@ -144,11 +189,9 @@ func main() {
 		MaxFeePerBlobGas:  1_000_000_000,
 		PrivateKey:        "0x" + keyHex,
 		Sender:            sender.Hex(),
-		BlobRecipe:        "for each 32-byte field element fe (0..4095): blob[32*fe+31] = fe % 251; blob[32*fe+30] = (fe/251) % 251; all other bytes zero",
-		BlobSha256:        "0x" + hex.EncodeToString(blobSum[:]),
-		Commitment:        "0x" + hex.EncodeToString(commitment[:]),
-		VersionedHash:     common.Hash(vh).Hex(),
-		BlobProof:         "0x" + hex.EncodeToString(blobProof[:]),
+		BlobRecipes:       blobRecipes,
+		BlobSha256:        blobSums,
+		CellProofsPerBlob: kzg4844.CellProofsPerBlob,
 		YParity:           vv.Uint64(),
 		R:                 fmt.Sprintf("0x%064x", r),
 		S:                 fmt.Sprintf("0x%064x", s),
@@ -160,6 +203,11 @@ func main() {
 		NetworkV1Len:      len(netV1),
 		NetworkV1Keccak:   crypto.Keccak256Hash(netV1).Hex(),
 	}
+	for i := range commitments {
+		out.Commitments = append(out.Commitments, "0x"+hex.EncodeToString(commitments[i][:]))
+		out.VersionedHashes = append(out.VersionedHashes, hashes[i].Hex())
+		out.BlobProofs = append(out.BlobProofs, "0x"+hex.EncodeToString(blobProofs[i][:]))
+	}
 	for _, p := range cellProofs {
 		out.CellProofs = append(out.CellProofs, "0x"+hex.EncodeToString(p[:]))
 	}
@@ -169,5 +217,5 @@ func main() {
 	must(os.WriteFile("signed_tx.hex", []byte(hex.EncodeToString(signed)+"\n"), 0o644))
 	must(os.WriteFile("network_v0.hex", []byte(hex.EncodeToString(netV0)+"\n"), 0o644))
 	must(os.WriteFile("network_v1.hex", []byte(hex.EncodeToString(netV1)+"\n"), 0o644))
-	fmt.Printf("signed=%d v0=%d v1=%d commitment=%s\n", len(signed), len(netV0), len(netV1), out.Commitment)
+	fmt.Printf("blobs=%d signed=%d v0=%d v1=%d cell_proofs=%d\n", len(blobs), len(signed), len(netV0), len(netV1), len(cellProofs))
 }
