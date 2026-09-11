@@ -31,7 +31,7 @@ const KzgProof = blob_mod.KzgProof;
 const BLOB_SIZE = blob_mod.BLOB_SIZE;
 
 /// The mainnet trusted setup (KZG ceremony output), embedded so consumers need
-/// no external file. Vendored from c-kzg-4844 v2.1.1 (see VENDOR.md).
+/// no external file. Vendored from c-kzg-4844 v2.1.8 (see VENDOR.md).
 const TRUSTED_SETUP_TXT = @embedFile("crypto/c-kzg/src/trusted_setup.txt");
 
 // ============================================================================
