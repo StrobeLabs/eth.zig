@@ -73,9 +73,12 @@ const versioned_hash = eth.blob.computeVersionedHash(sidecar.commitments[0]);
 ```
 
 `sidecar.verify(allocator)` recomputes the cells and runs
-`verify_cell_kzg_proof_batch` over all of them, which is the check nodes apply
-before accepting the transaction; the network wrapper below runs it for you by
-default.
+`verify_cell_kzg_proof_batch` over all of them. That is EIP-7594's fourth
+sidecar validity condition (the commitments match the blobs and cell proofs),
+not the whole of what a node checks: on its own it says nothing about the
+transaction the sidecar belongs to. `wrapBlobTransaction` runs it by default
+*and* binds the sidecar to the transaction body, which is the pairing a node
+actually applies.
 
 For pre-Fusaka networks, `eth.blob.buildSidecar(allocator, raw_blob)` still
 produces the single-blob version-0 `BlobSidecar` (blob, commitment, blob proof).
@@ -112,11 +115,25 @@ const raw_v0 = try eth.transaction.wrapBlobTransaction(allocator, signed, .{ .v0
 } }, .{});
 ```
 
-`wrapBlobTransaction` checks that the signed bytes are a type-3 transaction,
-that the sidecar's slices agree in length (128 cell proofs per blob for version
-1), and, unless you pass `.{ .verify_proofs = false }`, that every proof
-verifies against its commitment before the bytes ever leave the process
-(`error.SidecarVerificationFailed` otherwise). Both encodings are checked byte
+`wrapBlobTransaction` will not hand you bytes a node would reject for sidecar
+reasons. Before it encodes anything it checks, in this order:
+
+1. the signed bytes are a single type-3 RLP list carrying at least the fields
+   up to `blob_versioned_hashes` (`error.NotABlobTransaction`);
+2. the sidecar's own slices agree -- one commitment per blob, one proof per
+   blob for version 0 and 128 per blob for version 1
+   (`error.SidecarShapeMismatch`);
+3. the body carries exactly one versioned hash per blob and
+   `computeVersionedHash(commitments[i])` equals `blob_versioned_hashes[i]`
+   for every `i` (`error.VersionedHashMismatch`) -- EIP-7594's first and third
+   validity conditions, so a sidecar that belongs to a different transaction
+   is caught locally rather than by the network;
+4. unless you pass `.{ .verify_proofs = false }`, every proof verifies against
+   its blob and commitment (`error.SidecarVerificationFailed`).
+
+Checks 1 to 3 are cheap and always run; only 4 is optional. Nothing outside
+the sidecar's relationship to the body is validated -- the signature, nonce,
+fees and gas limit remain yours to get right. Both encodings are checked byte
 for byte against go-ethereum's `types.BlobTxSidecar` output (see Correctness).
 
 ## Lower-level API

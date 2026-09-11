@@ -67,7 +67,12 @@ pub const BlobSidecarV1 = struct {
 
     /// Verify every cell proof against its commitment: recompute the cells
     /// of each blob and run one `kzg.verifyCellKzgProofBatch` over all of
-    /// them, the check a node performs before accepting the transaction.
+    /// them. This is EIP-7594's fourth sidecar validity condition (the
+    /// commitments match the blobs and the cell proofs) and nothing more: it
+    /// says nothing about which transaction the sidecar belongs to, so it is
+    /// not on its own the check a node performs.
+    /// `transaction.wrapBlobTransaction` pairs it with the versioned-hash
+    /// binding, which together are what a node applies.
     /// Returns `false` for a proof or commitment that does not match the
     /// blob; malformed inputs surface as `KzgError`. The caller must have
     /// initialized `kzg`. Scratch memory (256 KiB of cells per blob plus the

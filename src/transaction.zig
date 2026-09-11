@@ -162,11 +162,22 @@ pub fn serializeSigned(allocator: std.mem.Allocator, tx: Transaction, r: [32]u8,
 /// Type byte of an EIP-4844 blob transaction.
 pub const BLOB_TX_TYPE: u8 = 0x03;
 
+/// Index of `blob_versioned_hashes` in a signed type-3 transaction's RLP list
+/// (`[chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value,
+/// data, accessList, maxFeePerBlobGas, blobVersionedHashes, y_parity, r, s]`).
+const BLOB_VERSIONED_HASHES_INDEX: usize = 10;
+
 /// Errors from `wrapBlobTransaction` beyond allocation and KZG errors.
 pub const BlobWrapError = error{
-    /// `signed_tx` is not `0x03 || rlp([...])` (wrong type byte, not a single
-    /// RLP list, or trailing bytes).
+    /// `signed_tx` is not `0x03 || rlp([...])` with the field layout of a
+    /// signed blob transaction (wrong type byte, not a single RLP list,
+    /// trailing bytes, too few fields, or a malformed
+    /// `blob_versioned_hashes` list).
     NotABlobTransaction,
+    /// The sidecar does not match the transaction body: a different number of
+    /// blobs than `blob_versioned_hashes`, or a commitment whose versioned
+    /// hash is not the one the body commits to.
+    VersionedHashMismatch,
     /// The sidecar's proofs do not verify against its blobs and commitments.
     SidecarVerificationFailed,
 } || blob_mod.SidecarError;
@@ -175,10 +186,11 @@ pub const BlobWrapError = error{
 pub const WrapBlobOptions = struct {
     /// Verify every proof in the sidecar against its blob and commitment
     /// before encoding (`kzg.verifyBlobKzgProofBatch` for v0,
-    /// `kzg.verifyCellKzgProofBatch` over the recomputed cells for v1), the
-    /// same check nodes apply on receipt. Costs a few milliseconds per blob
-    /// and requires `kzg.init`; disable only when the sidecar was verified
-    /// already.
+    /// `kzg.verifyCellKzgProofBatch` over the recomputed cells for v1). This
+    /// is EIP-7594's fourth validity condition and the expensive one: a few
+    /// milliseconds per blob, and it requires `kzg.init`. Disable it only
+    /// when the sidecar was verified already. The cheap structural checks
+    /// (slice shapes and the versioned-hash binding) always run.
     verify_proofs: bool = true,
 };
 
@@ -198,11 +210,28 @@ pub const WrapBlobOptions = struct {
 /// where `tx_payload_body` is the signed transaction's own RLP list embedded
 /// as a list item, and each of the trailing lists holds fixed-size byte
 /// strings (131072-byte blobs, 48-byte commitments and proofs; 128 cell
-/// proofs per blob in version 1, blob-major). Rejects inputs that are not a
-/// type-3 transaction and sidecars whose slice lengths disagree, and (by
-/// default) sidecars whose proofs do not verify. Caller owns the returned
-/// slice. Nothing on the wire identifies which version a network expects:
-/// use `.v1` on and after Fusaka, `.v0` before.
+/// proofs per blob in version 1, blob-major).
+///
+/// The sidecar is checked against the transaction body before anything is
+/// encoded, so a wrapper this function returns cannot fail a receiving node's
+/// sidecar validation (EIP-7594, "the node MUST validate `tx_payload_body`"):
+///
+/// 1. `signed_tx` must be a single type-3 RLP list with at least the 11
+///    fields up to `blob_versioned_hashes` (`NotABlobTransaction`).
+/// 2. The sidecar's own slice lengths must agree -- one commitment per blob
+///    and one (v0) or 128 (v1) proofs per blob (`SidecarShapeMismatch`).
+/// 3. The body must carry exactly one versioned hash per blob, and
+///    `computeVersionedHash(commitments[i])` must equal
+///    `blob_versioned_hashes[i]` for every `i` (`VersionedHashMismatch`).
+/// 4. Unless `options.verify_proofs` is false, every proof must verify
+///    against its blob and commitment (`SidecarVerificationFailed`).
+///
+/// Checks 1 to 3 are cheap and unconditional; only 4 is optional. What is
+/// *not* checked here is everything outside the sidecar's relationship to the
+/// body: the signature, nonce, fees and gas limit are the caller's business.
+///
+/// Caller owns the returned slice. Nothing on the wire identifies which
+/// version a network expects: use `.v1` on and after Fusaka, `.v0` before.
 pub fn wrapBlobTransaction(
     allocator: std.mem.Allocator,
     signed_tx: []const u8,
@@ -213,13 +242,15 @@ pub fn wrapBlobTransaction(
     const body = rlp.decodeItem(signed_tx[1..]) catch return error.NotABlobTransaction;
     if (body.kind != .list or body.rest.len != 0) return error.NotABlobTransaction;
     try sidecar.validateShape();
-    if (options.verify_proofs) {
-        if (!try sidecar.verify(allocator)) return error.SidecarVerificationFailed;
-    }
 
     const blobs = sidecar.blobs();
     const commitments = sidecar.commitments();
     const proofs = sidecar.proofs();
+
+    try checkVersionedHashes(body.payload, commitments);
+    if (options.verify_proofs) {
+        if (!try sidecar.verify(allocator)) return error.SidecarVerificationFailed;
+    }
     const version_len: usize = switch (sidecar) {
         .v0 => 0,
         .v1 => 1, // the byte 0x01 encodes as itself
@@ -253,6 +284,34 @@ pub fn wrapBlobTransaction(
     for (proofs) |*p| pos += writeFixedItem(out[pos..], p);
     std.debug.assert(pos == total);
     return out;
+}
+
+/// Bind a sidecar's commitments to a signed transaction body: walk `body` (the
+/// payload of the signed transaction's RLP list) to `blob_versioned_hashes`
+/// and require one 32-byte hash per commitment, each equal to that
+/// commitment's versioned hash. This is EIP-7594's first and third validity
+/// condition; without it a caller can broadcast a wrapper whose sidecar has
+/// nothing to do with the transaction, which every node rejects.
+fn checkVersionedHashes(body: []const u8, commitments: []const blob_mod.KzgCommitment) BlobWrapError!void {
+    var rest = body;
+    for (0..BLOB_VERSIONED_HASHES_INDEX) |_| {
+        const item = rlp.decodeItem(rest) catch return error.NotABlobTransaction;
+        rest = item.rest;
+    }
+    const hashes = rlp.decodeItem(rest) catch return error.NotABlobTransaction;
+    if (hashes.kind != .list) return error.NotABlobTransaction;
+
+    var payload = hashes.payload;
+    for (commitments) |commitment| {
+        if (payload.len == 0) return error.VersionedHashMismatch;
+        const item = rlp.decodeItem(payload) catch return error.NotABlobTransaction;
+        if (item.kind != .string or item.payload.len != 32) return error.NotABlobTransaction;
+        const expected = blob_mod.computeVersionedHash(commitment);
+        if (!std.mem.eql(u8, item.payload, &expected)) return error.VersionedHashMismatch;
+        payload = item.rest;
+    }
+    // More hashes than blobs is just as invalid as fewer.
+    if (payload.len != 0) return error.VersionedHashMismatch;
 }
 
 /// Encoded size of an RLP string of `n` bytes (n >= 2, so never the
@@ -1769,6 +1828,125 @@ test "wrapBlobTransaction rejects non-blob transactions and bad shapes" {
     try std.testing.expectError(error.SidecarShapeMismatch, wrapBlobTransaction(allocator, signed, short_v1, no_verify));
     const no_blobs = blob_mod.NetworkSidecar{ .v0 = .{ .blobs = &.{}, .commitments = &.{}, .proofs = &.{} } };
     try std.testing.expectError(error.SidecarShapeMismatch, wrapBlobTransaction(allocator, signed, no_blobs, no_verify));
+}
+
+test "wrapBlobTransaction binds the sidecar to blob_versioned_hashes" {
+    const kzg = @import("kzg.zig");
+    const allocator = std.testing.allocator;
+    try kzg.init(allocator);
+    defer kzg.deinit();
+
+    const blobs = try allocator.alloc(blob_mod.Blob, 2);
+    defer allocator.free(blobs);
+    for (blobs, 0..) |*b, i| {
+        @memset(b, 0);
+        b[31] = @intCast(i + 1);
+    }
+    var sidecar = try blob_mod.buildSidecarV1(allocator, blobs);
+    defer sidecar.deinit(allocator);
+    const good = [_][32]u8{
+        blob_mod.computeVersionedHash(sidecar.commitments[0]),
+        blob_mod.computeVersionedHash(sidecar.commitments[1]),
+    };
+
+    // The matching body is accepted (and the wrapper round-trips).
+    const signed_ok = try signedBlobTx(allocator, &good);
+    defer allocator.free(signed_ok);
+    const raw = try wrapBlobTransaction(allocator, signed_ok, .{ .v1 = sidecar }, .{});
+    defer allocator.free(raw);
+
+    // (a) Versioned hashes that do not correspond to the sidecar commitments.
+    // Every node would reject this wrapper; the caller must learn locally.
+    const bogus = [_][32]u8{ @splat(0xab), @splat(0xcd) };
+    const signed_bogus = try signedBlobTx(allocator, &bogus);
+    defer allocator.free(signed_bogus);
+    try std.testing.expectError(
+        error.VersionedHashMismatch,
+        wrapBlobTransaction(allocator, signed_bogus, .{ .v1 = sidecar }, .{}),
+    );
+
+    // (b) One versioned hash in the body, two blobs in the sidecar.
+    const signed_one = try signedBlobTx(allocator, good[0..1]);
+    defer allocator.free(signed_one);
+    try std.testing.expectError(
+        error.VersionedHashMismatch,
+        wrapBlobTransaction(allocator, signed_one, .{ .v1 = sidecar }, .{}),
+    );
+
+    // (c) No versioned hashes at all.
+    const signed_none = try signedBlobTx(allocator, &.{});
+    defer allocator.free(signed_none);
+    try std.testing.expectError(
+        error.VersionedHashMismatch,
+        wrapBlobTransaction(allocator, signed_none, .{ .v1 = sidecar }, .{}),
+    );
+
+    // (d) More versioned hashes than blobs.
+    const three = [_][32]u8{ good[0], good[1], @splat(0xef) };
+    const signed_three = try signedBlobTx(allocator, &three);
+    defer allocator.free(signed_three);
+    try std.testing.expectError(
+        error.VersionedHashMismatch,
+        wrapBlobTransaction(allocator, signed_three, .{ .v1 = sidecar }, .{}),
+    );
+
+    // (e) Right count, but the two hashes are swapped: position matters.
+    const swapped = [_][32]u8{ good[1], good[0] };
+    const signed_swapped = try signedBlobTx(allocator, &swapped);
+    defer allocator.free(signed_swapped);
+    try std.testing.expectError(
+        error.VersionedHashMismatch,
+        wrapBlobTransaction(allocator, signed_swapped, .{ .v1 = sidecar }, .{}),
+    );
+
+    // The binding is checked before the expensive proof verification, so it
+    // also fires with verification disabled.
+    try std.testing.expectError(
+        error.VersionedHashMismatch,
+        wrapBlobTransaction(allocator, signed_bogus, .{ .v1 = sidecar }, .{ .verify_proofs = false }),
+    );
+
+    // The v0 path is bound the same way.
+    const blob_proof = try kzg.computeBlobKzgProof(&blobs[0], sidecar.commitments[0]);
+    const v0 = blob_mod.NetworkSidecar{ .v0 = .{
+        .blobs = blobs[0..1],
+        .commitments = sidecar.commitments[0..1],
+        .proofs = &.{blob_proof},
+    } };
+    const raw_v0 = try wrapBlobTransaction(allocator, signed_one, v0, .{});
+    defer allocator.free(raw_v0);
+    try std.testing.expectError(
+        error.VersionedHashMismatch,
+        wrapBlobTransaction(allocator, signed_bogus, v0, .{ .verify_proofs = false }),
+    );
+}
+
+test "wrapBlobTransaction rejects a body that is too short to carry blob hashes" {
+    const allocator = std.testing.allocator;
+    const blobs = try allocator.alloc(blob_mod.Blob, 1);
+    defer allocator.free(blobs);
+    @memset(&blobs[0], 0);
+    const commitments = [_]blob_mod.KzgCommitment{@splat(0xc1)};
+    const proofs = [_]blob_mod.KzgProof{@splat(0xd1)};
+    const sidecar = blob_mod.NetworkSidecar{ .v0 = .{ .blobs = blobs, .commitments = &commitments, .proofs = &proofs } };
+
+    // A type-3 byte in front of a short list: structurally an RLP list, but it
+    // has no blob_versioned_hashes field to bind against.
+    const stub = [_]u8{ BLOB_TX_TYPE, 0xc3, 0x01, 0x02, 0x03 };
+    try std.testing.expectError(
+        error.NotABlobTransaction,
+        wrapBlobTransaction(allocator, &stub, sidecar, .{ .verify_proofs = false }),
+    );
+
+    // Eleven fields, but the eleventh is a string rather than a list.
+    var buf: [16]u8 = undefined;
+    buf[0] = BLOB_TX_TYPE;
+    buf[1] = 0xc0 + 11;
+    for (0..11) |i| buf[2 + i] = @intCast(i + 1);
+    try std.testing.expectError(
+        error.NotABlobTransaction,
+        wrapBlobTransaction(allocator, buf[0..13], sidecar, .{ .verify_proofs = false }),
+    );
 }
 
 test "wrapBlobTransaction verifies real proofs by default" {
