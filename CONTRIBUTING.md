@@ -19,6 +19,9 @@ zig build
 # Run tests
 zig build test
 
+# Run tests with the opt-in Noir/Barretenberg verifier linked (see README)
+zig build test -Dnoir=true
+
 # Check formatting
 zig fmt --check src/ tests/
 
@@ -38,7 +41,7 @@ Layer 2:  Encoding       (-> primitives)
           rlp.zig, abi_encode.zig, abi_decode.zig, abi_types.zig
 
 Layer 3:  Crypto         (-> primitives)
-          keccak.zig, secp256k1.zig, signature.zig
+          keccak.zig, secp256k1.zig, signature.zig, kzg.zig, noir.zig
 
 Layer 4:  Types          (-> primitives, encoding, crypto)
           transaction.zig, receipt.zig, block.zig, log.zig, access_list.zig, blob.zig
@@ -88,7 +91,12 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) for PR titles o
 - Keep functions focused and small
 - Add doc comments (`///`) to public functions
 - Prefer comptime over runtime where possible -- this is a core design principle
-- No external dependencies -- everything builds on Zig's standard library
+- No external dependencies in the default build -- it uses only Zig's standard
+  library plus the C sources vendored under `src/crypto/`. The one exception is
+  opt-in and default-off: `-Dnoir=true` fetches a pinned Barretenberg release
+  archive as a lazy package dependency (see
+  `src/crypto/barretenberg/VENDOR.md`). A new dependency that the default build
+  would resolve needs discussion first.
 
 ## Reporting Issues
 
