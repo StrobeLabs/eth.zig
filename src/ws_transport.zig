@@ -629,10 +629,7 @@ pub const WsTransport = struct {
                     self.allocator.free(payload);
                     continue;
                 },
-                .close => {
-                    self.allocator.free(payload);
-                    return error.ConnectionClosed;
-                },
+                .close => return error.ConnectionClosed,
                 .pong => {
                     // Silently ignore unsolicited pong frames
                     self.allocator.free(payload);
@@ -641,10 +638,7 @@ pub const WsTransport = struct {
                 .text, .binary, .continuation => {
                     return payload;
                 },
-                _ => {
-                    self.allocator.free(payload);
-                    return error.InvalidFrame;
-                },
+                _ => return error.InvalidFrame,
             }
         }
     }
@@ -838,6 +832,34 @@ pub fn connectWithReconnect(
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "readMessage releases close frame payload exactly once" {
+    const frame = [_]u8{ 0x88, 0x02, 0x03, 0xe8 };
+    var transport = WsTransport{
+        .allocator = std.testing.allocator,
+        .io = std.testing.io,
+        .stream = undefined,
+        .next_id = 1,
+        .read_end = frame.len,
+    };
+    @memcpy(transport.read_buf[0..frame.len], &frame);
+
+    try std.testing.expectError(error.ConnectionClosed, transport.readMessage());
+}
+
+test "readMessageDeadline releases invalid opcode payload exactly once" {
+    const frame = [_]u8{ 0x83, 0x03, 'b', 'a', 'd' };
+    var transport = WsTransport{
+        .allocator = std.testing.allocator,
+        .io = std.testing.io,
+        .stream = undefined,
+        .next_id = 1,
+        .read_end = frame.len,
+    };
+    @memcpy(transport.read_buf[0..frame.len], &frame);
+
+    try std.testing.expectError(error.InvalidFrame, transport.readMessageDeadline(0));
+}
 
 test "parseUrl - ws basic" {
     const result = try parseUrl("ws://localhost:8545/ws");
