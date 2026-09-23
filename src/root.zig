@@ -32,6 +32,9 @@ pub const kzg = @import("kzg.zig");
 // -- Layer 5: Accounts --
 pub const mnemonic = @import("mnemonic.zig");
 pub const hd_wallet = @import("hd_wallet.zig");
+pub const btc = @import("btc.zig");
+pub const sol = @import("sol.zig");
+pub const ripemd160 = @import("ripemd160.zig");
 
 // -- Layer 6: Transport --
 pub const json_rpc = @import("json_rpc.zig");
@@ -126,6 +129,9 @@ test {
     // Layer 5
     _ = @import("mnemonic.zig");
     _ = @import("hd_wallet.zig");
+    _ = @import("btc.zig");
+    _ = @import("sol.zig");
+    _ = @import("ripemd160.zig");
     // Layer 6
     _ = @import("json_rpc.zig");
     _ = @import("http_transport.zig");
