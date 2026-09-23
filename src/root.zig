@@ -1,6 +1,9 @@
 // eth.zig - Pure Zig Ethereum Client Library
 // Maintained by Strobe Labs (https://github.com/strobelabs/eth.zig)
 
+// Build-time switches from build.zig (`-Dnoir`).
+const build_options = @import("build_options");
+
 // -- Layer 1: Primitives --
 pub const primitives = @import("primitives.zig");
 pub const uint256 = @import("uint256.zig");
@@ -19,6 +22,9 @@ pub const secp256k1 = @import("secp256k1.zig");
 pub const signer = @import("signer.zig");
 pub const kms = @import("kms.zig");
 pub const eip155 = @import("eip155.zig");
+/// Noir UltraHonk proof verification over Barretenberg. Opt-in: the entry
+/// points only compile when the build is invoked with `-Dnoir=true`.
+pub const noir = @import("noir.zig");
 
 // -- Layer 4: Types --
 pub const access_list = @import("access_list.zig");
@@ -123,6 +129,12 @@ test {
     _ = @import("blob.zig");
     _ = @import("kzg.zig");
     _ = @import("kzg_vectors_test.zig");
+    // Layer 3, opt-in: only collected when the build links Barretenberg
+    // (-Dnoir=true); the default test run is unchanged.
+    if (build_options.noir) {
+        _ = @import("noir.zig");
+        _ = @import("noir/msgpack.zig");
+    }
     // Layer 5
     _ = @import("mnemonic.zig");
     _ = @import("hd_wallet.zig");

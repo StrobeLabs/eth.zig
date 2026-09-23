@@ -286,7 +286,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 |-------|---------|-------------|
 | **Primitives** | `primitives`, `uint256`, `hex` | Address, Hash, Bytes32, u256, hex encoding |
 | **Encoding** | `rlp`, `abi_encode`, `abi_decode`, `abi_types` | RLP and ABI encoding/decoding |
-| **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155`, `kzg` | ECDSA signing (RFC 6979), Keccak-256, EIP-155, EIP-4844 KZG |
+| **Crypto** | `secp256k1`, `signer`, `signature`, `keccak`, `eip155`, `kzg`, `noir` | ECDSA signing (RFC 6979), Keccak-256, EIP-155, EIP-4844 KZG, Noir UltraHonk verification (opt-in) |
 | **Types** | `transaction`, `receipt`, `block`, `blob`, `access_list` | Legacy, EIP-2930, EIP-1559, EIP-4844 transactions |
 | **Accounts** | `mnemonic`, `hd_wallet` | BIP-32/39/44 HD wallets and mnemonic generation |
 | **Transport** | `http_transport`, `ws_transport`, `sse_transport`, `json_rpc`, `provider`, `subscription`, `ws_client` | HTTP, WebSocket, and SSE transports; resilient WS client with auto-reconnect |
@@ -306,6 +306,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | secp256k1 ECDSA signing (RFC 6979, EIP-2 low-S) | Complete |
 | Transaction types (Legacy, EIP-2930, EIP-1559, EIP-4844) | Complete |
 | EIP-4844 KZG (blob commitments/proofs, vendored c-kzg-4844 + blst) | Complete |
+| Noir UltraHonk proof verification (opt-in `-Dnoir`, Barretenberg v5.2.0) | Complete |
 | EIP-155 replay protection | Complete |
 | EIP-191 personal message signing | Complete |
 | EIP-712 typed structured data signing | Complete |
@@ -365,8 +366,52 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 
 ```bash
 zig build test                # Unit tests
+zig build test -Dnoir=true    # Unit tests + Noir/Barretenberg verification tests (fetches the static library)
 zig build integration-test    # Integration tests (requires Anvil)
 ```
+
+## Noir proof verification (opt-in)
+
+`eth.noir` verifies Noir UltraHonk proofs offline through Barretenberg's C
+ABI. It is off by default so the default build stays pure Zig + vendored C;
+enable it with `-Dnoir=true` (or `.noir = true` in your `b.dependency` args).
+That flag fetches the pinned Barretenberg **v5.2.0** static library for your
+host as a lazy, hash-pinned package dependency and links it with libc++. No
+C++ sources are vendored.
+
+- Supported targets: aarch64 and x86_64 macOS, x86_64 Linux, aarch64 Linux.
+  Windows is out of scope.
+- Verified: proofs written by `bb prove` (bb 5.2.0 / nargo 1.0.0-beta.25) in
+  the poseidon2 (default, `noir-recursive`) and keccak (`evm`) flavors, with
+  or without ZK. `Settings.fromVerifierTarget` mirrors `bb --verifier_target`
+  for those. IPA-accumulating rollup proofs (`noir-rollup`) are not supported:
+  they need a 32768-point Grumpkin CRS that `init` does not install. Proving
+  and VK generation are not included.
+- CRS: verification needs only the BN254 G1 generator and the trusted-setup
+  G2 element, both embedded (192 bytes); nothing is downloaded at runtime.
+  Barretenberg's CRS is first-writer-wins per process, so `noir.init` installs
+  a verification-only CRS once and it cannot be enlarged afterwards.
+
+```zig
+const noir = eth.noir;
+try noir.init();
+const ok = try noir.verify(
+    allocator,
+    vk_bytes, // bb `vk` file
+    try noir.fieldsFromBytes(public_inputs_bytes), // bb `public_inputs` file
+    try noir.fieldsFromBytes(proof_bytes), // bb `proof` file
+    .fromVerifierTarget(.evm),
+);
+```
+
+Only `true` means verified. `false` means Barretenberg returned a verdict of
+`verified=false` (wrong proof, wrong public-input value, wrong size, flavor
+mismatch); `error.ProofRejected` means it rejected the inputs before or during
+deserialization (non-canonical field, point off the curve, public-input count
+that disagrees with the VK, VK that does not deserialize). Both mean "not
+verified", so callers must treat the error as a rejection rather than an
+internal fault; `verifyDiag` exposes Barretenberg's message. See
+`src/crypto/barretenberg/VENDOR.md` for the pinned assets and hashes.
 
 ## Benchmarks
 
