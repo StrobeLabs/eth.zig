@@ -103,7 +103,7 @@ pub fn encodeFrame(allocator: std.mem.Allocator, opcode: Opcode, payload: []cons
     errdefer allocator.free(frame);
 
     // Byte 0: FIN + opcode
-    frame[0] = 0x80 | @as(u8, @intFromEnum(opcode));
+    frame[0] = 0x80 | @as(u8, @backingInt(opcode));
 
     // Byte 1: MASK bit + payload length
     var offset: usize = 2;
@@ -155,7 +155,7 @@ pub fn decodeFrameHeader(data: []const u8) ?FrameHeader {
     if (data.len < 2) return null;
 
     const fin = (data[0] & 0x80) != 0;
-    const opcode: Opcode = @enumFromInt(@as(u4, @intCast(data[0] & 0x0F)));
+    const opcode: Opcode = @fromBackingInt(@intCast(@as(u4, @intCast(data[0] & 0x0F))));
     const masked = (data[1] & 0x80) != 0;
     var payload_len: u64 = data[1] & 0x7F;
     var offset: usize = 2;
@@ -1366,12 +1366,12 @@ test "encodeFrame - exactly 126 bytes (triggers extended 16-bit length)" {
 }
 
 test "Opcode values" {
-    try std.testing.expectEqual(@as(u4, 0x1), @intFromEnum(Opcode.text));
-    try std.testing.expectEqual(@as(u4, 0x2), @intFromEnum(Opcode.binary));
-    try std.testing.expectEqual(@as(u4, 0x8), @intFromEnum(Opcode.close));
-    try std.testing.expectEqual(@as(u4, 0x9), @intFromEnum(Opcode.ping));
-    try std.testing.expectEqual(@as(u4, 0xA), @intFromEnum(Opcode.pong));
-    try std.testing.expectEqual(@as(u4, 0x0), @intFromEnum(Opcode.continuation));
+    try std.testing.expectEqual(@as(u4, 0x1), @backingInt(Opcode.text));
+    try std.testing.expectEqual(@as(u4, 0x2), @backingInt(Opcode.binary));
+    try std.testing.expectEqual(@as(u4, 0x8), @backingInt(Opcode.close));
+    try std.testing.expectEqual(@as(u4, 0x9), @backingInt(Opcode.ping));
+    try std.testing.expectEqual(@as(u4, 0xA), @backingInt(Opcode.pong));
+    try std.testing.expectEqual(@as(u4, 0x0), @backingInt(Opcode.continuation));
 }
 
 test "ReconnectOpts defaults" {

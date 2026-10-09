@@ -214,13 +214,13 @@ test "dnsEncode empty name is root" {
 }
 
 test "dnsEncode rejects label over 63 bytes" {
-    const long_label = "a" ** 64 ++ ".eth";
+    const long_label = @as([64]u8, @splat('a')) ++ ".eth";
     try std.testing.expectError(error.LabelTooLong, dnsEncode(std.testing.allocator, long_label));
 }
 
 test "dnsEncode 63-byte label ok" {
     const allocator = std.testing.allocator;
-    const name = "a" ** 63 ++ ".eth";
+    const name = @as([63]u8, @splat('a')) ++ ".eth";
     const out = try dnsEncode(allocator, name);
     defer allocator.free(out);
     try std.testing.expectEqual(@as(usize, 1 + 63 + 1 + 3 + 1), out.len);

@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
     // Formatting check as a first-class build step (mirrors the CI fmt job and
     // `make fmt`, so `zig build fmt-check` is self-describing without Make).
     const fmt_check = b.addFmt(.{
-        .paths = &.{ "src", "tests", "bench", "build.zig" },
+        .paths = b.pathList(&.{ "src", "tests", "bench", "build.zig" }),
         .check = true,
     });
     const fmt_step = b.step("fmt-check", "Check source formatting (zig fmt --check)");
@@ -106,7 +106,7 @@ pub fn build(b: *std.Build) void {
     const bench_module = b.addModule("eth_bench", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = .fast,
         .link_libc = true,
     });
     addXkcp(b, bench_module, target);
@@ -118,7 +118,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("bench/bench.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
             },
@@ -135,7 +135,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("bench/u256_bench.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
             },
@@ -152,7 +152,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("bench/keccak_compare.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
             },
@@ -169,7 +169,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("bench/keccak_bench_cli.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .imports = &.{
                 .{ .name = "eth", .module = bench_module },
             },
@@ -204,8 +204,8 @@ fn addXkcp(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedT
         });
     } else if (arch == .x86_64) {
         const features = target.result.cpu.features;
-        const avx512f = @intFromEnum(std.Target.x86.Feature.avx512f);
-        const avx2 = @intFromEnum(std.Target.x86.Feature.avx2);
+        const avx512f = @backingInt(std.Target.x86.Feature.avx512f);
+        const avx2 = @backingInt(std.Target.x86.Feature.avx2);
 
         if (features.isEnabled(avx512f)) {
             // AVX512 SnP header must come before plain64 to shadow KeccakP-1600-SnP.h
