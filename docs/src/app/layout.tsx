@@ -7,7 +7,7 @@ const inter = Inter({
   subsets: ['latin'],
 });
 
-const SEO_DESCRIPTION = 'The fastest Ethereum library. Pure Zig. Zero dependencies. Beats alloy.rs on 18/26 benchmarks.';
+const SEO_DESCRIPTION = 'The fastest Ethereum library. Pure Zig. Zero dependencies.';
 
 const webSiteSchema = JSON.stringify({
   '@context': 'https://schema.org',
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
     template: '%s | eth.zig',
   },
   description: SEO_DESCRIPTION,
-  keywords: ['eth.zig', 'ethereum', 'zig', 'blockchain', 'web3', 'abi', 'secp256k1', 'keccak', 'erc20', 'json-rpc', 'alloy', 'zero dependencies', 'comptime'],
+  keywords: ['eth.zig', 'ethereum', 'zig', 'blockchain', 'web3', 'abi', 'secp256k1', 'keccak', 'erc20', 'json-rpc', 'zero dependencies', 'comptime'],
   openGraph: {
     title: 'eth.zig -- The Fastest Ethereum Library',
     description: SEO_DESCRIPTION,

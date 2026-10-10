@@ -911,7 +911,7 @@ fn parsePermit2Permit(input: []const u8) ?Command.Permit2Permit {
 fn permitDetailsArrayAt(data: []const u8, base: usize, offset_word_pos: usize) ?Command.PermitDetailsArray {
     const off = readOffset(data, offset_word_pos) orelse return null;
     const arr_start = addChecked(base, off) orelse return null;
-    const count = wordToUsize(readU256At(data, arr_start) orelse return null) orelse return null;
+    const count = readOffset(data, arr_start) orelse return null;
     const head_start = addChecked(arr_start, 32) orelse return null;
     const head_len = mulChecked(count, 128) orelse return null;
     const head_end = addChecked(head_start, head_len) orelse return null;
@@ -933,7 +933,7 @@ fn permitDetailsArrayAt(data: []const u8, base: usize, offset_word_pos: usize) ?
 fn allowanceTransferArrayAt(data: []const u8, base: usize, offset_word_pos: usize) ?Command.AllowanceTransferArray {
     const off = readOffset(data, offset_word_pos) orelse return null;
     const arr_start = addChecked(base, off) orelse return null;
-    const count = wordToUsize(readU256At(data, arr_start) orelse return null) orelse return null;
+    const count = readOffset(data, arr_start) orelse return null;
     const head_start = addChecked(arr_start, 32) orelse return null;
     const head_len = mulChecked(count, 128) orelse return null;
     const head_end = addChecked(head_start, head_len) orelse return null;

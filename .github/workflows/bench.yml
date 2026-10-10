@@ -2,8 +2,8 @@ name: Bench
 
 # Benchmarks run nightly (and on demand), off the PR-blocking path: the harness
 # is noisy on shared runners, so we capture numbers for trend/regression review
-# rather than gate merges on them. Each run uploads the BENCH_JSON lines so a
-# committed baseline + diff can be layered on later.
+# rather than gate merges on them. Each run uploads the suite's JSON results;
+# compare releases on one machine with bench/ab.py (see bench/README.md).
 on:
   schedule:
     - cron: "0 7 * * *" # daily at 07:00 UTC
@@ -26,13 +26,9 @@ jobs:
         with:
           version: "0.17.0"
       - name: Run benchmarks
-        run: zig build bench | tee bench-results.txt
-      - name: Extract machine-readable results
-        run: grep '^BENCH_JSON' bench-results.txt > bench-results.jsonl || true
+        run: zig build bench -- --save bench-results.json
       - name: Upload benchmark results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bench-results
-          path: |
-            bench-results.txt
-            bench-results.jsonl
+          path: bench-results.json
