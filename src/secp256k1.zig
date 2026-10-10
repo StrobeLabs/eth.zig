@@ -58,7 +58,7 @@ const glvLambdaBasePointPc = pc: {
     break :pc glvPrecompute(lambda_g);
 };
 
-fn basePointMulGlv(s: [32]u8, endian: std.builtin.Endian) !Secp256k1 {
+fn basePointMulGlv(s: [32]u8, endian: std.lang.Endian) !Secp256k1 {
     const split = try Secp256k1.Endormorphism.splitScalar(s, endian);
     var s1 = split.r1;
     var s2 = split.r2;

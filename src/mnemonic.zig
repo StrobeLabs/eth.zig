@@ -38,13 +38,13 @@ pub const ValidEntropySize = enum(u8) {
     }
 
     pub fn checksumBits(self: ValidEntropySize) usize {
-        return @as(usize, @intFromEnum(self)) / 4;
+        return @as(usize, @backingInt(self)) / 4;
     }
 };
 
 /// Generate a random mnemonic phrase, drawing entropy from `io`.
 pub fn generate(io: std.Io, comptime entropy_size: ValidEntropySize) [entropy_size.wordCount()][]const u8 {
-    var entropy: [@intFromEnum(entropy_size)]u8 = undefined;
+    var entropy: [@backingInt(entropy_size)]u8 = undefined;
     io.random(&entropy);
     return entropyToMnemonic(entropy_size, &entropy);
 }
@@ -52,9 +52,9 @@ pub fn generate(io: std.Io, comptime entropy_size: ValidEntropySize) [entropy_si
 /// Convert entropy bytes to mnemonic word indices.
 pub fn entropyToMnemonic(
     comptime entropy_size: ValidEntropySize,
-    entropy: *const [@intFromEnum(entropy_size)]u8,
+    entropy: *const [@backingInt(entropy_size)]u8,
 ) [entropy_size.wordCount()][]const u8 {
-    const entropy_bytes: usize = @intFromEnum(entropy_size);
+    const entropy_bytes: usize = @backingInt(entropy_size);
     const checksum_bits = comptime entropy_size.checksumBits();
     const word_count = comptime entropy_size.wordCount();
 
@@ -115,7 +115,7 @@ pub fn validate(words: []const []const u8) MnemonicError!void {
         else => return error.InvalidMnemonicLength,
     };
 
-    const entropy_bytes = @intFromEnum(entropy_size);
+    const entropy_bytes = @backingInt(entropy_size);
     const checksum_bits = entropy_size.checksumBits();
 
     // Convert words to 11-bit indices

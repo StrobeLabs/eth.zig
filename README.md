@@ -3,7 +3,7 @@
 [![CI](https://github.com/strobelabs/eth.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/strobelabs/eth.zig/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-ethzig.org-blue)](https://ethzig.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.16.0-orange)](https://ziglang.org/)
+[![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.17.0-orange)](https://ziglang.org/)
 
 **The fastest Ethereum library.** Beats Rust's alloy.rs on 18 out of 26 benchmarks.
 
@@ -359,7 +359,7 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 
 ## Requirements
 
-- Zig >= 0.16.0
+- Zig >= 0.17.0
 
 ## Running Tests
 

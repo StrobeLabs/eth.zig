@@ -442,17 +442,11 @@ fn returnType(comptime outputs: []const Param) type {
     return namedStruct(&names, &types);
 }
 
-/// The per-field attribute struct accepted by `@Struct`. Its path moved between
-/// Zig versions (`StructField.Attributes` in 0.16, `Struct.FieldAttributes` in
-/// 0.17-dev), so resolve it portably here.
-const FieldAttr = if (@hasDecl(std.builtin.Type, "StructField"))
-    std.builtin.Type.StructField.Attributes // 0.16
-else
-    std.builtin.Type.Struct.FieldAttributes; // 0.17-dev
+/// The per-field attribute struct accepted by `@Struct`.
+const FieldAttr = std.lang.Type.Struct.FieldAttributes;
 
 /// Build a plain (non-tuple) struct type with the given field `names` and
-/// `types`, with default (no) field attributes. Centralizes the `@Struct` call
-/// so the version difference in the attribute type stays in one place.
+/// `types`, with default (no) field attributes. Centralizes the `@Struct` call.
 ///
 /// `@Struct` wants `types`/attrs as pointers to fixed-size arrays, so we
 /// materialize the slices into arrays first.
@@ -1064,7 +1058,7 @@ test "at() constructs a handle holding the address" {
 test "type mapping: balanceOf args are .{[20]u8}, returns u256" {
     const Erc20 = Bind(erc20_abi);
     const Args = Erc20.ArgsOf("balanceOf");
-    try testing.expectEqual(@as(usize, 1), std.meta.fieldNames(Args).len);
+    try testing.expectEqual(@as(usize, 1), @typeInfo(Args).@"struct".field_names.len);
     try testing.expectEqual([20]u8, @FieldType(Args, "0"));
     try testing.expectEqual(u256, Erc20.ReturnOf("balanceOf"));
 }
@@ -1072,7 +1066,7 @@ test "type mapping: balanceOf args are .{[20]u8}, returns u256" {
 test "type mapping: transfer args are .{[20]u8, u256}" {
     const Erc20 = Bind(erc20_abi);
     const Args = Erc20.ArgsOf("transfer");
-    try testing.expectEqual(@as(usize, 2), std.meta.fieldNames(Args).len);
+    try testing.expectEqual(@as(usize, 2), @typeInfo(Args).@"struct".field_names.len);
     try testing.expectEqual([20]u8, @FieldType(Args, "0"));
     try testing.expectEqual(u256, @FieldType(Args, "1"));
     try testing.expectEqual(bool, Erc20.ReturnOf("transfer"));
@@ -1162,7 +1156,7 @@ test "decodeEvent rejects a mismatched topic0" {
 test "EventOf struct has the typed fields" {
     const Erc20 = Bind(erc20_abi);
     const T = Erc20.EventOf("Transfer");
-    const names = std.meta.fieldNames(T);
+    const names = @typeInfo(T).@"struct".field_names;
     try testing.expectEqual(@as(usize, 3), names.len);
     try testing.expectEqualStrings("from", names[0]);
     try testing.expectEqual([20]u8, @FieldType(T, "from"));
@@ -1178,7 +1172,7 @@ test "multi-output return type is a named struct" {
     ;
     const C = Bind(abi);
     const Ret = C.ReturnOf("slot0");
-    const names = std.meta.fieldNames(Ret);
+    const names = @typeInfo(Ret).@"struct".field_names;
     try testing.expectEqual(@as(usize, 2), names.len);
     try testing.expectEqualStrings("price", names[0]);
     try testing.expectEqual(u256, @FieldType(Ret, "price"));
@@ -1201,7 +1195,7 @@ test "scalar functions alongside an array-param function both parse" {
     const C = Bind(abi);
     // getReserves resolves to a two-field struct return; uint112 -> u112.
     const Ret = C.ReturnOf("getReserves");
-    try testing.expectEqual(@as(usize, 2), std.meta.fieldNames(Ret).len);
+    try testing.expectEqual(@as(usize, 2), @typeInfo(Ret).@"struct".field_names.len);
     try testing.expectEqual(u112, @FieldType(Ret, "r0"));
     // The ABI still recorded both entries.
     try testing.expectEqual(@as(usize, 2), C.abi.funcs.len);

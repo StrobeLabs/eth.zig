@@ -858,7 +858,7 @@ fn utf8ToCps(a: std.mem.Allocator, s: []const u8) NormalizeError![]u21 {
 // ============================================================================
 
 const State = enum(u8) { uninit = 0, initializing = 1, ready = 2 };
-var tables_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(State.uninit));
+var tables_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(@backingInt(State.uninit));
 var tables: Ensip15 = undefined;
 
 /// Lock-free one-time init (std.once was removed in Zig 0.16 and
@@ -868,18 +868,18 @@ var tables: Ensip15 = undefined;
 /// the vendored data, hence `catch unreachable`. Late arrivals spin until
 /// `ready`.
 fn getTables() *const Ensip15 {
-    if (tables_state.load(.acquire) == @intFromEnum(State.ready)) return &tables;
+    if (tables_state.load(.acquire) == @backingInt(State.ready)) return &tables;
     if (tables_state.cmpxchgStrong(
-        @intFromEnum(State.uninit),
-        @intFromEnum(State.initializing),
+        @backingInt(State.uninit),
+        @backingInt(State.initializing),
         .acquire,
         .acquire,
     ) == null) {
         tables = Ensip15.init(std.heap.page_allocator) catch unreachable;
-        tables_state.store(@intFromEnum(State.ready), .release);
+        tables_state.store(@backingInt(State.ready), .release);
         return &tables;
     }
-    while (tables_state.load(.acquire) != @intFromEnum(State.ready)) std.atomic.spinLoopHint();
+    while (tables_state.load(.acquire) != @backingInt(State.ready)) std.atomic.spinLoopHint();
     return &tables;
 }
 

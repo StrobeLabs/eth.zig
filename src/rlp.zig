@@ -84,9 +84,7 @@ pub fn encodedLength(value: anytype) usize {
         },
         .@"struct" => {
             var payload_len: usize = 0;
-            // std.meta.fieldNames abstracts over the Type.Struct layout, which
-            // changed between Zig 0.16 (`fields`) and 0.17-dev (`field_names`).
-            inline for (comptime std.meta.fieldNames(@TypeOf(value))) |field_name| {
+            inline for (@typeInfo(@TypeOf(value)).@"struct".field_names) |field_name| {
                 payload_len += encodedLength(@field(value, field_name));
             }
             return lengthPrefixSize(payload_len) + payload_len;
@@ -157,9 +155,7 @@ pub fn encodeInto(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value:
         },
         .@"struct" => {
             // Pre-calculate payload length to avoid temp ArrayList.
-            // std.meta.fieldNames is portable across the 0.16/0.17-dev
-            // Type.Struct layout change.
-            const field_names = comptime std.meta.fieldNames(@TypeOf(value));
+            const field_names = @typeInfo(@TypeOf(value)).@"struct".field_names;
             var payload_len: usize = 0;
             inline for (field_names) |field_name| {
                 payload_len += encodedLength(@field(value, field_name));
@@ -362,7 +358,7 @@ pub fn writeDirect(buf: []u8, value: anytype) usize {
             }
         },
         .@"struct" => {
-            const field_names = comptime std.meta.fieldNames(@TypeOf(value));
+            const field_names = @typeInfo(@TypeOf(value)).@"struct".field_names;
             var payload_len: usize = 0;
             inline for (field_names) |field_name| {
                 payload_len += encodedLength(@field(value, field_name));
