@@ -80,6 +80,8 @@ pub const erc721 = @import("erc721.zig");
 pub const dex_v2 = @import("dex/v2.zig");
 pub const dex_v3 = @import("dex/v3.zig");
 pub const dex_router = @import("dex/router.zig");
+/// Uniswap router calldata decoding: `eth.dex.decode(tx.data)` (#15).
+pub const dex = @import("dex/calldata.zig");
 
 // -- Layer 9: Standards --
 pub const eip712 = @import("eip712.zig");
@@ -183,4 +185,8 @@ test {
     _ = @import("dex/v2.zig");
     _ = @import("dex/v3.zig");
     _ = @import("dex/router.zig");
+    _ = @import("dex/calldata.zig");
+    _ = @import("dex/calldata_test.zig");
+    _ = @import("dex/v4_test.zig");
+    _ = @import("dex/routers_test.zig");
 }

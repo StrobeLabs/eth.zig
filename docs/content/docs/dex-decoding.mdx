@@ -1,0 +1,187 @@
+---
+title: DEX Calldata Decoding
+description: Decode Uniswap router calldata to typed structs, zero-copy and zero-panic.
+---
+
+eth.zig decodes swap calldata from major DEX routers without allocations, panics, or RPC calls. The `decode` function recognizes UniswapV2Router02, V3 SwapRouter, SwapRouter02, and the Universal Router, returning a typed union over the calldata or `null` for unknown selectors and malformed input.
+
+## Guarantees
+
+- No allocation. All paths, arrays, and command inputs are views that borrow the input calldata. They remain valid only while the calldata itself is valid.
+- No panics on hostile input. Malformed or truncated calldata returns `null` instead of failing.
+- All validation is upfront. A non-null result means every field accessor and iterator is infallible.
+- Calldata only. The function reads only the call data and returns no transaction context. Callers must verify `tx.to` against a known router address.
+
+## Decode a Call
+
+```zig
+const eth = @import("eth");
+
+const decoded = eth.dex.decode(tx.data) orelse return;
+switch (decoded) {
+    .v2_swap_exact_tokens_for_tokens => |swap| {
+        std.debug.print("v2 in={d} min_out={d} hops={d}\n", .{ swap.amount_in, swap.amount_out_min, swap.path.len() - 1 });
+    },
+    .v3_exact_input_single => |swap| {
+        std.debug.print("v3 {x} -> {x} fee={d}\n", .{ swap.token_in, swap.token_out, swap.fee });
+    },
+    else => {},
+}
+```
+
+## Supported Routers and Selectors
+
+| Router | Signature | Selector |
+|--------|-----------|----------|
+| UniswapV2Router02 | `swapExactTokensForTokens(uint256,uint256,address[],address,uint256)` | `0x38ed1739` |
+| UniswapV2Router02 | `swapTokensForExactTokens(uint256,uint256,address[],address,uint256)` | `0x8803dbee` |
+| UniswapV2Router02 | `swapExactETHForTokens(uint256,address[],address,uint256)` | `0x7ff36ab5` |
+| UniswapV2Router02 | `swapTokensForExactETH(uint256,uint256,address[],address,uint256)` | `0x4a25d94a` |
+| UniswapV2Router02 | `swapExactTokensForETH(uint256,uint256,address[],address,uint256)` | `0x18cbafe5` |
+| UniswapV2Router02 | `swapETHForExactTokens(uint256,address[],address,uint256)` | `0xfb3bdb41` |
+| UniswapV2Router02 | `swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)` | `0x5c11d795` |
+| UniswapV2Router02 | `swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256)` | `0xb6f9de95` |
+| UniswapV2Router02 | `swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)` | `0x791ac947` |
+| V3 SwapRouter | `exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))` | `0x414bf389` |
+| V3 SwapRouter | `exactInput((bytes,address,uint256,uint256,uint256))` | `0xc04b8d59` |
+| V3 SwapRouter | `exactOutputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))` | `0xdb3e2198` |
+| V3 SwapRouter | `exactOutput((bytes,address,uint256,uint256,uint256))` | `0xf28c0498` |
+| SwapRouter02 | `exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))` | `0x04e45aaf` |
+| SwapRouter02 | `exactInput((bytes,address,uint256,uint256))` | `0xb858183f` |
+| SwapRouter02 | `exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))` | `0x5023b4df` |
+| SwapRouter02 | `exactOutput((bytes,address,uint256,uint256))` | `0x09b81346` |
+| SwapRouter02 | `swapExactTokensForTokens(uint256,uint256,address[],address)` | `0x472b43f3` |
+| SwapRouter02 | `swapTokensForExactTokens(uint256,uint256,address[],address)` | `0x42712a67` |
+| SwapRouter, SwapRouter02 | `multicall(bytes[])` | `0xac9650d8` |
+| SwapRouter, SwapRouter02 | `multicall(uint256,bytes[])` | `0x5ae401dc` |
+| SwapRouter, SwapRouter02 | `multicall(bytes32,bytes[])` | `0x1f0464d1` |
+| Universal Router | `execute(bytes,bytes[])` | `0x24856bc3` |
+| Universal Router | `execute(bytes,bytes[],uint256)` | `0x3593564c` |
+
+Mainnet router addresses:
+
+- UniswapV2Router02: `0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D`
+- V3 SwapRouter: `0xE592427A0AEce92De3Edee1F18E0157C05861564`
+- SwapRouter02: `0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45`
+- Universal Router: `0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af`
+
+The pre-V4 Universal Router `0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD` uses a different command table; decode its calldata with `decodeFor(.uniswap_ur_v1, data)` (see Other Routers).
+
+Forks that reuse these ABIs (SushiSwap V2, PancakeSwap V2) decode the same way.
+
+## Examples
+
+### V2: Exact Input Swap
+
+```zig
+const decoded = eth.dex.decode(tx.data) orelse return;
+switch (decoded) {
+    .v2_swap_exact_tokens_for_tokens, .v2_swap_exact_tokens_for_eth => |swap| {
+        std.debug.print("{x} -> {x}: in={d} min_out={d}\n", .{
+            swap.path.first(), swap.path.last(), swap.amount_in, swap.amount_out_min,
+        });
+    },
+    else => {},
+}
+```
+
+### V3: Multi-Hop Path
+
+```zig
+const decoded = eth.dex.decode(tx.data) orelse return;
+if (decoded == .v3_exact_input) {
+    const swap = decoded.v3_exact_input;
+    for (0..swap.path.hops()) |i| {
+        const hop = swap.path.hop(i);
+        std.debug.print("hop {d}: {x} -> {x} fee={d}\n", .{ i, hop.token_a, hop.token_b, hop.fee });
+    }
+    std.debug.print("in={d} min_out={d}\n", .{ swap.amount_in, swap.amount_out_minimum });
+}
+```
+
+Exact-output V3 paths are encoded in reverse. For `v3_exact_output`, `path.first()` is the token out and `path.last()` is the token in.
+
+### SwapRouter02: Multicall
+
+Most SwapRouter02 traffic wraps its swap in `multicall`. Inner swaps decode to the same `Decoded` union. The router's helper calls (`unwrapWETH9`, `sweepToken`, `refundETH`, `wrapETH`, `pull` and the four `selfPermit` variants) decode to `.payment`. Anything else comes back raw as `.other`.
+
+```zig
+const decoded = eth.dex.decode(tx.data) orelse return;
+if (decoded == .multicall) {
+    var it = decoded.multicall.iterator();
+    while (it.next()) |call| switch (call) {
+        .swap => |inner| std.debug.print("swap: {s}\n", .{@tagName(inner)}),
+        .payment => |p| std.debug.print("payment: {s}\n", .{@tagName(p)}),
+        .other => |raw| std.debug.print("call {x}, {d} bytes\n", .{ raw.selector, raw.data.len }),
+    };
+}
+```
+
+### Universal Router: Commands
+
+Each command carries its raw byte, the `allow_revert` flag, and a typed payload. Typed commands cover V2 and V3 swaps, `V4_SWAP` plans, the Permit2 commands, `WRAP_ETH`, `UNWRAP_WETH`, `SWEEP`, `TRANSFER`, `PAY_PORTION`, `BALANCE_CHECK_ERC20` and `EXECUTE_SUB_PLAN`. Other command types arrive as `.other` with their raw input.
+
+```zig
+const decoded = eth.dex.decode(tx.data) orelse return;
+if (decoded == .universal_router_execute) {
+    var it = decoded.universal_router_execute.iterator();
+    while (it.next()) |cmd| switch (cmd.payload) {
+        .v3_swap_exact_in => |swap| std.debug.print("v3 in={d} hops={d}\n", .{ swap.amount_in, swap.path.hops() }),
+        .v2_swap_exact_in => |swap| std.debug.print("v2 in={d} len={d}\n", .{ swap.amount_in, swap.path.len() }),
+        .permit2_permit => |permit| std.debug.print("permit {x} to {x}\n", .{ permit.details.token, permit.spender }),
+        .v4_swap => |plan| {
+            var actions = plan.iterator();
+            while (actions.next()) |action| switch (action.payload) {
+                .swap_exact_in_single => |swap| std.debug.print("v4 in={d} fee={d}\n", .{ swap.amount_in, swap.pool_key.fee }),
+                else => std.debug.print("v4 action 0x{x:0>2}\n", .{action.raw}),
+            };
+        },
+        .other => |raw| std.debug.print("type 0x{x:0>2} revert_ok={} {d} bytes\n", .{ raw.command_type, cmd.allow_revert, raw.input.len }),
+        else => {},
+    };
+}
+```
+
+The command type is the command byte masked with `0x3f`, as in the deployed router's bytecode. Recipients `0x0…01` and `0x0…02` are the router's sentinels for `msg.sender` and the router itself; they are returned raw.
+
+## Other Routers
+
+`decode` assumes Uniswap's routers. Some routers reuse Uniswap's selectors with a different meaning. Slipstream's `exactInput` path carries tick spacing where Uniswap's carries a fee, and Camelot V3's path has no fee bytes at all. Use `routerAt` to identify the router from the transaction's chain and `to` address, then `decodeFor` to decode with its rules.
+
+```zig
+const deployment = eth.dex.routerAt(chain_id, to) orelse return;
+const decoded = eth.dex.decodeFor(deployment.router, tx.data) orelse return;
+switch (decoded) {
+    .slipstream_exact_input => |swap| {
+        for (0..swap.path.hops()) |i| {
+            const hop = swap.path.hop(i);
+            std.debug.print("{x} -> {x} tick_spacing={d}\n", .{ hop.token_a, hop.token_b, hop.tickSpacing() });
+        }
+    },
+    .aerodrome_swap_exact_tokens_for_tokens => |swap| std.debug.print("routes={d} in={d}\n", .{ swap.routes.len(), swap.amount_in }),
+    .camelot_v3_exact_input => |swap| std.debug.print("tokens={d} in={d}\n", .{ swap.path.len(), swap.amount_in }),
+    else => std.debug.print("{s} {s}\n", .{ @tagName(deployment.protocol), @tagName(decoded) }),
+}
+```
+
+| Router | Chains | Decoded as |
+|--------|--------|------------|
+| Uniswap V2Router02, SwapRouter, SwapRouter02, Universal Router | Ethereum | `.uniswap` (same as `decode`) |
+| Uniswap Universal Router v1 (pre-V4), `0x3fC91A3a…7FAD` | Ethereum | `.uniswap_ur_v1` |
+| SushiSwap V2 and V3, PancakeSwap V2 and V3 | several | `.uniswap` (same ABI) |
+| PancakeSwap SmartRouter | BSC, Ethereum | `.pancake_smart_router` (adds stable swaps) |
+| PancakeSwap Universal Router | BSC | `.pancake_ur` (adds stable-swap commands) |
+| Aerodrome Router, Velodrome V2 Router | Base, Optimism | `.aerodrome` |
+| Aerodrome and Velodrome Slipstream SwapRouter | Base, Optimism | `.slipstream` |
+| Camelot V2 Router and V3 SwapRouter | Arbitrum | `.camelot_v2`, `.camelot_v3` |
+
+`routerAt` knows 24 deployments, each checked to have code on its chain. It returns null for any other address.
+
+## Not Covered
+
+- PancakeSwap Infinity plans (Pancake Universal Router command `0x10`). They use their own pool key and arrive as `.other`.
+- SushiSwap RouteProcessor and aggregator routers such as 1inch.
+- The Aerodrome/Velodrome Universal Router, whose deployed command table could not be verified.
+- Universal Router position-manager and NFT commands, which arrive as `.other`.
+- `decode` reads calldata for Uniswap's current routers. For a pre-V4 Universal Router, whose command `0x10` is an NFT command, use `decodeFor(.uniswap_ur_v1, data)`.
+- Validation is strict ABI. A few encodings a router would still execute, such as dirty padding bits, decode to null.

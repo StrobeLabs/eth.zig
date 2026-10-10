@@ -20,6 +20,7 @@
     "mev-share",
     "batch-calls",
     "dex-math",
+    "dex-decoding",
     "---Reference---",
     "modules",
     "benchmarks",
