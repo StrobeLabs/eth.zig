@@ -30,7 +30,7 @@ const softwareSchema = JSON.stringify({
   codeRepository: 'https://github.com/StrobeLabs/eth.zig',
   programmingLanguage: 'Zig',
   license: 'https://opensource.org/licenses/MIT',
-  runtimePlatform: 'Zig >= 0.15.2',
+  runtimePlatform: 'Zig >= 0.17.0',
 });
 
 export const metadata: Metadata = {
