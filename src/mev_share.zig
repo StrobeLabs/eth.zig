@@ -349,6 +349,10 @@ pub const MevShareClient = struct {
     stream_url: []const u8,
     /// HTTP client for the unauthenticated stream/history endpoints.
     client: std.http.Client,
+    /// Read-path sizing for `on`. Raise `transfer_buffer_size` if a stream is
+    /// known to carry unusually large hints; raise `max_line_size` to allow
+    /// longer single lines before `error.LineTooLong`.
+    stream_opts: sse_transport.StreamOpts = .{},
 
     /// Create a client for the given relay and event stream endpoints.
     /// `auth_key` is the Flashbots reputation key (not a funded key).
@@ -426,22 +430,34 @@ pub const MevShareClient = struct {
         var response = try req.receiveHead(&redirect_buf);
         if (response.head.status != .ok) return error.BadStatus;
 
-        var transfer_buf: [8192]u8 = undefined;
-        const reader = response.reader(&transfer_buf);
+        const transfer_buf = try self.allocator.alloc(u8, self.stream_opts.transfer_buffer_size);
+        defer self.allocator.free(transfer_buf);
+        const reader = response.reader(transfer_buf);
 
-        while (true) {
-            const line_with_nl = reader.takeDelimiterInclusive('\n') catch |err| switch (err) {
-                error.EndOfStream => return, // normal close
-                else => return err,
-            };
-            const line = line_with_nl[0 .. line_with_nl.len - 1];
+        const Ctx = struct {
+            client: *MevShareClient,
+            cb: *const fn (event: PendingEvent) void,
 
-            if (parser.feedLine(line)) |evt| {
-                const event = parseEventData(self.allocator, evt.data) catch continue;
-                defer freePendingEvent(self.allocator, &event);
-                callback(event);
+            fn onEvent(ctx: *@This(), evt: sse_transport.SseEvent) anyerror!void {
+                // The parser's data buffer is fixed; a payload larger than it
+                // arrives as a prefix that would fail to parse as JSON. Skip it
+                // explicitly rather than reporting a bogus parse error.
+                if (evt.truncated) return;
+                const event = parseEventData(ctx.client.allocator, evt.data) catch return;
+                defer freePendingEvent(ctx.client.allocator, &event);
+                ctx.cb(event);
             }
-        }
+        };
+        var ctx = Ctx{ .client = self, .cb = callback };
+
+        try sse_transport.pumpEvents(
+            self.allocator,
+            reader,
+            &parser,
+            self.stream_opts.max_line_size,
+            &ctx,
+            Ctx.onEvent,
+        );
     }
 
     /// Fetch historical event stream data (GET /api/v1/history). Caller
