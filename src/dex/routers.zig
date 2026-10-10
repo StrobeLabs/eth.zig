@@ -294,7 +294,7 @@ pub const PancakeStableExactOut = struct {
 fn routeArrayAt(data: []const u8, base: usize, offset_word_pos: usize) ?RouteArray {
     const off = reader.readOffset(data, offset_word_pos) orelse return null;
     const arr_start = reader.addChecked(base, off) orelse return null;
-    const count = reader.wordToUsize(reader.readU256At(data, arr_start) orelse return null) orelse return null;
+    const count = reader.readOffset(data, arr_start) orelse return null;
     if (count < 1) return null;
     const head_start = reader.addChecked(arr_start, 32) orelse return null;
     const elem_bytes = reader.mulChecked(count, 128) orelse return null;

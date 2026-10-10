@@ -182,4 +182,4 @@ if (eth.dex_router.findArbOpportunity(&circular_path, max_input)) |arb| {
 
 ## Performance
 
-All math uses eth.zig's limb-native u256 arithmetic -- no heap allocation, no LLVM software division routines. Run `zig build bench-u256` to measure on your hardware.
+All math uses eth.zig's limb-native u256 arithmetic -- no heap allocation, no LLVM software division routines. Run `zig build bench -- --filter u256` to measure on your hardware.

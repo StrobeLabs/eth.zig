@@ -292,7 +292,7 @@ fn pathKeysAt(data: []const u8, base: usize, offset_word_pos: usize) ?PathKeys {
         const p_hook_data_off = addChecked(off, 0x80) orelse return null;
         const hd_off = readOffset(head, p_hook_data_off) orelse return null;
         const hd_start = addChecked(off, hd_off) orelse return null;
-        const hd_len = wordToUsize(readU256At(head, hd_start) orelse return null) orelse return null;
+        const hd_len = readOffset(head, hd_start) orelse return null;
         const hd_content_start = addChecked(hd_start, 32) orelse return null;
         const hd_content_end = addChecked(hd_content_start, hd_len) orelse return null;
         if (hd_content_end > head.len) return null;
