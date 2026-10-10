@@ -15,10 +15,20 @@ checkout of that ref; it lands at DIR/bin/bench (see bench/README.md).
 """
 import argparse
 import json
+import os
 import random
 import statistics
 import subprocess
 import sys
+
+
+def label(path):
+    """Column name for a binary. `bench-install` names every binary `bench`
+    (DIR/bin/bench), so fall back to the install prefix's directory name."""
+    parts = os.path.normpath(path).split(os.sep)
+    if len(parts) >= 3 and parts[-1] == "bench" and parts[-2] == "bin":
+        return parts[-3]
+    return parts[-1]
 
 
 def run(binary, samples, flt):
@@ -57,7 +67,7 @@ def main():
         vals = [r[n] for r in runs[b] if n in r]
         return (min(vals), (statistics.median(vals) - min(vals)) / min(vals) * 100) if vals else (None, None)
 
-    labels = [b.rsplit("/", 1)[-1] for b in args.binaries]
+    labels = [label(b) for b in args.binaries]
     print(f"\n{'benchmark':<30}" + "".join(f"{l[:20]:>22}" for l in labels))
     for n in names:
         row = f"{n:<30}"

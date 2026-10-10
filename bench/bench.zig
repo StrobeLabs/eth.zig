@@ -372,18 +372,28 @@ pub fn main(init: std.process.Init) !void {
         const r = measure(io, b, opts.samples);
         results[n] = r;
         n += 1;
-        if (opts.json) continue;
 
-        try w.print("{s:<30} {d:>9.2} ns {d:>9.2} ns {d:>7.1}%", .{ r.name, r.median_ns, r.min_ns, r.mad_pct });
-        if (findBaseline(base, r.name)) |e| {
-            const change = (r.median_ns - e.median_ns) / e.median_ns * 100;
+        // Classify against the baseline before any output decision, so
+        // --fail-on-regression also works together with --json.
+        var tag: []const u8 = "";
+        var change: f64 = 0;
+        const baseline_entry = findBaseline(base, r.name);
+        if (baseline_entry) |e| {
+            change = (r.median_ns - e.median_ns) / e.median_ns * 100;
             // Only call it a regression if it clears both the threshold and the
             // combined noise of the two runs.
             const noise = 2 * (r.mad_pct + e.mad_pct);
-            const tag: []const u8 = if (change > opts.threshold_pct and change > noise) blk: {
+            if (change > opts.threshold_pct and change > noise) {
                 regressions += 1;
-                break :blk "  REGRESSION";
-            } else if (change < -opts.threshold_pct and -change > noise) "  faster" else "";
+                tag = "  REGRESSION";
+            } else if (change < -opts.threshold_pct and -change > noise) {
+                tag = "  faster";
+            }
+        }
+        if (opts.json) continue;
+
+        try w.print("{s:<30} {d:>9.2} ns {d:>9.2} ns {d:>7.1}%", .{ r.name, r.median_ns, r.min_ns, r.mad_pct });
+        if (baseline_entry) |e| {
             try w.print(" {d:>9.2} ns {s}{d:>7.1}%{s}", .{ e.median_ns, if (change >= 0) "+" else "-", @abs(change), tag });
         } else if (base.len > 0) {
             try w.writeAll(" (not in baseline)");
