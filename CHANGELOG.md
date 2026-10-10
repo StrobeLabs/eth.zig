@@ -5,6 +5,23 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0 (2026-10-10)
+
+## What's Changed
+* feat: migrate to Zig 0.17.0 by @koko1123 in https://github.com/StrobeLabs/eth.zig/pull/136
+* feat: require Zig 0.17.0 by @koko1123 in https://github.com/StrobeLabs/eth.zig/pull/137
+* ci: limit Vercel deployments to the default branch by @koko1123 in https://github.com/StrobeLabs/eth.zig/pull/139
+* feat: BIP-84 P2WPKH and SLIP-0010 Solana address derivation by @Macho0x in https://github.com/StrobeLabs/eth.zig/pull/134
+* feat(dex): decode Uniswap and phase 2 router calldata by @owizdom in https://github.com/StrobeLabs/eth.zig/pull/135
+* test(dex): replace removed array-multiplication syntax for Zig 0.17 by @koko1123 in https://github.com/StrobeLabs/eth.zig/pull/140
+* ci: credit PR authors in release notes by @koko1123 in https://github.com/StrobeLabs/eth.zig/pull/141
+
+## New Contributors
+* @Macho0x made their first contribution in https://github.com/StrobeLabs/eth.zig/pull/134
+* @owizdom made their first contribution in https://github.com/StrobeLabs/eth.zig/pull/135
+
+**Full Changelog**: https://github.com/StrobeLabs/eth.zig/compare/v0.9.2...v0.10.0
+
 ## [0.9.2](https://github.com/StrobeLabs/eth.zig/compare/v0.9.1...v0.9.2) (2026-09-22)
 
 
