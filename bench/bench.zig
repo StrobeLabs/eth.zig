@@ -462,6 +462,18 @@ fn benchHdWalletDerive10() void {
     }
 }
 
+fn benchBtcP2wpkh() void {
+    const addr = eth.btc.p2wpkh(TEST_SEED, 0) catch unreachable;
+    std.mem.doNotOptimizeAway(&addr);
+}
+
+var sol_addr_buf: [44]u8 = undefined;
+
+fn benchSolSlip10() void {
+    const addr = eth.sol.address(TEST_SEED, &sol_addr_buf) catch unreachable;
+    std.mem.doNotOptimizeAway(addr);
+}
+
 // ============================================================================
 // Benchmark functions -- EIP-712
 // ============================================================================
@@ -569,6 +581,8 @@ pub fn main() !void {
     try runAndPrint("tx_hash_eip1559", benchTxHashEip1559, stdout);
     // HD Wallet
     try runAndPrint("hd_wallet_derive_10", benchHdWalletDerive10, stdout);
+    try runAndPrint("btc_p2wpkh", benchBtcP2wpkh, stdout);
+    try runAndPrint("sol_slip10", benchSolSlip10, stdout);
     // EIP-712
     try runAndPrint("eip712_hash_typed_data", benchEip712Hash, stdout);
 

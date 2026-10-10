@@ -147,6 +147,17 @@ pub fn deriveEthAccount(seed: [64]u8, account_index: u32) HdWalletError!Extended
     return key;
 }
 
+/// Convenience: derive a Bitcoin BIP-84 key at m/84'/0'/0'/0/{index}.
+pub fn deriveBtcAccount(seed: [64]u8, account_index: u32) HdWalletError!ExtendedKey {
+    var key = try masterKeyFromSeed(seed);
+    key = try deriveChild(key, 84 | HARDENED);
+    key = try deriveChild(key, 0 | HARDENED);
+    key = try deriveChild(key, 0 | HARDENED);
+    key = try deriveChild(key, 0);
+    key = try deriveChild(key, account_index);
+    return key;
+}
+
 // Tests
 test "masterKeyFromSeed produces deterministic results" {
     const seed = @as([64]u8, @splat(0x01));
@@ -164,10 +175,24 @@ test "deriveChild produces different keys for different indices" {
     try std.testing.expect(!std.mem.eql(u8, &child0.key, &child1.key));
 }
 
+test "deriveBtcAccount differs from deriveEthAccount" {
+    const seed = @as([64]u8, @splat(0x42));
+    const eth_key = try deriveEthAccount(seed, 0);
+    const btc_key = try deriveBtcAccount(seed, 0);
+    try std.testing.expect(!std.mem.eql(u8, &eth_key.key, &btc_key.key));
+}
+
 test "derivePath m/44'/60'/0'/0/0" {
     const seed = @as([64]u8, @splat(0xab));
     const key_path = try derivePath(seed, "m/44'/60'/0'/0/0");
     const key_manual = try deriveEthAccount(seed, 0);
+    try std.testing.expectEqualSlices(u8, &key_path.key, &key_manual.key);
+}
+
+test "deriveBtcAccount matches derivePath m/84'/0'/0'/0/0" {
+    const seed = @as([64]u8, @splat(0xab));
+    const key_path = try derivePath(seed, "m/84'/0'/0'/0/0");
+    const key_manual = try deriveBtcAccount(seed, 0);
     try std.testing.expectEqualSlices(u8, &key_path.key, &key_manual.key);
 }
 
