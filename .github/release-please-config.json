@@ -16,7 +16,8 @@
           "type": "generic",
           "path": "docs/content/docs/installation.mdx"
         }
-      ]
+      ],
+      "changelog-type": "github"
     }
   }
 }
