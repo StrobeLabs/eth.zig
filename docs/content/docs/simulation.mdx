@@ -1,0 +1,67 @@
+---
+title: Transaction simulation
+description: Simulate several calls and blocks with state overrides before broadcasting.
+---
+
+`Provider.simulateV1` executes calls against temporary node state without
+broadcasting transactions. It supports several simulated blocks, block
+overrides, and the same `StateOverrides` used by `callWithOverrides`.
+
+```zig
+var overrides = eth.state_overrides.StateOverrides.init(allocator);
+defer overrides.deinit();
+try overrides.setBalance(sender, 1_000_000_000_000_000_000);
+
+var result = try provider.simulateV1(.{
+    .block_state_calls = &.{.{
+        .state_overrides = &overrides,
+        .calls = &.{.{ .from = sender, .to = recipient, .value = 100 }},
+    }},
+    .trace_transfers = true,
+}, .{ .tag = .latest });
+defer result.deinit();
+
+for (result.value) |block| {
+    for (block.calls) |call| {
+        // call.status, call.return_data, call.gas_used, call.logs
+        if (call.failure) |failure| {
+            // failure.code, failure.message, failure.data
+            _ = failure;
+        }
+    }
+}
+```
+
+## Result ownership and errors
+
+The result owns an arena. Call `deinit()` once; all nested strings, log data,
+return bytes and raw JSON remain valid until then. Do not free them separately.
+Each block also exposes `raw`, preserving the full response, including optional
+client-specific fields and full transactions when requested.
+
+A reverted call has `.status = .failure` and can coexist with successful calls
+in the same block. Its error data is preserved in full, including payloads
+longer than the diagnostic buffer used by `Provider.lastError()`.
+
+`error.MethodNotFound` means the endpoint answered with JSON-RPC code `-32601`.
+Choose an endpoint that exposes the method, or fall back in your application.
+This error is not eligible for transport failover. Other RPC errors remain
+`error.RpcError`, with details in `Provider.lastError()`.
+
+Requests accept 1–256 explicit blocks. Nodes apply their own gas limits and
+also count generated gap blocks toward their limit. `validation` defaults to
+false, following `eth_call` semantics; enable it for transaction validation.
+Simulation is an estimate against a particular state, not a promise of later
+execution results. See the [Geth API](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-eth#eth-simulatev1)
+for node behavior and limits.
+
+## Local integration test
+
+```sh
+anvil --silent --port 18545
+# In another terminal:
+zig build integration-test -Danvil-port=18545
+```
+
+The suite verifies an overridden contract revert alongside a successful call,
+and checks that the simulation leaves the account balance unchanged.

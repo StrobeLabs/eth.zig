@@ -9,6 +9,7 @@ const state_overrides_mod = @import("state_overrides.zig");
 const rpc_transaction_mod = @import("rpc_transaction.zig");
 const HttpTransport = @import("http_transport.zig").HttpTransport;
 const runtime = @import("runtime.zig");
+const simulation = @import("simulation.zig");
 
 /// Read-only Ethereum JSON-RPC provider.
 ///
@@ -59,7 +60,7 @@ pub const Provider = struct {
     }
 
     /// Diagnostics for the most recent JSON-RPC `error` response, or null if the
-    /// last call did not fail with `error.RpcError`. Lets callers tell an
+    /// last call did not fail with `error.RpcError` or `error.MethodNotFound`. Lets callers tell an
     /// on-chain revert (code 3) apart from a transport-level failure. The
     /// message is valid until the next call on this provider.
     pub fn lastError(self: *const Provider) ?ErrorInfo {
@@ -207,6 +208,42 @@ pub const Provider = struct {
         const result_str = try self.extractResult(raw);
         defer self.allocator.free(result_str);
         return parseHexBytes(self.allocator, result_str);
+    }
+
+    /// Simulate multiple calls/blocks without broadcasting. The returned
+    /// owner frees all nested data with deinit(). MethodNotFound means this
+    /// endpoint does not expose eth_simulateV1; it is not a transport failure.
+    pub fn simulateV1(self: *Provider, payload: simulation.SimulatePayload, block: json_rpc.BlockParam) !simulation.SimulateResult {
+        const params = try simulation.formatParams(self.allocator, payload, block);
+        defer self.allocator.free(params);
+        const raw = try self.requestJson(json_rpc.Method.eth_simulateV1, params);
+        defer self.allocator.free(raw);
+        return simulation.parseResult(self.allocator, raw);
+    }
+
+    /// Raw escape hatch for structured RPCs. Returns the JSON result value
+    /// (not the JSON-RPC envelope), owned by the caller. params must encode a
+    /// JSON array. Preserves RPC diagnostics and distinguishes MethodNotFound.
+    pub fn requestJson(self: *Provider, method: []const u8, params: []const u8) ![]u8 {
+        const raw = try self.rpcCall(method, params);
+        defer self.allocator.free(raw);
+        return self.extractJsonResult(raw);
+    }
+
+    fn extractJsonResult(self: *Provider, raw: []const u8) ![]u8 {
+        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, raw, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidResponse,
+        };
+        defer parsed.deinit();
+        const obj = try simulation.object(parsed.value);
+        if (simulation.optional(obj, "error")) |rpc_error| {
+            const failure = try simulation.parseFailure(rpc_error);
+            self.captureRpcError(raw);
+            if (failure.code == json_rpc.ErrorCode.method_not_found) return error.MethodNotFound;
+            return error.RpcError;
+        }
+        return std.json.Stringify.valueAlloc(self.allocator, try simulation.field(obj, "result"), .{});
     }
 
     /// Executes a message call (eth_call) against the latest block with
@@ -989,8 +1026,9 @@ pub fn parseSingleTransaction(allocator: std.mem.Allocator, obj: std.json.Object
     // Typed transactions may report only `yParity`; `v` is a legacy alias.
     const v_str = jsonGetString(obj, "v") orelse jsonGetString(obj, "yParity") orelse return error.InvalidResponse;
     const v = try parseHexU256(v_str);
-    const r = try parseHash(jsonGetString(obj, "r") orelse return error.InvalidResponse);
-    const s = try parseHash(jsonGetString(obj, "s") orelse return error.InvalidResponse);
+    // Signature scalars are RPC quantities and may omit leading zero nibbles.
+    const r = uint256_mod.toBigEndianBytes(try parseHexU256(jsonGetString(obj, "r") orelse return error.InvalidResponse));
+    const s = uint256_mod.toBigEndianBytes(try parseHexU256(jsonGetString(obj, "s") orelse return error.InvalidResponse));
 
     const type_val: u8 = if (jsonGetString(obj, "type")) |t| try parseHexU8(t) else 0;
     const chain_id = try parseOptionalHexU64(jsonGetString(obj, "chainId"));
@@ -1783,6 +1821,21 @@ test "parseSingleTransaction - yParity accepted when v missing" {
     try std.testing.expectEqual(@as(u256, 1), tx.v);
 }
 
+test "parseSingleTransaction - signature quantities are padded to 32 bytes" {
+    const a = std.testing.allocator;
+    const raw =
+        \\{"hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        \\ "nonce":"0x0","from":"0x1111111111111111111111111111111111111111",
+        \\ "gas":"0x5208","v":"0x1","r":"0xabc","s":"0x1"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, raw, .{});
+    defer parsed.deinit();
+    const tx = try parseSingleTransaction(a, parsed.value.object);
+    defer rpc_transaction_mod.freeRpcTransaction(a, tx);
+    try std.testing.expectEqual(@as(u256, 0xabc), uint256_mod.fromBigEndianBytes(tx.r));
+    try std.testing.expectEqual(@as(u256, 1), uint256_mod.fromBigEndianBytes(tx.s));
+}
+
 test "parseSingleTransaction - malformed fields are rejected" {
     const allocator = std.testing.allocator;
     // Base object is valid; each case corrupts or removes one field.
@@ -2045,4 +2098,23 @@ test "parseBatchResponse partial failure" {
         },
         else => return error.TestUnexpectedResult,
     }
+}
+
+test "structured RPC errors distinguish missing methods and retain diagnostics" {
+    var transport = HttpTransport.init(std.testing.allocator, "http://127.0.0.1:1", runtime.blockingIo());
+    defer transport.deinit();
+    var provider = Provider.init(std.testing.allocator, &transport);
+    try std.testing.expectError(error.MethodNotFound, provider.extractJsonResult(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"method not found\"}}",
+    ));
+    try std.testing.expectEqual(@as(i64, -32601), provider.lastError().?.code);
+    try std.testing.expectError(error.RpcError, provider.extractJsonResult(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":3,\"message\":\"execution reverted\",\"data\":\"0xdeadbeef\"}}",
+    ));
+    try std.testing.expectEqualStrings("0xdeadbeef", provider.lastError().?.data);
+    const result = try provider.extractJsonResult("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"calls\":[]}}");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("{\"calls\":[]}", result);
+    try std.testing.expectError(error.InvalidResponse, provider.extractJsonResult("[]"));
+    try std.testing.expectError(error.InvalidResponse, provider.extractJsonResult("{}"));
 }

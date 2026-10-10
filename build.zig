@@ -69,6 +69,8 @@ pub fn build(b: *std.Build) void {
     docs_step.dependOn(&install_docs.step);
 
     // Integration tests (requires Anvil)
+    const integration_options = b.addOptions();
+    integration_options.addOption(u16, "anvil_port", b.option(u16, "anvil-port", "Local Anvil port for integration tests") orelse 8545);
     const integration_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/integration_tests.zig"),
@@ -81,6 +83,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
+    integration_tests.root_module.addOptions("integration_options", integration_options);
     const integration_step = b.step("integration-test", "Run integration tests (requires Anvil)");
     integration_step.dependOn(&run_integration_tests.step);
 
