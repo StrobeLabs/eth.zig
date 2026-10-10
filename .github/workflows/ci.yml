@@ -29,8 +29,28 @@ jobs:
           version: ${{ matrix.zig-version }}
       - name: Run unit tests
         run: zig build test
-      - name: Run ENS conformance vectors
+      - name: Run conformance vectors (ENS, KZG, go-ethereum blob tx)
         run: zig build vector-test
+
+  portable-blst:
+    name: Portable blst backend (no assembly)
+    runs-on: ubuntu-latest
+    # blst is built with its assembly backend on x86_64 and aarch64, which is
+    # what both `test` runners use. The portable C backend stays the only path
+    # on every other target (riscv64, wasm32, aarch64_be, 32-bit), so it needs
+    # a job of its own or it would ship untested. It is ~7x slower, so one OS
+    # is enough.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: "0.16.0"
+      - name: Run unit tests against the portable backend
+        run: zig build test -Dblst-asm=false
+      - name: Build for a target that has no blst assembly
+        run: zig build -Dtarget=riscv64-linux-musl
 
   fmt:
     name: Format check

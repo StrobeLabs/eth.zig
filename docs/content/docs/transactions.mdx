@@ -78,7 +78,11 @@ const tx = eth.transaction.Transaction{ .eip1559 = .{
 
 ### EIP-4844 (Type 3)
 
-Blob transactions for L2 data availability:
+Blob transactions for L2 data availability. The transaction body carries only
+the `blob_versioned_hashes`; the blobs themselves travel beside it in a network
+wrapper built by [`transaction.wrapBlobTransaction`](/docs/kzg#broadcast-the-network-wrapper),
+which on a post-Fusaka network is the EIP-7594 version-1 wrapper with 128 cell
+proofs per blob. See the [KZG guide](/docs/kzg) for building the sidecar.
 
 ```zig
 const tx = eth.transaction.Transaction{ .eip4844 = .{
@@ -95,6 +99,10 @@ const tx = eth.transaction.Transaction{ .eip4844 = .{
     .blob_versioned_hashes = &.{blob_hash},
 }};
 ```
+
+`blob_hash` is `eth.blob.computeVersionedHash(commitment)`: `sha256` of the KZG
+commitment with the first byte replaced by the version byte `0x01`, which is
+what the execution layer recomputes from the sidecar.
 
 ### EIP-7702 (Type 4)
 

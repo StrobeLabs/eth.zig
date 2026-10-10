@@ -1,7 +1,7 @@
 ZIG ?= zig
 KCOV ?= kcov
 
-.PHONY: build test fmt fmt-fix lint ci integration-test bench bench-u256 bench-keccak coverage docs clean
+.PHONY: build test fmt fmt-fix lint ci integration-test bench bench-u256 bench-keccak bench-kzg coverage docs clean
 
 ## Build the library (default)
 build:
@@ -51,6 +51,9 @@ bench-u256:
 
 bench-keccak:
 	$(ZIG) build bench-keccak -Doptimize=ReleaseFast
+
+bench-kzg:
+	$(ZIG) build bench-kzg -Doptimize=ReleaseFast
 
 ## Remove build artifacts
 clean:

@@ -10,6 +10,9 @@ zig-pkg/
 *.a
 *.o
 *.s
+# Vendored blst assembly is source, not a build artifact
+!src/crypto/blst/build/**/*.s
+!src/crypto/blst/build/**/*.S
 
 # Coverage output (make coverage / kcov)
 kcov-out/
