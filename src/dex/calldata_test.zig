@@ -1524,7 +1524,7 @@ test "AT11: multicall(bytes32,bytes[]) round trip with previous_blockhash" {
     defer allocator.free(inner_call);
 
     const calls = [_]AV{.{ .bytes = inner_call }};
-    const bh = [_]u8{0xAA} ** 32;
+    const bh = @as([32]u8, @splat(0xAA));
     const values = [_]AV{
         .{ .fixed_bytes = .{ .data = bh, .len = 32 } },
         .{ .array = &calls },
@@ -3241,7 +3241,7 @@ test "R2: command byte with bit 0x40 set uses mask 0x3f in every dialect, includ
         .{ .uint256 = 7 },
         .{ .address = RT_RECIPIENT },
         .{ .uint256 = 1790400000 },
-        .{ .bytes = &([_]u8{0xAB} ** 65) },
+        .{ .bytes = &(@as([65]u8, @splat(0xAB))) },
     };
     const in_permit = try abi_encode.encodeValues(allocator, &cmd_permit);
     defer allocator.free(in_permit);
@@ -3389,7 +3389,7 @@ test "B3: round trip - PERMIT2_PERMIT_BATCH (0x03), 2 details" {
         .{ .address = RT_RECIPIENT },
         .{ .uint256 = 1790500000 },
     } };
-    const sig = [_]u8{0xCD} ** 65;
+    const sig = @as([65]u8, @splat(0xCD));
     const cmd = [_]AV{ permit_batch, .{ .bytes = &sig } };
     const in_bytes = try abi_encode.encodeValues(allocator, &cmd);
     defer allocator.free(in_bytes);
@@ -3465,7 +3465,7 @@ test "R2: command 0x07 is .other under .uniswap (PAY_PORTION_FULL_PRECISION remo
 
 test "B3: round trip - PERMIT2_PERMIT (0x0a)" {
     const allocator = testing.allocator;
-    const sig = [_]u8{0xEF} ** 65;
+    const sig = @as([65]u8, @splat(0xEF));
     const cmd = [_]AV{
         .{ .address = RT_TOKEN_IN },
         .{ .uint256 = 999999 },
@@ -4004,8 +4004,8 @@ test "B4: multicall round trip - refundETH, wrapETH, pull" {
 }
 
 fn expectSelfPermitKind(allocator: std.mem.Allocator, sel4: [4]u8, comptime kind_name: []const u8) !void {
-    const r = [_]u8{0x1B} ** 32;
-    const s = [_]u8{0x2C} ** 32;
+    const r = @as([32]u8, @splat(0x1B));
+    const s = @as([32]u8, @splat(0x2C));
     const values = [_]AV{
         .{ .address = RT_TOKEN_IN },
         .{ .uint256 = 5555 },
@@ -4066,7 +4066,7 @@ test "B5: attack - PERMIT2_TRANSFER_FROM uint160 amount with high bits set" {
 
 test "B5: attack - PERMIT2_PERMIT uint48 expiration with high bits set" {
     const allocator = testing.allocator;
-    const sig = [_]u8{0xEF} ** 65;
+    const sig = @as([65]u8, @splat(0xEF));
     const cmd = [_]AV{
         .{ .address = RT_TOKEN_IN },
         .{ .uint256 = 999999 },
@@ -4102,7 +4102,7 @@ test "B5: attack - PERMIT2_PERMIT_BATCH details array offset out of bounds" {
         .{ .address = RT_RECIPIENT },
         .{ .uint256 = 1790500000 },
     } };
-    const sig = [_]u8{0xCD} ** 65;
+    const sig = @as([65]u8, @splat(0xCD));
     const cmd = [_]AV{ permit_batch, .{ .bytes = &sig } };
     const in_bytes = try abi_encode.encodeValues(allocator, &cmd);
     defer allocator.free(in_bytes);
@@ -4123,7 +4123,7 @@ test "B5: attack - PERMIT2_PERMIT_BATCH details array offset out of bounds" {
 
 test "B5: attack - PERMIT2_PERMIT signature length claims past the end of data" {
     const allocator = testing.allocator;
-    const sig = [_]u8{0xEF} ** 65;
+    const sig = @as([65]u8, @splat(0xEF));
     const cmd = [_]AV{
         .{ .address = RT_TOKEN_IN },
         .{ .uint256 = 999999 },
@@ -4170,8 +4170,8 @@ test "B5: attack - EXECUTE_SUB_PLAN commands.len != inputs.len" {
 
 test "B5: attack - multicall selfPermit uint8 v with high bits set" {
     const allocator = testing.allocator;
-    const r = [_]u8{0x1B} ** 32;
-    const s = [_]u8{0x2C} ** 32;
+    const r = @as([32]u8, @splat(0x1B));
+    const s = @as([32]u8, @splat(0x2C));
     const values = [_]AV{
         .{ .address = RT_TOKEN_IN },
         .{ .uint256 = 5555 },
