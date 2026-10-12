@@ -1,0 +1,20 @@
+{
+  "valid": [
+    { "name": "empty-string", "encoded": "0x80" },
+    { "name": "single-byte", "encoded": "0x00" },
+    { "name": "dog", "encoded": "0x83646f67" },
+    { "name": "empty-list", "encoded": "0xc0" },
+    { "name": "string-list", "encoded": "0xcc83646f6783676f6483636174" },
+    { "name": "nested-list", "encoded": "0xc4c2c0c0c0" },
+    { "name": "long-list", "encoded": "0xf784617364668471776572847a78637684617364668471776572847a78637684617364668471776572847a78637684617364668471776572" }
+  ],
+  "invalid": [
+    { "name": "non-canonical-zero", "encoded": "0x8100" },
+    { "name": "non-canonical-short-string", "encoded": "0xb800" },
+    { "name": "non-canonical-short-list", "encoded": "0xf800" },
+    { "name": "truncated-list", "encoded": "0xc5010203" },
+    { "name": "empty-input", "encoded": "0x" },
+    { "name": "trailing-byte", "encoded": "0x01ff" }
+  ]
+}
+

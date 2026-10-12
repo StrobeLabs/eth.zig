@@ -102,6 +102,22 @@ pub fn build(b: *std.Build) void {
     const vector_step = b.step("vector-test", "Run ENS normalization conformance vectors");
     vector_step.dependOn(&run_vector_tests.step);
 
+    // Ethereum RLP/transaction and Trezor BIP-39 conformance vectors.
+    const conformance_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/conformance_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "eth", .module = eth_module },
+            },
+        }),
+    });
+
+    const run_conformance_tests = b.addRunArtifact(conformance_tests);
+    const conformance_step = b.step("conformance-test", "Run Ethereum and BIP-39 conformance vectors");
+    conformance_step.dependOn(&run_conformance_tests.step);
+
     // Benchmarks (always ReleaseFast for meaningful numbers)
     const bench_module = b.addModule("eth_bench", .{
         .root_source_file = b.path("src/root.zig"),

@@ -429,6 +429,28 @@ pub fn decode(comptime T: type, data: []const u8) (RlpError || error{OutOfMemory
     }
 }
 
+/// Validate one complete, canonically encoded RLP item.
+///
+/// Unlike `decode`, this helper is type-agnostic and recursively checks list
+/// payloads. It is useful for conformance suites that need to verify raw
+/// transaction envelopes before decoding their fields.
+pub fn validate(data: []const u8) RlpError!void {
+    const item = try decodeItem(data);
+    if (item.rest.len != 0) return error.InvalidRlp;
+    try validateItem(item);
+}
+
+fn validateItem(item: Item) RlpError!void {
+    if (item.kind != .list) return;
+
+    var rest = item.payload;
+    while (rest.len > 0) {
+        const child = try decodeItem(rest);
+        try validateItem(child);
+        rest = child.rest;
+    }
+}
+
 const ItemKind = enum { string, list };
 
 const Item = struct {
