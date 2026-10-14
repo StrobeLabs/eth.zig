@@ -11,11 +11,9 @@ eth.zig is at v0.2.2. All listed features are complete and tested, but the libra
 
 Zig >= 0.17.0. The library tracks Zig stable releases; CI runs against the pinned minimum version.
 
-## How does secp256k1 signing compare to alloy.rs?
+## How fast is eth.zig, and how is that measured?
 
-eth.zig wins on secp256k1 signing -- 2.34x faster than alloy.rs for signing and 4.23x faster for sign+recover (measured 2026-06-10 against alloy-primitives 1.6 / alloy 2.0).
-
-eth.zig wins 18 of 26 benchmarks overall. alloy.rs wins on address hex parsing (1.55x, SIMD), hex encoding (1.08x), UniswapV4 swap (1.07x), and Keccak-256 at 256B/1KB inputs (within ~2%).
+The [benchmark suite](/benchmarks) tracks the ten operations that dominate bot and searcher hot loops (Keccak-256, secp256k1 sign/recover, transaction hashing, ABI encode/decode, u256 mulDiv, a Uniswap V4 swap step and Universal Router decoding). Each release is compared against eth.zig's previous releases on the same machine.
 
 ## Does eth.zig support all Ethereum transaction types?
 

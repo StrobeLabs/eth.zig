@@ -97,12 +97,12 @@ fn decodeValuesAt(data: []const u8, base: usize, types: []const AbiType, allocat
     // Each value in the head takes 32 bytes.
     for (types, 0..) |abi_type, i| {
         const head_offset = base + i * 32;
-        if (head_offset + 32 > data.len) return error.DataTooShort;
+        if (head_offset > data.len or data.len - head_offset < 32) return error.DataTooShort;
 
         if (abi_type.isDynamic()) {
             // Dynamic type: head contains offset relative to base
-            const rel_offset = readUint256AsUsize(data[head_offset..][0..32]);
-            const abs_offset = base + rel_offset;
+            const rel_offset = try readWordUsize(data[head_offset..][0..32], error.OffsetOutOfBounds);
+            const abs_offset = std.math.add(usize, base, rel_offset) catch return error.OffsetOutOfBounds;
             result[i] = try decodeDynamicValue(data, abs_offset, abi_type, allocator);
         } else {
             result[i] = try decodeStaticValue(data[head_offset..][0..32], abi_type, allocator);
@@ -174,13 +174,13 @@ fn decodeDynamicValue(data: []const u8, offset: usize, abi_type: AbiType, alloca
 }
 
 /// Decode dynamic bytes or string from the data at the given offset.
-fn decodeDynamicBytes(data: []const u8, offset: usize, allocator: std.mem.Allocator, tag: enum { bytes, string }) DecodeError!AbiValue {
-    if (offset + 32 > data.len) return error.OffsetOutOfBounds;
+inline fn decodeDynamicBytes(data: []const u8, offset: usize, allocator: std.mem.Allocator, tag: enum { bytes, string }) DecodeError!AbiValue {
+    if (offset > data.len or data.len - offset < 32) return error.OffsetOutOfBounds;
 
-    const length = readUint256AsUsize(data[offset..][0..32]);
+    const length = try readWordUsize(data[offset..][0..32], error.LengthOutOfBounds);
     const data_start = offset + 32;
 
-    if (data_start + length > data.len) return error.LengthOutOfBounds;
+    if (length > data.len - data_start) return error.LengthOutOfBounds;
 
     if (length == 0) {
         const empty: []const u8 = &.{};
@@ -202,10 +202,13 @@ fn decodeDynamicBytes(data: []const u8, offset: usize, allocator: std.mem.Alloca
 
 /// Decode a dynamic array of a given element type.
 fn decodeDynamicArray(data: []const u8, offset: usize, element_type: AbiType, allocator: std.mem.Allocator) DecodeError!AbiValue {
-    if (offset + 32 > data.len) return error.OffsetOutOfBounds;
+    if (offset > data.len or data.len - offset < 32) return error.OffsetOutOfBounds;
 
-    const length = readUint256AsUsize(data[offset..][0..32]);
+    const length = try readWordUsize(data[offset..][0..32], error.LengthOutOfBounds);
     const elements_start = offset + 32;
+    // Every element takes at least one 32-byte head word, so a length the
+    // remaining data cannot hold is rejected before allocating for it.
+    if (length > (data.len - elements_start) / 32) return error.LengthOutOfBounds;
 
     if (length == 0) {
         const empty: []const AbiValue = &.{};
@@ -222,12 +225,13 @@ fn decodeDynamicArray(data: []const u8, offset: usize, element_type: AbiType, al
     return .{ .array = items };
 }
 
-/// Read a 32-byte big-endian word as a usize.
-/// Returns max usize if the value overflows, which will cause a bounds check later.
-fn readUint256AsUsize(word: *const [32]u8) usize {
-    const val = uint256_mod.fromBigEndianBytes(word.*);
-    if (val > std.math.maxInt(usize)) return std.math.maxInt(usize);
-    return @intCast(val);
+/// Read a 32-byte big-endian ABI word as a usize offset or length. Words that
+/// do not fit in a usize are rejected with `err` rather than clamped, so callers
+/// can do arithmetic on the result without overflowing.
+inline fn readWordUsize(word: *const [32]u8, comptime err: DecodeError) DecodeError!usize {
+    const high = std.mem.readInt(u64, word[0..8], .little) | std.mem.readInt(u64, word[8..16], .little) | std.mem.readInt(u64, word[16..24], .little);
+    if (high != 0) return err;
+    return std.math.cast(usize, std.mem.readInt(u64, word[24..32], .big)) orelse err;
 }
 
 // ============================================================================
@@ -811,4 +815,32 @@ test "encode-decode ERC20 transfer return bool true" {
     defer freeValues(decoded_false, allocator);
 
     try testing.expect(!decoded_false[0].boolean);
+}
+
+test "hostile offset word near maxInt(usize) is rejected, not wrapped" {
+    // Head word for a `bytes` value whose offset is 2^64 - 1. Before the fix
+    // the offset was clamped to maxInt(usize) and `offset + 32` overflowed.
+    var data: [64]u8 = @splat(0);
+    @memset(data[24..32], 0xff);
+    try testing.expectError(error.OffsetOutOfBounds, decodeValues(&data, &.{.bytes}, testing.allocator));
+}
+
+test "offset word wider than 64 bits is rejected" {
+    var data: [64]u8 = @splat(0);
+    data[0] = 1; // 2^248
+    try testing.expectError(error.OffsetOutOfBounds, decodeValues(&data, &.{.string}, testing.allocator));
+}
+
+test "hostile bytes length near maxInt(usize) is rejected" {
+    var data: [64]u8 = @splat(0);
+    data[31] = 32; // offset -> word 1
+    @memset(data[56..64], 0xff); // length 2^64 - 1
+    try testing.expectError(error.LengthOutOfBounds, decodeValues(&data, &.{.bytes}, testing.allocator));
+}
+
+test "dynamic array length larger than the data is rejected before allocating" {
+    var data: [64]u8 = @splat(0);
+    data[31] = 32; // offset -> word 1
+    data[60] = 0x10; // length 2^28: would allocate ~GBs of element types
+    try testing.expectError(error.LengthOutOfBounds, decodeValues(&data, &.{.dynamic_array}, testing.allocator));
 }

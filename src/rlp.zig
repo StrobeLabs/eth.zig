@@ -195,13 +195,10 @@ fn encodeUint(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value: any
 
     try encodeLength(allocator, list, byte_len, 0x80);
 
-    // Write big-endian bytes
-    var i: usize = byte_len;
-    while (i > 0) {
-        i -= 1;
-        const shift: u8 = @intCast(i * 8);
-        try list.append(allocator, @truncate(val >> shift));
-    }
+    // One big-endian store, then append only the significant bytes.
+    var be: [32]u8 = undefined;
+    std.mem.writeInt(u256, &be, val, .big);
+    try list.appendSlice(allocator, be[32 - byte_len ..]);
 }
 
 fn encodeBytes(allocator: std.mem.Allocator, list: *std.ArrayList(u8), bytes: []const u8) std.mem.Allocator.Error!void {
@@ -230,21 +227,11 @@ fn encodeLength(allocator: std.mem.Allocator, list: *std.ArrayList(u8), len: usi
     if (len < 56) {
         try list.append(allocator, offset + @as(u8, @intCast(len)));
     } else {
-        // Compute byte length of len
-        var len_bytes: usize = 0;
-        var temp = len;
-        while (temp > 0) : (temp >>= 8) {
-            len_bytes += 1;
-        }
-
-        try list.append(allocator, offset + 55 + @as(u8, @intCast(len_bytes)));
-
-        // Write length in big-endian
-        var i: usize = len_bytes;
-        while (i > 0) {
-            i -= 1;
-            try list.append(allocator, @intCast((len >> @intCast(i * 8)) & 0xff));
-        }
+        const len_bytes = (@bitSizeOf(usize) - @as(usize, @clz(len)) + 7) / 8;
+        var be: [@sizeOf(usize) + 1]u8 = undefined;
+        be[@sizeOf(usize) - len_bytes] = offset + 55 + @as(u8, @intCast(len_bytes));
+        std.mem.writeInt(usize, be[1..], len, .big);
+        try list.appendSlice(allocator, be[@sizeOf(usize) - len_bytes ..]);
     }
 }
 
@@ -769,5 +756,23 @@ test "encode-decode roundtrip [32]u8" {
     const decoded = try decode([32]u8, encoded);
     for (0..32) |i| {
         try std.testing.expectEqual(@as(u8, @intCast(i)), decoded.value[i]);
+    }
+}
+
+test "long string length prefixes (1, 2 and 3 length bytes)" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { len: usize, prefix: []const u8 }{
+        .{ .len = 56, .prefix = &.{ 0xb8, 0x38 } },
+        .{ .len = 300, .prefix = &.{ 0xb9, 0x01, 0x2c } },
+        .{ .len = 70_000, .prefix = &.{ 0xba, 0x01, 0x11, 0x70 } },
+    };
+    for (cases) |c| {
+        const payload = try allocator.alloc(u8, c.len);
+        defer allocator.free(payload);
+        @memset(payload, 0xaa);
+        const out = try encode(allocator, payload);
+        defer allocator.free(out);
+        try std.testing.expectEqualSlices(u8, c.prefix, out[0..c.prefix.len]);
+        try std.testing.expectEqual(c.prefix.len + c.len, out.len);
     }
 }

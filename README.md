@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/Zig-%E2%89%A5%200.17.0-orange)](https://ziglang.org/)
 
-**The fastest Ethereum library.** Beats Rust's alloy.rs on 18 out of 26 benchmarks.
+**The fastest Ethereum library.**
 
 A complete Ethereum client library written in Zig -- ABI encoding, RLP serialization, secp256k1 signing, Keccak-256 hashing, HD wallets, ERC-20/721 tokens, JSON-RPC, ENS, and more.
 
@@ -13,35 +13,20 @@ A complete Ethereum client library written in Zig -- ABI encoding, RLP serializa
 
 ## Why eth.zig?
 
-**Fastest Ethereum library** -- eth.zig [beats alloy.rs](bench/RESULTS.md) (Rust's leading Ethereum library, backed by Paradigm) on **18 out of 26 benchmarks**, measured 2026-06-10 against current alloy 1.6/2.0. RLP transaction encoding 24.33x faster, ABI decoding up to 8.41x, secp256k1 recovery 4.23x, ECDSA signing 2.34x, u256 division 3.43x, mulDiv 1.82x. See the [full results](bench/RESULTS.md).
+**Fast, and kept fast** -- vendored bitcoin-core secp256k1, XKCP Keccak, limb-native u256 math and allocation-light ABI/RLP codecs. Ten hot-path benchmarks are tracked release over release against eth.zig's own past versions; see [Performance](#performance).
 
 **Comptime-first** -- Function selectors and event topics are computed at compile time with zero runtime cost. The compiler does the hashing so your program doesn't have to.
 
 **Complete** -- ABI, RLP, secp256k1, Keccak-256, BIP-32/39/44 HD wallets, EIP-712, JSON-RPC, WebSocket, ENS, ERC-20/721 -- everything you need for Ethereum in one package.
 
-## Performance vs alloy.rs
+## Performance
 
-eth.zig wins **18/26 benchmarks** against [alloy.rs](https://alloy.rs) (alloy-primitives 1.6.0, alloy-consensus 2.0.5; run 2026-06-10). Measured on Apple Silicon, `ReleaseFast` (Zig) vs `--release` (Rust). Criterion-style harness with 0.5s warmup and 2s measurement.
+The benchmark suite covers the ten operations that dominate a trading bot, liquidator or searcher hot loop: Keccak-256 (32 B and 1 KB), secp256k1 sign and recover, EIP-1559 transaction hashing, ABI encode and decode, u256 `mulDiv`, a Uniswap V4 swap step, and Universal Router calldata decoding. Each run reports the median ns/op over 31 batches, and versions are compared by interleaving their runs so machine noise cancels out. See [bench/README.md](bench/README.md) for the method and the latest results against previous releases.
 
-| Operation | eth.zig | alloy.rs | Winner |
-|-----------|---------|----------|--------|
-| secp256k1 sign | 22,033 ns | 51,490 ns | **zig 2.34x** |
-| secp256k1 sign+recover | 52,095 ns | 220,150 ns | **zig 4.23x** |
-| Keccak-256 (32B) | 263 ns | 319 ns | **zig 1.21x** |
-| Keccak-256 (4KB) | 7,732 ns | 7,838 ns | **zig 1.01x** |
-| ABI encode (static) | 25 ns | 97 ns | **zig 3.88x** |
-| ABI encode (dynamic) | 171 ns | 337 ns | **zig 1.97x** |
-| ABI decode (uint256) | 14 ns | 51 ns | **zig 3.64x** |
-| ABI decode (dynamic) | 32 ns | 269 ns | **zig 8.41x** |
-| RLP encode (EIP-1559 tx) | 3 ns | 73 ns | **zig 24.33x** |
-| u256 mulDiv (512-bit) | 17 ns | 31 ns | **zig 1.82x** |
-| u256 division | 7 ns | 24 ns | **zig 3.43x** |
-| u256 multiply | 5 ns | 10 ns | **zig 2.00x** |
-| UniswapV2 getAmountOut | 24 ns | 24 ns | tie |
-| UniswapV4 swap | 45 ns | 42 ns | rs 1.07x |
-| TX hash (EIP-1559) | 271 ns | 361 ns | **zig 1.33x** |
-
-alloy.rs wins on address hex parsing (1.55x -- SIMD), hex encoding (1.08x), UniswapV4 swap (1.07x), and Keccak at 256B/1KB inputs (within ~2%, measurement noise). See [full results](bench/RESULTS.md).
+```bash
+zig build bench                      # run the suite
+zig build bench -- --filter keccak   # run a subset
+```
 
 ## Quick Start
 
@@ -329,34 +314,6 @@ cd examples && zig build && ./zig-out/bin/01_derive_address
 | Provider middleware (retry, caching) | Planned |
 | Hardware wallet signers | Planned |
 
-## Comparison with Other Libraries
-
-### Performance vs alloy.rs (Rust)
-
-| Category | eth.zig | alloy.rs |
-|----------|---------|----------|
-| Benchmarks won | **18/26** | 5/26 |
-| secp256k1 signing | Faster (2.34-4.23x) | -- |
-| ABI encoding/decoding | Faster (1.96-8.41x) | -- |
-| Hashing (Keccak) | Faster on small inputs (1.19-1.21x) | Within ~2% on 256B-1KB |
-| u256 arithmetic | Faster on mul/div/mulDiv (1.82-3.43x) | UniswapV4 swap (1.07x) |
-| Hex operations | Faster decoding (1.17x) | Faster encoding (1.08x) and parsing (1.55x, SIMD) |
-
-### Features vs Zabi (Zig)
-
-| Feature | eth.zig | Zabi |
-|---------|---------|------|
-| Comptime selectors | Yes | No |
-| secp256k1 ECDSA | Yes (libsecp256k1 + Zig fallback) | Yes (C binding) |
-| ABI encode/decode | Yes | Yes |
-| HD wallets (BIP-32/39/44) | Yes | Yes |
-| ERC-20/721 wrappers | Yes | No |
-| JSON ABI parsing | Yes | Yes |
-| WebSocket transport | Yes | Yes |
-| ENS resolution | Yes | Yes |
-| EIP-712 typed data | Yes | Yes |
-| Multicall3 | Yes | No |
-
 ## Requirements
 
 - Zig >= 0.17.0
@@ -370,17 +327,13 @@ zig build integration-test    # Integration tests (requires Anvil)
 
 ## Benchmarks
 
-One command to run the full comparison (requires Zig, Rust, Python 3):
-
 ```bash
-bash bench/compare.sh
+zig build bench                                   # the ten tracked benchmarks
+zig build bench -- --list                         # what each one measures
+python3 bench/ab.py OLD_BENCH_BIN NEW_BENCH_BIN   # interleaved version comparison
 ```
 
-Or run individually:
-
-```bash
-zig build bench          # eth.zig only
-```
+See [bench/README.md](bench/README.md).
 
 ## Contributing
 

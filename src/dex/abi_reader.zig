@@ -181,11 +181,15 @@ pub fn wordToUsize(w: u256) ?usize {
     return @intCast(w);
 }
 
+/// True if every byte of `s` is zero. Checks 8 bytes at a time: padding checks
+/// run on every decoded word, and the compiler no longer vectorizes the
+/// byte-at-a-time form on its own (LLVM 22 ships with loop vectorization off).
 pub fn isZeroSlice(s: []const u8) bool {
-    for (s) |b| {
-        if (b != 0) return false;
-    }
-    return true;
+    var acc: u64 = 0;
+    var i: usize = 0;
+    while (i + 8 <= s.len) : (i += 8) acc |= std.mem.readInt(u64, s[i..][0..8], .little);
+    while (i < s.len) : (i += 1) acc |= s[i];
+    return acc == 0;
 }
 
 /// Read the 32-byte word at `offset`, or null if it runs past `data`.
@@ -201,10 +205,16 @@ pub fn readU256At(data: []const u8, offset: usize) ?u256 {
 }
 
 /// Read a word meant to be used as an offset or length, range-checked into
-/// `usize` before any arithmetic can touch it.
+/// `usize` before any arithmetic can touch it. Null if the word is truncated
+/// or does not fit in a `usize`. Reads the low 8 bytes directly instead of
+/// building a u256, since offsets and lengths are on every decode path.
 pub fn readOffset(data: []const u8, word_pos: usize) ?usize {
-    const w = readU256At(data, word_pos) orelse return null;
-    return wordToUsize(w);
+    const end = addChecked(word_pos, 32) orelse return null;
+    if (end > data.len) return null;
+    const w = data[word_pos..][0..32];
+    const high = std.mem.readInt(u64, w[0..8], .little) | std.mem.readInt(u64, w[8..16], .little) | std.mem.readInt(u64, w[16..24], .little);
+    if (high != 0) return null;
+    return std.math.cast(usize, std.mem.readInt(u64, w[24..32], .big));
 }
 
 /// A clean ABI address word: 12 zero high bytes, address in the low 20.
@@ -276,7 +286,7 @@ pub fn selU32(s: [4]u8) u32 {
 pub fn bytesAt(data: []const u8, base: usize, offset_word_pos: usize) ?[]const u8 {
     const off = readOffset(data, offset_word_pos) orelse return null;
     const start = addChecked(base, off) orelse return null;
-    const len = wordToUsize(readU256At(data, start) orelse return null) orelse return null;
+    const len = readOffset(data, start) orelse return null;
     const content_start = addChecked(start, 32) orelse return null;
     const content_end = addChecked(content_start, len) orelse return null;
     if (content_end > data.len) return null;
@@ -295,7 +305,7 @@ pub const ArrayHead = struct {
 pub fn arrayHeadAt(data: []const u8, base: usize, offset_word_pos: usize) ?ArrayHead {
     const off = readOffset(data, offset_word_pos) orelse return null;
     const arr_start = addChecked(base, off) orelse return null;
-    const count = wordToUsize(readU256At(data, arr_start) orelse return null) orelse return null;
+    const count = readOffset(data, arr_start) orelse return null;
     const head_start = addChecked(arr_start, 32) orelse return null;
     const head_len = mulChecked(count, 32) orelse return null;
     const head_end = addChecked(head_start, head_len) orelse return null;
@@ -337,7 +347,7 @@ pub fn bytesArrayAt(data: []const u8, base: usize, offset_word_pos: usize) ?Byte
     while (i < h.count) : (i += 1) {
         const off = readOffset(head, i * 32) orelse return null;
         if (i > 0 and off < prev_end) return null;
-        const elem_len = wordToUsize(readU256At(head, off) orelse return null) orelse return null;
+        const elem_len = readOffset(head, off) orelse return null;
         const content_start = addChecked(off, 32) orelse return null;
         const content_end = addChecked(content_start, elem_len) orelse return null;
         if (content_end > head.len) return null;

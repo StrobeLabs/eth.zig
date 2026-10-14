@@ -102,7 +102,7 @@ pub fn build(b: *std.Build) void {
     const vector_step = b.step("vector-test", "Run ENS normalization conformance vectors");
     vector_step.dependOn(&run_vector_tests.step);
 
-    // Benchmarks (always ReleaseFast for meaningful numbers)
+    // Benchmarks (always optimize=fast for meaningful numbers)
     const bench_module = b.addModule("eth_bench", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -126,56 +126,17 @@ pub fn build(b: *std.Build) void {
     });
 
     const run_bench = b.addRunArtifact(bench_exe);
-    const bench_step = b.step("bench", "Run benchmarks (ReleaseFast)");
+    // Relative --save/--baseline paths resolve against the repository root.
+    run_bench.setCwd(b.path("."));
+    run_bench.addPassthruArgs();
+    const bench_step = b.step("bench", "Run benchmarks (ReleaseFast); pass options after --, see bench/README.md");
     bench_step.dependOn(&run_bench.step);
 
-    // u256-only benchmark (custom harness, no zbench dependency)
-    const u256_bench_exe = b.addExecutable(.{
-        .name = "u256-bench",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("bench/u256_bench.zig"),
-            .target = target,
-            .optimize = .fast,
-            .imports = &.{
-                .{ .name = "eth", .module = bench_module },
-            },
-        }),
-    });
-
-    const run_u256_bench = b.addRunArtifact(u256_bench_exe);
-    const u256_bench_step = b.step("bench-u256", "Run u256-only benchmarks (ReleaseFast)");
-    u256_bench_step.dependOn(&run_u256_bench.step);
-
-    // Keccak comparison benchmark (eth.zig vs stdlib)
-    const keccak_compare_exe = b.addExecutable(.{
-        .name = "keccak-compare",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("bench/keccak_compare.zig"),
-            .target = target,
-            .optimize = .fast,
-            .imports = &.{
-                .{ .name = "eth", .module = bench_module },
-            },
-        }),
-    });
-
-    const run_keccak_compare = b.addRunArtifact(keccak_compare_exe);
-    const keccak_compare_step = b.step("bench-keccak", "Compare eth.zig Keccak vs stdlib (ReleaseFast)");
-    keccak_compare_step.dependOn(&run_keccak_compare.step);
-
-    // Keccak CLI benchmark (for hyperfine comparison)
-    const keccak_bench_exe = b.addExecutable(.{
-        .name = "keccak-bench-zig",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("bench/keccak_bench_cli.zig"),
-            .target = target,
-            .optimize = .fast,
-            .imports = &.{
-                .{ .name = "eth", .module = bench_module },
-            },
-        }),
-    });
-    b.installArtifact(keccak_bench_exe);
+    // `zig build bench-install --prefix DIR` leaves the binary at DIR/bin/bench,
+    // for interleaved version comparisons with bench/ab.py.
+    const install_bench = b.addInstallArtifact(bench_exe, .{});
+    const bench_install_step = b.step("bench-install", "Install the benchmark binary (for bench/ab.py)");
+    bench_install_step.dependOn(&install_bench.step);
 }
 
 /// Add XKCP keccak C sources to a module with CPU-appropriate backend selection.
