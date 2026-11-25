@@ -5,6 +5,15 @@ All notable changes to eth.zig will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.1 (2026-10-24)
+
+## What's Changed
+* perf: recover Zig 0.17 regressions and rebuild the benchmark suite by @koko1123 in https://github.com/StrobeLabs/eth.zig/pull/142
+* Patch docs dependencies and pin release-please action by @koko1123 in https://github.com/StrobeLabs/eth.zig/pull/145
+
+
+**Full Changelog**: https://github.com/StrobeLabs/eth.zig/compare/v0.10.0...v0.10.1
+
 ## 0.10.0 (2026-10-10)
 
 ## What's Changed
